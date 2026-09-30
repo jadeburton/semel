@@ -256,6 +256,9 @@ struct XcodeProject {
         /// from the app's folder, an intents extension's entities from the app's, a share
         /// extension's localized xib.
         var borrowed: [Borrowed] = []
+        /// The package plugins the target runs, by product name: a target dependency on a
+        /// `plugin:SwiftLint` product, CodeEdit's app. None is run (B-77).
+        var plugins: [String] = []
 
         /// The borrowed entries that are paths, relative to the project folder.
         var borrowedFiles: [String] {
@@ -573,6 +576,8 @@ struct XcodeProject {
         static let buildFileExceptionSet = "PBXFileSystemSynchronizedBuildFileExceptionSet"
         /// The exception set naming a build phase, which its files join as well.
         static let buildPhaseExceptionSet = "PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet"
+        /// How a product dependency names a package's plugin rather than a library.
+        static let pluginProductPrefix = "plugin:"
 
         /// Where a copy-files phase copies to; nil for any other phase.
         static func copyDestination(of phase: [String: Any]) -> CopyDestination? {
@@ -590,15 +595,54 @@ struct XcodeProject {
         /// relative path is relative to.
         let parentOf: [String: String]
 
+        /// The repository of each product some product dependency of the project names
+        /// with its remote package, by product name — only where one repository does.
+        let remoteRepositoryByProduct: [String: String]
+
         init(objects: [String: [String: Any]]) {
             self.objects = objects
             var parentOf: [String: String] = [:]
-            for (groupID, group) in objects {
-                for childID in group["children"] as? [String] ?? [] {
-                    parentOf[childID] = groupID
+            var repositoriesByProduct: [String: Set<String>] = [:]
+            for (objectID, object) in objects {
+                for childID in object["children"] as? [String] ?? [] {
+                    parentOf[childID] = objectID
                 }
+                guard object["isa"] as? String == "XCSwiftPackageProductDependency",
+                      let product = object["productName"] as? String,
+                      let packageID = object["package"] as? String,
+                      let url = objects[packageID]?["repositoryURL"] as? String else {
+                    continue
+                }
+                repositoriesByProduct[product, default: []].insert(url)
             }
             self.parentOf = parentOf
+            self.remoteRepositoryByProduct = repositoriesByProduct.compactMapValues { $0.count == 1 ? $0.first : nil }
+        }
+
+        /// A target's package products, each once. A dependency that names no package is
+        /// a product Xcode finds by name in the workspace's package graph, where every
+        /// product has one identity (`PACKAGE-PRODUCT:<name>`), remote packages' included;
+        /// so one that another dependency names with its remote package is that package's
+        /// — CodeEdit links `CodeEditSourceEditor` through eight dependencies, five left
+        /// with no package from when it was a local one. Any other is a local package's.
+        /// A `plugin:` product is not linked: it is a plugin the target would run.
+        func packageProducts(dependencyIDs: [String]) -> [PackageProduct] {
+            var products: [PackageProduct] = []
+            for id in dependencyIDs {
+                guard let dependency = object(id), let product = dependency["productName"] as? String,
+                      !product.hasPrefix(Self.pluginProductPrefix),
+                      !products.contains(where: { $0.product == product }) else {
+                    continue
+                }
+                if let package = object(dependency["package"] as? String), let url = package["repositoryURL"] as? String {
+                    products.append(.remote(product: product, repositoryURL: url))
+                } else if let url = remoteRepositoryByProduct[product] {
+                    products.append(.remote(product: product, repositoryURL: url))
+                } else {
+                    products.append(.local(product: product))
+                }
+            }
+            return products
         }
 
         func object(_ id: String?) -> [String: Any]? {
@@ -695,18 +739,10 @@ struct XcodeProject {
             let name = target["name"] as? String ?? ""
             let productFileName = object(target["productReference"] as? String)?["path"] as? String ?? name
 
-            var packageProducts: [PackageProduct] = []
-            for id in target["packageProductDependencies"] as? [String] ?? [] {
-                guard let dependency = object(id), let product = dependency["productName"] as? String else {
-                    continue
-                }
-                if let package = object(dependency["package"] as? String), let url = package["repositoryURL"] as? String {
-                    packageProducts.append(.remote(product: product, repositoryURL: url))
-                } else {
-                    packageProducts.append(.local(product: product))
-                }
-            }
-
+            // The products the target links: its `packageProductDependencies`, and every
+            // product its frameworks phase lists, which is what Xcode links from — CodeEdit's
+            // app links LanguageServerProtocol and LanguageClient through the phase alone.
+            var productDependencyIDs = target["packageProductDependencies"] as? [String] ?? []
             var frameworks: [String] = []
             var embeddedExtensions: [String] = []
             var sourceFiles: [BuildFile] = []
@@ -739,6 +775,7 @@ struct XcodeProject {
                         .compactMap { $0["path"] as? String }
                         .filter { $0.hasSuffix(".framework") }
                         .map { ($0 as NSString).lastPathComponent.replacingOccurrences(of: ".framework", with: "") }
+                    productDependencyIDs += buildFiles.compactMap { $0["productRef"] as? String }
                 case "PBXCopyFilesBuildPhase":
                     // dstSubfolderSpec 13 is PlugIns: where an app embeds its extensions.
                     let destination = (phase["dstSubfolderSpec"] as? String) ?? (phase["dstSubfolderSpec"] as? Int).map(String.init)
@@ -777,16 +814,25 @@ struct XcodeProject {
                                           compilerFlags: compilerFlags)
             }
 
-            return Target(name: name,
-                          productType: target["productType"] as? String ?? "",
-                          productFileName: productFileName,
-                          configurations: try configurations(listID: target["buildConfigurationList"] as? String),
-                          synchronizedFolders: synchronizedFolders,
-                          packageProducts: packageProducts,
-                          frameworks: frameworks.sorted(),
-                          embeddedExtensions: embeddedExtensions.sorted(),
-                          resourceFiles: resourceFiles.sorted { $0.path < $1.path },
-                          sourceFiles: sourceFiles.sorted { $0.path < $1.path })
+            var built = Target(name: name,
+                               productType: target["productType"] as? String ?? "",
+                               productFileName: productFileName,
+                               configurations: try configurations(listID: target["buildConfigurationList"] as? String),
+                               synchronizedFolders: synchronizedFolders,
+                               packageProducts: packageProducts(dependencyIDs: productDependencyIDs),
+                               frameworks: frameworks.sorted(),
+                               embeddedExtensions: embeddedExtensions.sorted(),
+                               resourceFiles: resourceFiles.sorted { $0.path < $1.path },
+                               sourceFiles: sourceFiles.sorted { $0.path < $1.path })
+            // A plugin is a target dependency on a product Xcode names `plugin:<name>`.
+            built.plugins = (target["dependencies"] as? [String] ?? []).compactMap { dependencyID -> String? in
+                guard let productName = object(object(dependencyID)?["productRef"] as? String)?["productName"] as? String,
+                      productName.hasPrefix(Self.pluginProductPrefix) else {
+                    return nil
+                }
+                return String(productName.dropFirst(Self.pluginProductPrefix.count))
+            }.sorted()
+            return built
         }
     }
 }

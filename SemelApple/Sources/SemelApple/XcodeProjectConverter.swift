@@ -49,8 +49,16 @@ public struct XcodeProjectConverter: Node {
     /// runtime is signed with it (B-77); at 13, the application built is the one whose
     /// `SDKROOT` is of the SDK's platform family, not the first, so NetNewsWire's simulator
     /// build is its iOS app (B-77); at 14, the targets' folders and the synchronized folders
-    /// are asked for as trees, one wire each, where they were walked a level a pass (B-135).
-    public static let implementationVersion = 14
+    /// are asked for as trees, one wire each, where they were walked a level a pass (B-135);
+    /// at 15, a package product is named once however many dependencies name it, one
+    /// naming no package is a remote package's when another dependency names it with one,
+    /// a product the frameworks phase lists is linked, a documentation catalog in a
+    /// sources phase is passed over, and a copy to the products folder under a setting
+    /// naming a folder of the bundle, `$(EXTENSIONS_FOLDER_PATH)`, is a copy into it, and a
+    /// bundle is signed with the entitlements its sandbox and hardened-runtime settings
+    /// stand for, and the `INFOPLIST_KEY_*` settings reach a plist only when it is
+    /// generated (B-77).
+    public static let implementationVersion = 15
 
     // MARK: Ports
 
@@ -358,11 +366,27 @@ public struct XcodeProjectConverter: Node {
                                               configuration: configurationName, sdk: sdk)
         let emitter = XcodeFormulaEmitter(project: project, build: build, localPackagePaths: packageSearch.packagePaths)
         let formula = try emitter.formula(for: application, settings: evaluatedSettings, listing: { listings[$0] })
+        if let notice = Self.pluginNotice(targets: bundleTargets) {
+            NodeNotice.post(notice)
+        }
 
         return .init(outputValues: [Self.formulaOutput: .value(try formula.intern()),
                                     Self.infoLog: try infoLogValue(application: application, embedded: embedded, project: project,
                                                                    projectFolder: projectFolder, expansions: expansions)],
                      inputWireSpecs: specs)
+    }
+
+    /// What the conversion says about the package plugins its targets run, which it does
+    /// not; nil when none runs one. As a package's targets' plugins are named by the Swift
+    /// converter: a plugin wants a design to run hermetically, and SwiftLint's — the one
+    /// CodeEdit's app runs — writes nothing the build uses.
+    static func pluginNotice(targets: [XcodeProject.Target]) -> String? {
+        let named = targets.filter { !$0.plugins.isEmpty }.map { "\($0.plugins.joined(separator: ", ")) on \($0.name)" }
+        guard !named.isEmpty else {
+            return nil
+        }
+        return "Build-tool plugins are not run (B-77): \(named.joined(separator: "; ")). "
+             + "Each target builds without what its plugins would do."
     }
 
     /// A path relative to the project's folder as a path in the input file system; nil

@@ -17,6 +17,12 @@ import PackageDescription
 // module map; and, as Zip lays out Minizip, a C target inside the folder of the Swift
 // target that excludes and imports it, whose own excluded module map would break the
 // build were it used.
+//
+// And what CodeEdit's packages need (B-77): an Objective-C target whose own module map
+// covers the header its source includes, as CodeEditTextViewObjC's does; `SWIFT_PACKAGE`,
+// which Swift and C here refuse to build without; a `package` function one target calls
+// in another; a documentation catalog holding Swift that is not the target's; and a
+// dependency conditional on the platform, as LanguageClient's on ProcessEnv.
 let package = Package(
     name: "CPackage",
     platforms: [
@@ -29,7 +35,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "App",
-            dependencies: ["CLib", "ObjCKit", "Shapes", "Zipper"]
+            dependencies: ["CLib", "ObjCKit", "Shapes", "Smoothing", "Zipper"]
         ),
         .executableTarget(
             name: "CTool",
@@ -59,8 +65,12 @@ let package = Package(
             publicHeadersPath: "public"
         ),
         .target(
+            name: "Smoothing",
+            publicHeadersPath: "include"
+        ),
+        .target(
             name: "Zipper",
-            dependencies: ["Squeeze"],
+            dependencies: [.target(name: "Squeeze", condition: .when(platforms: [.macOS]))],
             exclude: ["squeeze"]
         ),
         .target(

@@ -547,7 +547,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             + "ConfigFilter(prefix: 'swift.compiler', "
             + "input: ['config': ConfigMerger(base: ['machine': StaticFile(path: 'input:/pkg/semel.machine.config').output], "
             + "override: ['project': StaticFile(path: 'input:/pkg/semel.config').output]).output]).output], "
-            + "override: ['literals': SettingsLiteral(moduleName: 'Helper').output]).output"),
+            + "override: ['literals': SettingsLiteral(defines: 'SWIFT_PACKAGE', moduleName: 'Helper', packageName: 'lib').output]).output"),
             "got:\n\(result)")
     }
 
@@ -1196,7 +1196,8 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let result = try formula(json: json)
 
         XCTAssertTrue(result.contains("func compilerUpdater()"), "got:\n\(result)")
-        XCTAssertFalse(result.contains("Sparkle"), "got:\n\(result)")
+        XCTAssertFalse(result.contains("sliceSparkle"), "got:\n\(result)")
+        XCTAssertFalse(result.contains("Sparkle.xcframework"), "got:\n\(result)")
     }
 
     // MARK: - sourceControl dependencies
@@ -1484,18 +1485,82 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
         let forMac = try funcDefinition("compilerModels", in: try formula(json: swiftSettingsManifest,
                                                                           linkerSettings: "target=arm64-apple-macosx15.0"))
-        XCTAssertTrue(forMac.contains("defines: 'FOO,MAC', "
+        XCTAssertTrue(forMac.contains("defines: 'SWIFT_PACKAGE,FOO,MAC', "
                                       + "experimentalFeatures: 'StrictConcurrency', "
                                       + "languageMode: '6', "
                                       + "moduleName: 'Models', "
+                                      + "packageName: 'Models', "
                                       + #"unsafeFlags: '["-warnings-as-errors","-Xcc","-Wl,-a"]', "#
                                       + "upcomingFeatures: 'NonisolatedNonsendingByDefault'"), "got:\n\(forMac)")
 
         let forIOS = try funcDefinition("compilerModels", in: try formula(json: swiftSettingsManifest,
                                                                           linkerSettings: "sdk=iphonesimulator"))
-        XCTAssertTrue(forIOS.contains("defines: 'FOO', "), "got:\n\(forIOS)")
+        XCTAssertTrue(forIOS.contains("defines: 'SWIFT_PACKAGE,FOO', "), "got:\n\(forIOS)")
         XCTAssertTrue(forIOS.contains("upcomingFeatures: 'NonisolatedNonsendingByDefault,InferIsolatedConformances'"),
                       "got:\n\(forIOS)")
+    }
+
+    /// A dependency conditional on platforms — LanguageClient's `.product(name: "ProcessEnv",
+    /// …, condition: .when(platforms: [.macOS]))` — is one where it holds and nowhere else,
+    /// and the conversion asks for the platform to know (B-77). It was dropped everywhere:
+    /// its condition, an object among the strings, failed the decoding of the whole entry.
+    func test_aDependencyConditionalOnPlatformsIsOneWhereItHolds() throws {
+        let json = """
+            {
+              "name": "Client",
+              "dependencies": [],
+              "products": [{"name": "Client", "targets": ["Client"], "type": {"library": ["automatic"]}}],
+              "targets": [
+                {"name": "Client", "type": "regular", "path": "Sources/Client",
+                 "dependencies": [{"target": ["MacOnly", {"platformNames": ["macos"]}]},
+                                  {"byName": ["Anywhere", {"config": "debug", "platformNames": []}]},
+                                  {"byName": ["Shared", null]}]},
+                {"name": "MacOnly", "type": "regular", "path": "Sources/MacOnly", "dependencies": []},
+                {"name": "Anywhere", "type": "regular", "path": "Sources/Anywhere", "dependencies": []},
+                {"name": "Shared", "type": "regular", "path": "Sources/Shared", "dependencies": []}
+              ]
+            }
+            """
+        let waiting = try convert(json: json)
+        XCTAssertNotNil(waiting.inputWireSpecs[SwiftFormulaConverter.linkerConfiguration]?[SwiftLinkerConfiguration.settingNamespace],
+                        "a platform-conditional dependency asks for the platform")
+
+        let forMac = try funcDefinition("compilerClient", in: try formula(json: json, linkerSettings: "sdk=macosx"))
+        XCTAssertTrue(forMac.contains("'MacOnly': compilerMacOnly().swiftmodule"), "got:\n\(forMac)")
+        XCTAssertTrue(forMac.contains("'Anywhere': compilerAnywhere().swiftmodule"), "got:\n\(forMac)")
+        XCTAssertTrue(forMac.contains("'Shared': compilerShared().swiftmodule"), "got:\n\(forMac)")
+
+        let forIOS = try funcDefinition("compilerClient", in: try formula(json: json, linkerSettings: "sdk=iphonesimulator"))
+        XCTAssertFalse(forIOS.contains("MacOnly"), "got:\n\(forIOS)")
+        XCTAssertTrue(forIOS.contains("'Anywhere': compilerAnywhere().swiftmodule"),
+                      "a condition on a configuration alone holds on every platform, got:\n\(forIOS)")
+    }
+
+    /// A target's build-tool plugins — SwiftLint's, on CodeEdit's packages — are not run,
+    /// and the conversion says which, once, rather than dropping them unsaid (B-77). A test
+    /// target's are not named: no test target is built.
+    func test_theBuildToolPluginsTheTargetsNameAreNamedAsNotRun() throws {
+        let json = """
+            {
+              "name": "TextView",
+              "dependencies": [],
+              "products": [{"name": "TextView", "targets": ["TextView"], "type": {"library": ["automatic"]}}],
+              "targets": [
+                {"name": "TextView", "type": "regular", "path": "Sources/TextView", "dependencies": [],
+                 "pluginUsages": [{"plugin": ["SwiftLint", "SwiftLintPlugin"]}, {"plugin": ["Generate", null]}]},
+                {"name": "TextViewTests", "type": "test", "path": "Tests/TextViewTests", "dependencies": [],
+                 "pluginUsages": [{"plugin": ["SwiftLint", "SwiftLintPlugin"]}]}
+              ]
+            }
+            """
+        var result = ""
+        let posted = try notices { result = try formula(json: json) }
+
+        XCTAssertEqual(posted, ["Build-tool plugins are not run (B-77): SwiftLint (SwiftLintPlugin), Generate on TextView. "
+                                + "Each target builds without what its plugins would do."])
+        XCTAssertTrue(result.contains("func compilerTextView()"), "the target builds without them, got:\n\(result)")
+        XCTAssertEqual(try notices { _ = try formula(json: swiftSettingsManifest, linkerSettings: "sdk=macosx") }, [],
+                       "no plugin, nothing said")
     }
 
     /// Settings that hold everywhere need no platform, and the conversion does not ask.
@@ -1507,7 +1572,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.linkerConfiguration] ?? [:], [:])
         let block = try funcDefinition("compilerModels",
                                        in: try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]).expectValue().resolveAsString())
-        XCTAssertTrue(block.contains("defines: 'FOO,MAC', "), "got:\n\(block)")
+        XCTAssertTrue(block.contains("defines: 'SWIFT_PACKAGE,FOO,MAC', "), "got:\n\(block)")
         XCTAssertTrue(block.contains("upcomingFeatures: 'NonisolatedNonsendingByDefault,InferIsolatedConformances'"), "got:\n\(block)")
     }
 
@@ -1528,7 +1593,9 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
         XCTAssertEqual(configuration.upcomingFeatures, ["NonisolatedNonsendingByDefault"])
         XCTAssertEqual(configuration.experimentalFeatures, ["StrictConcurrency"])
-        XCTAssertEqual(configuration.defines, ["FOO", "MAC"])
+        XCTAssertEqual(configuration.defines, ["SWIFT_PACKAGE", "FOO", "MAC"],
+                       "SwiftPM's condition first, which every package target compiles with (B-77)")
+        XCTAssertEqual(configuration.packageName, "Models")
         XCTAssertEqual(configuration.unsafeFlags, ["-warnings-as-errors", "-Xcc", "-Wl,-a"])
         XCTAssertEqual(configuration.languageMode, "6")
     }
@@ -1607,6 +1674,36 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertEqual(try externalSpecs(output).keys.sorted(),
                        ["input:/repo/Markdown/Dependencies/swift-cmark",
                         "input:/repo/Markdown/Dependencies/swift-docc-plugin"])
+    }
+
+    /// A `byName` naming a dependency — CodeEditSourceEditor's `"CodeEditTextView"`, its
+    /// `CodeEditTextView.git` — is that dependency, as SwiftPM's resolution reads it, so the
+    /// package's test-only swift-custom-dump, which Xcode never fetches, is not waited for
+    /// (B-77). The repository's name matches whatever its case.
+    func test_aByNameNamingADependencyWaitsForThatDependencyAlone() throws {
+        let textView = """
+            {"sourceControl": [{"identity": "codeedittextview", "location": {"remote": [{"urlString": "https://github.com/CodeEditApp/CodeEditTextView.git"}]}}]}
+            """
+        let customDump = """
+            {"sourceControl": [{"identity": "swift-custom-dump", "location": {"remote": [{"urlString": "https://github.com/pointfreeco/swift-custom-dump"}]}}]}
+            """
+        let json = """
+            {
+              "name": "CodeEditSourceEditor",
+              "dependencies": [\(textView), \(customDump)],
+              "products": [{"name": "CodeEditSourceEditor", "targets": ["CodeEditSourceEditor"], "type": {"library": ["automatic"]}}],
+              "targets": [
+                {"name": "CodeEditSourceEditor", "type": "regular", "path": "Sources/CodeEditSourceEditor",
+                 "dependencies": [{"byName": ["CodeEditTextView", null]}]},
+                {"name": "CodeEditSourceEditorTests", "type": "test", "path": "Tests/CodeEditSourceEditorTests",
+                 "dependencies": [{"byName": ["CodeEditSourceEditor", null]},
+                                  {"product": ["CustomDump", "swift-custom-dump", null, null]}]}
+              ]
+            }
+            """
+        let output = try convert(packageFolder: "input:/repo/Editor", json: json)
+
+        XCTAssertEqual(try externalSpecs(output).keys.sorted(), ["input:/repo/Editor/Dependencies/CodeEditTextView"])
     }
 
     /// `.package(name: "Models", path: ...)` is referenced as "Models" while its identity
@@ -1901,7 +1998,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let result = try formula(json: appOverCLib, folderContents: tree)
 
         let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") })
-        XCTAssertTrue(preprocessor.contains("SettingsLiteral(moduleName: 'CLib', modules: 'true', objectiveCARC: 'true')"),
+        XCTAssertTrue(preprocessor.contains("SettingsLiteral(defines: 'SWIFT_PACKAGE=1', moduleName: 'CLib', modules: 'true', objectiveCARC: 'true')"),
                       "got:\n\(preprocessor)")
         let compilerEntry = try XCTUnwrap(try productBlock("App", in: result).components(separatedBy: "\n")
                                               .first { $0.contains("preprocessCLib") })
@@ -2080,7 +2177,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let result = try formula(json: cLibJSON(defineSettings), folderContents: cLibTree)
 
         let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") })
-        XCTAssertTrue(preprocessor.contains("SettingsLiteral(defines: 'FOO,BAR=2,CXXONLY=yes')"), "got:\n\(preprocessor)")
+        XCTAssertTrue(preprocessor.contains("SettingsLiteral(defines: 'SWIFT_PACKAGE=1,FOO,BAR=2,CXXONLY=yes')"), "got:\n\(preprocessor)")
         XCTAssertFalse(preprocessor.contains("WIN"), "a conditional define is not carried, got:\n\(preprocessor)")
         let compilerEntry = try XCTUnwrap(try productBlock("App", in: result).components(separatedBy: "\n").first { $0.contains("preprocessCLib") })
         XCTAssertFalse(compilerEntry.contains("defines"), "got:\n\(compilerEntry)")
@@ -2222,7 +2319,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         for folder in ["input:/pkg", "input:/pkg/include", "input:/pkg/Dependencies/protobuf-c"] {
             XCTAssertTrue(preprocessor.contains("'\(folder)': Folder(path: '\(folder)').manifest"), "\(folder), got:\n\(preprocessor)")
         }
-        XCTAssertTrue(preprocessor.contains("SettingsLiteral(defines: 'PLCR_PRIVATE,PLCRASHREPORTER_PREFIX=', "),
+        XCTAssertTrue(preprocessor.contains("SettingsLiteral(defines: 'SWIFT_PACKAGE=1,PLCR_PRIVATE,PLCRASHREPORTER_PREFIX=', "),
                       "got:\n\(preprocessor)")
     }
 

@@ -2292,9 +2292,218 @@ application target, simulator only, all library code in packages. In suggested o
    standalone icons (20); a signed simulator or device build, with the entitlements an
    unsigned bundle lacks. (1's residual, a framework's links as copies, is done: links
    travel in trees.)
-3. *CodeEdit* — macOS app over a large remote package graph; the tree-sitter grammars are
-   many C targets with nested sources (B-55 through an app), build-tool plugins (SwiftLint),
-   entitlements and sandbox.
+3. *CodeEdit* — `open`; the first slice landed (2026-10-01): the Mac app compiles, links,
+   is signed, exports and stays up when launched, once three things are stepped around by
+   hand (5, 10 and 12 below, each open), though it shows no window (16). Pinned at `fa2aebd86373211c78626074b53ab75010767575` (main,
+   2026-08-18, "macOS Tahoe Navigator, Inspector, and Utility Area"). The clone is not what
+   this entry said from memory: the tree-sitter grammars are not C targets at all.
+
+   *What the project is.* Four targets: the app `CodeEdit`, a Finder Sync extension
+   `OpenWithCodeEdit` (`com.apple.product-type.app-extension`, embedded under `PlugIns`),
+   and the unit and UI test bundles. Five synchronized folders: `CodeEdit` (the app's; an
+   exception set leaves out its `Info.plist`, and a build-phase set sends
+   `Features/Extensions/codeedit.extension.appextensionpoint` to a copy phase for
+   `$(EXTENSIONS_FOLDER_PATH)`), `CodeEditTests`, `CodeEditUITests`, `Configs` and
+   `OpenWithCodeEdit` — the last two owned by no target: the extension owns no folder and
+   borrows `FinderSync.swift` and `Media.xcassets` from `OpenWithCodeEdit` through an
+   exception set naming it. The app's resources phase lists a folder reference
+   (`DefaultThemes`), `Package.resolved` from inside the `.xcodeproj`, and the hidden
+   `.all-contributorsrc`; its sources phase lists `Documentation.docc` and four build files
+   with no file at all (`(null) in Sources`). Two script phases (TODO/FIXME warnings and a
+   `swiftlint:disable all` check, both greps over the sources, neither writing anything),
+   an *Embed Frameworks* phase for `CodeEditKit` (a `.dynamic` product, linked statically
+   here as every package product is), and a SwiftLint plugin run by the app through a
+   target dependency on the product `plugin:SwiftLint`.
+
+   *Settings.* Five configurations (Debug, Alpha, Beta, Pre, Release), each project and
+   target configuration based on `Configs/<Name>.xcconfig` in the anchor form, each file
+   three assignments (`CE_APPICON_NAME`, `CE_VERSION_POSTFIX`, `CE_COPYRIGHT`) that the
+   project file and `CodeEdit/Info.plist` name in the `${…}` form. Swift 5 mode,
+   `MACOSX_DEPLOYMENT_TARGET = 14.0`, the hardened runtime, `ENABLE_APP_SANDBOX`,
+   `RUNTIME_EXCEPTION_ALLOW_JIT` and `RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION` on the
+   app, `GENERATE_INFOPLIST_FILE = NO` beside `INFOPLIST_KEY_*` settings Xcode therefore
+   ignores, `ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES`, and
+   `CODE_SIGN_IDENTITY = -`. The entitlements files: the app's sandbox, user-selected
+   files read-write, app-scope bookmarks, network client and an app group; the extension's
+   the app group alone. `ASSETCATALOG_COMPILER_APPICON_NAME = ${CE_APPICON_NAME}` names
+   `AppIconDev` in Debug, a set no catalog has: the icons are Icon Composer files in
+   `ProductIcons/`, which the project does not reference, so Semel's bundle has no icon
+   (what Xcode's has was not checked).
+
+   *Packages.* The project references eighteen remote packages through twenty-two
+   `XCRemoteSwiftPackageReference` objects (LanguageClient, LanguageServerProtocol,
+   ZIPFoundation and CodeEditSourceEditor twice each, one of each pair not in
+   `packageReferences`); `Package.resolved` pins thirty-four, all of which `prepare`
+   vendors (808 MB). C-family targets the app reaches: tree-sitter's `TreeSitter`
+   (`lib`, `sources: ["src"]`, `exclude:` its amalgamation `src/lib.c`,
+   `.headerSearchPath("src")`, two defines, one with a value, `cLanguageStandard: .c11`),
+   swift-glob's `FNMDefinitions`, and three Objective-C ones: CodeEditTextView's
+   `CodeEditTextViewObjC` with its own `include/module.modulemap`, TextStory's `Internal`
+   (`publicHeadersPath: "."`), LogStream's `ExternalAppLoggerHeaders`; GRDB 6's `CSQLite`
+   is a system library whose module map brings a shim header. SwiftTreeSitter's
+   `TestTreeSitterSwift` (a grammar's `parser.c` and `scanner.c`) is reached by its tests
+   alone. *The grammars* are CodeEditLanguages' binary target `CodeLanguagesContainer`, a
+   `path:` zip (33 MB) of an xcframework holding one *static* framework,
+   `CodeLanguages_Container.framework` (arm64 and x86_64 archives, 375 MB unzipped, every
+   grammar compiled in), with the queries as the package's `.copy("Resources")`. Binary
+   targets besides: Sparkle 2.3.0's xcframework (by `url:`), and SwiftLintPlugin's
+   `SwiftLintBinary` `.artifactbundle`, which only the plugin uses. Build-tool plugins: the
+   one SwiftLint plugin, on the app and on the non-test targets of CodeEditKit,
+   AboutWindow, WelcomeWindow, CodeEditTextView and CodeEditSourceEditor; none generates
+   sources. No macros reach the app: swift-syntax 509.1.1 is there for
+   swift-snapshot-testing's `InlineSnapshotTesting`, which only `CodeEditTests` links.
+
+   *Plugins, decided.* Semel runs no package plugin: running one hermetically wants its
+   executable built or taken from an `.artifactbundle`, a sandbox holding the target's files
+   and a work folder, and the commands it returns each a node whose outputs a compile takes
+   as sources — a design, not a fix. A target builds without its plugins, and the
+   conversion says which by name, once, as a notice: `Build-tool plugins are not run
+   (B-77): SwiftLint (SwiftLintPlugin) on CodeEditTextView. Each target builds without what
+   its plugins would do.` — `SwiftFormulaConverter` from the targets' `pluginUsages`,
+   `XcodeProjectConverter` from a target dependency on a `plugin:` product (and a
+   `plugin:` product among a target's products is never linked). Not done: a target whose
+   sources come only from a plugin should fail naming the plugin; today it would reach
+   `swiftc` with nothing to compile. SwiftLint's plugin writes nothing the build uses, so
+   CodeEdit loses nothing by it.
+
+   *What stops it*, in the order a `build` of a fresh clone after `prepare --platform macos`
+   met it (the Swift converter v16, the Xcode converter v15, `SwiftCompiler` v4,
+   `ClangPreprocessor` v7):
+
+   1. ~~**Products with no package.**~~ Done. The app names `CodeEditSourceEditor` through
+      eight product dependencies and `SwiftTerm` through four, five and three of them
+      with no `package` — left from when those were local packages — and the converter
+      took each for a local package's and stopped: `CodeEdit links CodeEditKit,
+      CodeEditSourceEditor, SwiftTerm from local packages, and the project has none`.
+      Xcode finds a product by name in the whole package graph (`PACKAGE-PRODUCT:<name>`),
+      so `XcodeProject` now takes a dependency naming no package as the remote package's
+      product when another dependency of the project names that product with its package,
+      and names each product once (the formula had one wire per dependency, eight for one
+      product). Pinned by `XcodeProjectTests` over a fixture of CodeEdit's shapes.
+   2. ~~**A documentation catalog in the sources phase.**~~ Done. `Documentation.docc` was
+      refused as a source that is not Swift; a documentation catalog builds nothing a build
+      uses (`RUN_DOCUMENTATION_COMPILER = NO` on the app), and is passed over.
+      `XcodeFormulaEmitterTests`.
+   3. ~~**A test-only dependency waited for.**~~ Done. CodeEditSourceEditor declares
+      swift-custom-dump for its tests; Xcode never fetches it, and the converter waited for
+      it for ever, because a target's `byName` dependency (`"CodeEditTextView"`) that is not
+      a local target made it follow every dependency. A `byName` naming a package
+      dependency by its identity or repository name is that dependency, as SwiftPM's
+      resolution reads it; one naming none still follows them all.
+      `SwiftFormulaConverterTests`.
+   4. ~~**A target's own module map.**~~ Done. `CodeEditTextViewObjC` has its own
+      `include/module.modulemap` covering the header its source includes; preprocessed
+      with modules and `-fmodule-name`, clang wraps that header's text in `#pragma clang
+      module begin/end CodeEditTextViewObjC`, and the compiler, handed the text alone,
+      fails on it (`must specify '-fmodule-name'`, and with it `no module map available`).
+      `ClangPreprocessor` now hands the target's own module on as the text it is, taking
+      out the two pragmas and nothing else (another module's are kept). Pinned by
+      `ClangPreprocessorTests`, and end to end by `swift-c-package`'s new `Smoothing`.
+   5. **A hidden file in the resources phase.** `.all-contributorsrc`, which the About
+      window's contributors list reads from the bundle: a push takes no dot-name, and
+      `push codeedit/.all-contributorsrc` says `no such file or directory`, since the
+      lister leaves dot-names out whatever it is asked. So the `StaticFile` is never
+      pushed and the bundle, the signer and the product wait on it. *Design sketch:* a file
+      a formula names is pushed when named, hidden or not — `push` of an explicit path
+      takes a dot-name, and `build` pushes one the settle reports missing as it pushes a
+      missing source outside the folder (B-110) — while a walk still leaves dot-names out.
+      What has to be decided is the fold: a hidden file pushed inside a vendored package
+      would move its content root away from `prepare`'s fold of the disk, so the rule has
+      to be either "never under a locked package" or "the disk fold takes what a push
+      took" (the lock would then have to know what was pushed). Stepped around for the map
+      by taking the build file out of the scratch clone's resources phase.
+   6. ~~**`package` declarations.**~~ Done. CodeEditTextView's `package(set) public var
+      textStorage` needs `-package-name`, which SwiftPM passes to every target of a
+      package: `SwiftCompiler` takes a `packageName` literal, which the Swift converter
+      states (the manifest's name as a C99 identifier) for every package target.
+      `SwiftCompilerTests`, `SwiftFormulaConverterTests`, and `swift-c-package`'s `App`
+      calling `Zipper`'s `package` function.
+   7. ~~**Swift inside a documentation catalog.**~~ Done. SwiftTreeSitter keeps a tutorial's
+      `Package.swift` in `Sources/SwiftTreeSitter/Documentation.docc/Code/`, and the
+      compiler took it: `no such module 'PackageDescription'`. A `.docc` folder is one item
+      to SwiftPM and neither sources nor resources; `SourceScope` does not walk one and
+      neither does the converter (`PackageResources.isWalked`). `SwiftCompilerTests`, and
+      `swift-c-package`'s `Zipper.docc`.
+   8. ~~**`SWIFT_PACKAGE`.**~~ Done. GRDB 6 imports its `CSQLite` shims `#if SWIFT_PACKAGE`
+      and the SDK's `SQLite3` otherwise, which lacks `_registerErrorLogCallback`. SwiftPM
+      defines `SWIFT_PACKAGE` for every Swift target and `SWIFT_PACKAGE=1` for every C one;
+      the converter now does, first among each target's `defines`. `swift-c-package`'s
+      Swift and Objective-C `#error` without it.
+   9. ~~**A product the frameworks phase links.**~~ Done. `LanguageServerProtocol` and
+      `LanguageClient` are in the app's *Frameworks* phase and not among its
+      `packageProductDependencies`, and Xcode links from the phase: `no such module
+      'LanguageServerProtocol'`. A target's products are both lists now.
+   10. **Generated asset symbols.** `Color.amber`, `NSColor.folderBlue`,
+      `ImageResource.gitHubIcon`: `ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS` is `YES`
+      by Xcode's default and `…_SWIFT_ASSET_SYMBOL_EXTENSIONS` is `YES` here, and actool
+      writes `GeneratedAssetSymbols.swift`, which the app's compile takes as a source.
+      Semel generates none, so any app on Xcode 15's defaults that names an asset by
+      symbol fails here. Checked by hand: `actool … --generate-swift-asset-symbols <file>
+      --generate-swift-asset-symbol-extensions YES` writes the file and compiles nothing,
+      Xcode's separate step, and the text is a function of the catalog. *Design sketch:*
+      `AssetCatalogCompiler` gains a `swiftAssetSymbols` output from a second actool run
+      over the same catalogs (or a sibling node over the same inputs, since the compile
+      must not wait for the catalog's compile), with `bundleIdentifier`, the frameworks
+      and the extensions flag as literals from the settings; the emitter wires it into the
+      target's compiler as `GeneratedAssetSymbols.swift` among `extraSourceFiles` when the
+      setting holds; a package target's catalog gets the same (SwiftPM generates them too,
+      under `#if SWIFT_PACKAGE`, with `Bundle.module`). Stepped around for the map by
+      putting actool's file in the scratch clone's synchronized folder.
+   11. ~~**A dependency conditional on the platform.**~~ Done. LanguageClient depends on
+      ProcessEnv `.when(platforms: [.macOS])`; the condition, an object among the strings
+      of `dump-package`'s array, failed the decoding of the whole entry, so the dependency
+      was dropped on every platform and `#if canImport(ProcessEnv)` hid
+      `DataChannel.localProcessChannel`. It is decoded now and held where its platforms
+      hold — the conversion asks for the platform when a dependency is conditional, as for
+      a setting; one conditional on a configuration alone is kept. `SwiftFormulaConverterTests`,
+      and `swift-c-package`'s `Zipper`, which depends on `Squeeze` on macOS alone.
+   12. **A static framework is embedded.** The app then compiled and linked (887 nodes), and
+      the signer failed on `Contents/Frameworks/CodeLanguages_Container.framework: Is a
+      directory`: the slice is a framework whose binary is an archive, linked into the
+      executable by `-framework` as it should be, and embedded as well, which Xcode does not
+      do for a static framework. *Design sketch:* `XCFrameworkSliceSelector` reads the
+      slice's binary (an `!<arch>` archive, or a fat file of them) and publishes a fourth
+      tree, `embeddedFrameworks`, the dynamic ones alone; the Swift converter defines
+      `embedded_<Product>()` over them beside `frameworks_<Product>()`, which compiles and
+      links against both; the emitter lays `embedded_P()` under `Contents/Frameworks`.
+      Stepped around for the map by leaving CodeEditSourceEditor's frameworks out of the
+      bundle in a build of Semel that was not committed.
+   13. ~~**A copy into the products folder.**~~ Done, before it could bite. The extension
+      point goes to `dstSubfolderSpec = 16` (the products folder) at
+      `$(EXTENSIONS_FOLDER_PATH)`, which the emitter took for a place outside the bundle
+      and left out with a comment. A products-folder path that begins with a setting naming
+      a folder of the bundle (`EXTENSIONS_FOLDER_PATH`, `CONTENTS_FOLDER_PATH`,
+      `FRAMEWORKS_FOLDER_PATH`, …) is that folder: `Contents/Extensions`.
+   14. ~~**The settings' entitlements.**~~ Done. Signed and exported, the app was killed at
+      launch: `Library not loaded: @rpath/Sparkle.framework/… different Team IDs` — an app
+      with the hardened runtime validates the libraries it loads, and Sparkle keeps its
+      vendor's signature. Xcode signs with what the sandbox and hardened-runtime settings
+      stand for as well as the file (`RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION` is
+      `com.apple.security.cs.disable-library-validation`); the emitter now lays those over
+      the file's entitlements — every Boolean and read-only/read-write setting of
+      `CoreBuildSystem.xcspec`'s "App Sandbox & Hardened Runtime", with the keys Swift
+      Build signs with. `XcodeFormulaEmitterTests`.
+   15. ~~**`INFOPLIST_KEY_*` over a plist not generated.**~~ Done. Then the app exited at
+      launch: `Unable to find class: CodeEdit.CodeEditApplication`. The project sets
+      `INFOPLIST_KEY_NSPrincipalClass` to a class the app does not have, which Xcode
+      ignores because `GENERATE_INFOPLIST_FILE = NO`; the emitter wrote it into the plist.
+      It reads `INFOPLIST_KEY_*` only for a generated plist now (every roster project that
+      sets one also sets `GENERATE_INFOPLIST_FILE = YES`). `XcodeFormulaEmitterTests`.
+   16. **No window.** With 5, 10 and 12 stepped around, the export verifies with `codesign
+      --verify --deep --strict` (the app with the sandbox, JIT and library-validation keys,
+      the extension with its app group), and launched, by `open` or run directly, the app
+      starts and stays up, idle in its run loop, its extension's container made — but it
+      puts no window on screen, where CodeEdit opens its welcome window. Not diagnosed:
+      the next step is Xcode's build of the same commit in the same session, which was not
+      made, and then CodeEdit's `handleOpen`.
+
+   *Not in the way*, or not yet: the two script phases (greps whose output is warnings);
+   the `(null) in Sources` build files; the SwiftLint `.artifactbundle`, which `prepare`
+   vendors (117 MB) and the build pushes though no node reads it, and swift-syntax and
+   swift-snapshot-testing, vendored for a test target; the 375 MB static framework, pushed
+   and stored. On a fresh home a cold build (push included) is about two minutes, 887
+   nodes; the tree-sitter C compiled with nothing new. Not in the roster: it does not build
+   without 5, 10 and 12.
 4. *Mastodon iOS (official)* — IceCubes's domain with different structure: a Core Data
    `.xcdatamodeld` (wants a `momc` node), several extensions, generated-code build phases,
    a big local SDK package.
@@ -2424,8 +2633,9 @@ fixture tier.
    four nodes.
 
 **B-80** `open` — **Projects that need macros.** The converter skips `macro` and `plugin`
-targets (`SwiftFormulaConverter.swift:594`). These are the acceptance tests for the day
-that changes, in rising cost:
+targets (`SwiftFormulaConverter.isCompilable`); since B-77 item 3 it names the build-tool
+plugins a target uses as not run, where it dropped them unsaid. These are the acceptance
+tests for the day that changes, in rising cost:
 
 1. *apple/sample-backyard-birds* — SwiftData's `@Model` comes from plugins shipped in the
    toolchain, so macro expansion is tested without building swift-syntax. Also widgets, a

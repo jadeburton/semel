@@ -37,6 +37,11 @@ struct SwiftCompilerConfiguration {
     let experimentalFeatures: [String]
     /// The target's Swift `.define` names, each a `-D`.
     let defines: [String]
+    /// The package a package target belongs to, `-package-name`, which SwiftPM passes to
+    /// every target so that `package` declarations are visible across the package's
+    /// targets (SE-0386): CodeEditTextView's `package(set) public var textStorage` does
+    /// not compile without one. A literal from the converter; nil for an app's target.
+    let packageName: String?
     /// The target's `.unsafeFlags`, passed as they stand after everything else the
     /// settings give, as SwiftPM places them. A JSON list in the setting, since a flag may
     /// hold the comma every other list here is joined with.
@@ -71,6 +76,7 @@ struct SwiftCompilerConfiguration {
         upcomingFeatures = Self.pathList(properties["upcomingFeatures"])
         experimentalFeatures = Self.pathList(properties["experimentalFeatures"])
         defines = Self.pathList(properties["defines"])
+        packageName = properties["packageName"].flatMap { $0.isEmpty ? nil : $0 }
         unsafeFlags = try Self.flagList(properties["unsafeFlags"])
         sourcePaths = Self.pathList(properties["sourcePaths"])
         excludedPaths = Self.pathList(properties["excludedPaths"])
@@ -148,6 +154,8 @@ struct SwiftCompilerConfiguration {
 /// file beneath the folder" is not the same thing as "this target's sources", and the
 /// recursive walk needs both predicates to stay honest.
 struct SourceScope {
+    static let documentationCatalogExtension = "docc"
+
     let roots: [String]
     let sourcePaths: [String]
     let excludedPaths: [String]
@@ -168,7 +176,14 @@ struct SourceScope {
 
     /// A folder is worth walking when it is under a listed source path *or* an ancestor
     /// of one — `sources: ["Core/Thing.swift"]` still has to descend through `Core`.
+    /// Never a documentation catalog: SwiftPM and Xcode take a `.docc` folder as one
+    /// item for `docc`, and the Swift a tutorial keeps in it — SwiftTreeSitter's
+    /// `Documentation.docc/Code/…package.swift`, which imports `PackageDescription` — is
+    /// not the target's.
     func includesFolder(_ fullPath: String) -> Bool {
+        guard (fullPath as NSString).pathExtension.lowercased() != Self.documentationCatalogExtension else {
+            return false
+        }
         guard let relative = relativePath(of: fullPath) else {
             return sourcePaths.isEmpty
         }
@@ -209,8 +224,10 @@ struct SwiftCompiler: Node {
     /// At 2, no module interface and no `swiftinterface` port: a package target's
     /// `-warnings-as-errors` made swiftc's warning that an interface wants library evolution
     /// fatal (B-77). At 3, the folder's tree is asked for on `inputFolderTrees`, where its
-    /// subfolders were walked on `inputSubfolders` a level per run (B-135).
-    public static let implementationVersion = 3
+    /// subfolders were walked on `inputSubfolders` a level per run (B-135). At 4, a
+    /// `.docc` folder is not walked for sources, and `packageName` is `-package-name`
+    /// (B-77).
+    public static let implementationVersion = 4
 
     // MARK: Ports
 
@@ -502,6 +519,9 @@ struct SwiftCompiler: Node {
         }
 
         arguments.append("-module-name");                    arguments.append(moduleName)
+        if let packageName = inputs.configuration.packageName {
+            arguments.append("-package-name");               arguments.append(packageName)
+        }
 
         if let languageMode = try swiftLanguageModeVersion(inputs.configuration.languageMode) {
             arguments.append("-swift-version");              arguments.append(languageMode)

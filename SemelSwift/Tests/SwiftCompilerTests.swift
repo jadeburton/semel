@@ -223,6 +223,20 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/target/Core/Thing.swift"])
     }
 
+    /// A documentation catalog is one item to SwiftPM, never sources: SwiftTreeSitter keeps a
+    /// tutorial's `Package.swift` in its `Documentation.docc`, which imports
+    /// `PackageDescription` and failed the target's compile when it was taken (B-77).
+    func test_doesNotTakeSourcesFromADocumentationCatalog() throws {
+        let output = try makeTool().process(input: try makeInput(
+            folder: try manifest("input:/pkg/SwiftTreeSitter", [file("Parser.swift"), folder("Documentation.docc")]),
+            subfolders: ["input:/pkg/SwiftTreeSitter/Documentation.docc":
+                            try manifest("input:/pkg/SwiftTreeSitter/Documentation.docc", [folder("Code")]),
+                         "input:/pkg/SwiftTreeSitter/Documentation.docc/Code":
+                            try manifest("input:/pkg/SwiftTreeSitter/Documentation.docc/Code", [file("package.swift")])]))
+
+        XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/SwiftTreeSitter/Parser.swift"])
+    }
+
     func test_skipsExcludedPaths() throws {
         let output = try makeTool().process(input: try makeInput(
             folder: try manifest("input:/pkg/target", [file("Keep.swift"), file("Drop.swift"), folder("Vendor")]),
@@ -528,6 +542,26 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         ])
         let sourceIndex = try XCTUnwrap(arguments.firstIndex(of: "input:/ext/Sources/Main.swift"), "\(arguments)")
         XCTAssertEqual(Array(arguments[(sourceIndex + 1)...]), ["-warnings-as-errors", "-Xcc", "-Wl,-a,-b"])
+    }
+
+    /// A package target is compiled in its package, as SwiftPM compiles it, so that a
+    /// `package` declaration — CodeEditTextView's `package(set) public var textStorage` —
+    /// is seen by the package's other targets (B-77). An app's target names none.
+    func test_aPackageTargetIsCompiledWithItsPackagesName() throws {
+        var input = try makeInput(folder: try manifest("input:/ext/Sources", [file("Main.swift")]),
+                                  extraConfiguration: ["packageName=CodeEditTextView"]).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/ext/Sources/Main.swift": .value(try "// main".intern())]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        let arguments = executor.lastArguments
+        let moduleIndex = try XCTUnwrap(arguments.firstIndex(of: "-module-name"), "\(arguments)")
+        XCTAssertEqual(Array(arguments[moduleIndex...].prefix(4)), ["-module-name", "GRDB", "-package-name", "CodeEditTextView"])
+
+        var appInput = try makeInput(folder: try manifest("input:/app/Sources", [file("App.swift")])).inputValues
+        appInput[SwiftCompiler.inputSourceFiles] = ["input:/app/Sources/App.swift": .value(try "// app".intern())]
+        _ = try makeTool().process(input: ProcessInput(inputValues: appInput))
+        XCTAssertFalse(executor.lastArguments.contains("-package-name"), "\(executor.lastArguments)")
     }
 }
 

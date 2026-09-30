@@ -111,8 +111,11 @@ struct SwiftFormulaConverter: Node {
     /// at 14, a xib or a storyboard among a target's resources is compiled into its bundle
     /// by ibtool rather than copied (B-77); at 15, a target's folder and a binary target's
     /// package are asked for as trees, one wire each, where their subfolders were walked a
-    /// level a pass (B-135).
-    public static let implementationVersion = 15
+    /// level a pass (B-135); at 16, a `byName` dependency on another package waits only for
+    /// the package of that name, not for every dependency the manifest declares, every
+    /// target compiles with `SWIFT_PACKAGE` defined and its package named, and a `.docc`
+    /// catalog is not walked (B-77).
+    public static let implementationVersion = 16
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -429,6 +432,9 @@ struct SwiftFormulaConverter: Node {
         if !unlockedFolders.isEmpty {
             NodeNotice.post(DependencyLockCheck.notice(unlocked: unlockedFolders))
         }
+        if let notice = Self.pluginNotice(manifests: everyManifest) {
+            NodeNotice.post(notice)
+        }
         return .init(
             outputValues: [Self.formulaOutput: .value(try formula.intern()),
                            Self.infoLog: .value("")],
@@ -467,6 +473,32 @@ struct SwiftFormulaConverter: Node {
         .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(messageDataObjectHash: try reason.intern())),
                              Self.infoLog: .value("")],
               inputWireSpecs: demands.wireSpecs(selfWiring: selfWiringSpecs))
+    }
+
+    // MARK: - Plugins
+
+    /// What the conversion says about the build-tool plugins its targets name, which it
+    /// does not run; nil when none names one.
+    ///
+    /// A plugin is a program the package builds and runs during the build — SwiftLint's
+    /// runs a downloaded `swiftlint` over the target's sources and writes nothing the build
+    /// uses; others generate sources. Running one hermetically wants a design: its
+    /// executable built or taken from an `.artifactbundle`, a sandbox with the target's
+    /// files and a work folder, and the commands it returns — each a node whose outputs a
+    /// compile takes as sources. Until then a target builds without its plugins, and the
+    /// conversion names them, rather than dropping them unsaid. A test target's are not
+    /// named: no test target is built.
+    private static func pluginNotice(manifests: [SPMManifest]) -> String? {
+        let named = manifests.flatMap { manifest in
+            manifest.targets.filter { $0.isCompilable && !$0.pluginUsages.isEmpty }.map { target in
+                "\(target.pluginUsages.map(\.description).joined(separator: ", ")) on \(target.name)"
+            }
+        }
+        guard !named.isEmpty else {
+            return nil
+        }
+        return "Build-tool plugins are not run (B-77): \(named.joined(separator: "; ")). "
+             + "Each target builds without what its plugins would do."
     }
 
     // MARK: - Stalls
@@ -780,9 +812,13 @@ struct SwiftFormulaConverter: Node {
         /// build waiting for it would wait forever.
         ///
         /// A `product` dependency names its package. A `byName` dependency that is not a
-        /// local target could be a product of any dependency, so when one exists every
-        /// dependency is followed: waiting for one too many is a stall the user can see;
-        /// dropping one that was needed is a compile failure that explains nothing.
+        /// local target names the package dependency of that name, as SwiftPM's own
+        /// resolution reads it (`nameForTargetDependencyResolutionOnly`): CodeEditSourceEditor's
+        /// `"CodeEditTextView"` is its `CodeEditTextView.git` dependency, and its
+        /// test-only swift-custom-dump, which Xcode never fetches, is not waited for. One
+        /// naming no dependency could be a product of any, so then every dependency is
+        /// followed: waiting for one too many is a stall the user can see; dropping one
+        /// that was needed is a compile failure that explains nothing.
         func referencedDependencies() -> [SPMPackageDependency] {
             let localTargets = Set(targets.map(\.name))
             var referenced   = Set<String>()
@@ -794,7 +830,10 @@ struct SwiftFormulaConverter: Node {
                     if let package = dependency.packageName {
                         referenced.insert(package.lowercased())
                     } else if dependency.isByName, let name = dependency.targetName, !localTargets.contains(name) {
-                        return packageDependencies
+                        guard let named = packageDependencies.first(where: { $0.isNamed(name) }) else {
+                            return packageDependencies
+                        }
+                        referenced.insert(named.identity.lowercased())
                     }
                 }
             }
@@ -882,6 +921,18 @@ struct SwiftFormulaConverter: Node {
             if case .vendored(_, _, let origin) = self { return origin }
             return nil
         }
+
+        /// Whether a target's `byName` dependency names this package: by its identity, or
+        /// by the repository's name, ignoring case as identities do.
+        func isNamed(_ dependencyName: String) -> Bool {
+            let lowercased = dependencyName.lowercased()
+            switch self {
+            case .local(let identity, _):
+                return identity.lowercased() == lowercased
+            case .vendored(let identity, let name, _):
+                return identity.lowercased() == lowercased || name.lowercased() == lowercased
+            }
+        }
     }
 
     private struct SPMRegistryDependency: Decodable {
@@ -928,7 +979,7 @@ struct SwiftFormulaConverter: Node {
         let name: String
         let type: String?
         let path: String?
-        let dependencies: [SPMTargetDependency]
+        var dependencies: [SPMTargetDependency]
         /// Explicit `sources:` list, relative to the target's path.  Empty means the whole
         /// directory, which is the usual case.
         let sources: [String]
@@ -1000,6 +1051,7 @@ struct SwiftFormulaConverter: Node {
         /// has to know which platform is being built.
         var hasPlatformConditionalSetting: Bool {
             linkerSettings.contains { $0.platforms != nil } || swiftSettings.contains { $0.platforms != nil }
+                || dependencies.contains { $0.platforms != nil }
         }
 
         /// What compiling this target's Swift takes from its `swiftSettings` on `platform`,
@@ -1061,8 +1113,13 @@ struct SwiftFormulaConverter: Node {
         let url: String?
         let checksum: String?
 
+        /// The plugins the target names in `plugins:` — SwiftLint, on CodeEdit's packages.
+        /// None is run (`SwiftFormulaConverter.pluginNotice`).
+        let pluginUsages: [SPMPluginUsage]
+
         enum CodingKeys: String, CodingKey {
             case name, type, path, dependencies, sources, exclude, settings, resources, publicHeadersPath, url, checksum
+            case pluginUsages
         }
 
         /// One entry of a target's `resources` as `dump-package` emits it:
@@ -1225,6 +1282,7 @@ struct SwiftFormulaConverter: Node {
             publicHeadersPath = try? c.decode(String.self, forKey: .publicHeadersPath)
             url          = try? c.decode(String.self, forKey: .url)
             checksum     = try? c.decode(String.self, forKey: .checksum)
+            pluginUsages = (try? c.decode([SPMPluginUsage].self, forKey: .pluginUsages)) ?? []
             overridePackageFolder = nil
         }
 
@@ -1251,6 +1309,37 @@ struct SwiftFormulaConverter: Node {
         // via a module.modulemap.  They have no Swift sources and cannot be compiled
         // with SwiftCompiler.
         var isSystemLibrary: Bool { type == "system-target" || type == "system" }
+    }
+
+    /// One entry of a target's `plugins:`, as `dump-package` emits it:
+    /// `{"plugin": ["SwiftLint", "SwiftLintPlugin"]}`, the package absent for a plugin of
+    /// the target's own package.
+    struct SPMPluginUsage: Decodable, Equatable {
+        let name: String
+        let package: String?
+
+        init(name: String, package: String?) {
+            self.name    = name
+            self.package = package
+        }
+
+        enum CodingKeys: String, CodingKey { case plugin }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let fields = try container.decode([String?].self, forKey: .plugin)
+            guard let name = fields.first ?? nil else {
+                throw DecodingError.dataCorruptedError(forKey: .plugin, in: container,
+                                                       debugDescription: "a plugin usage names no plugin")
+            }
+            self.name    = name
+            self.package = fields.dropFirst().first ?? nil
+        }
+
+        /// `SwiftLint (SwiftLintPlugin)`, or the name alone for the package's own plugin.
+        var description: String {
+            package.map { "\(name) (\($0))" } ?? name
+        }
     }
 
     /// One `linkerSettings` entry the link carries (B-55).
@@ -1381,37 +1470,75 @@ struct SwiftFormulaConverter: Node {
         let packageName: String?
         /// A `byName` dependency, which may be a local target or a product of any dependency.
         let isByName: Bool
+        /// `.when(platforms:)` as SwiftPM names them (`macos`, `ios`); nil for every one.
+        /// LanguageClient depends on ProcessEnv on macOS alone, and its
+        /// `#if canImport(ProcessEnv)` hides `localProcessChannel` from a build without it.
+        let platforms: [String]?
 
         private struct AnyKey: CodingKey {
             var stringValue: String
             var intValue: Int? { nil }
-            init(_ s: String)          { stringValue = s }
+            init(_ string: String)     { stringValue = string }
             init?(stringValue: String) { self.stringValue = stringValue }
             init?(intValue: Int)       { nil }
         }
 
+        /// One element of the array form: a name, nothing, or an object — a product's
+        /// module aliases, or the condition, `{"platformNames": ["macos"]}`, which is last.
+        private enum Field: Decodable {
+            case text(String)
+            case object(platformNames: [String]?)
+            case absent
+
+            private enum ConditionKeys: String, CodingKey { case platformNames }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.singleValueContainer()
+                if container.decodeNil() {
+                    self = .absent
+                } else if let text = try? container.decode(String.self) {
+                    self = .text(text)
+                } else {
+                    let object = try decoder.container(keyedBy: ConditionKeys.self)
+                    self = .object(platformNames: try object.decodeIfPresent([String].self, forKey: .platformNames))
+                }
+            }
+
+            var text: String? {
+                guard case .text(let text) = self else { return nil }
+                return text
+            }
+        }
+
         init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: AnyKey.self)
+            let container = try decoder.container(keyedBy: AnyKey.self)
             var found: String?
             var package: String?
+            var conditionPlatforms: [String]?
             var byName = false
 
             for key in ["byName", "target", "product"] {
-                guard found == nil, c.contains(AnyKey(key)) else { continue }
-                if let arr = try? c.decode([String?].self, forKey: AnyKey(key)) {
-                    let present = arr.compactMap { $0 }
-                    found = present.first
-                    if key == "product", present.count >= 2 { package = present[1] }
-                } else if let sub = try? c.nestedContainer(keyedBy: AnyKey.self, forKey: AnyKey(key)),
-                          let n   = try? sub.decode(String.self, forKey: AnyKey("name")) {
-                    found = n
-                    if key == "product" { package = try? sub.decode(String.self, forKey: AnyKey("package")) }
+                guard found == nil, container.contains(AnyKey(key)) else { continue }
+                if let fields = try? container.decode([Field].self, forKey: AnyKey(key)) {
+                    let texts = fields.compactMap(\.text)
+                    found = texts.first
+                    if key == "product", texts.count >= 2 { package = texts[1] }
+                    // A condition on a configuration alone names no platform (`[]`): the
+                    // dependency is kept, a package being built in no configuration here.
+                    if let last = fields.last, case .object(let platformNames) = last, platformNames?.isEmpty == false {
+                        conditionPlatforms = platformNames
+                    }
+                } else if let object = try? container.nestedContainer(keyedBy: AnyKey.self, forKey: AnyKey(key)),
+                          let name   = try? object.decode(String.self, forKey: AnyKey("name")) {
+                    found = name
+                    if key == "product" { package = try? object.decode(String.self, forKey: AnyKey("package")) }
                 }
                 byName = (key == "byName")
             }
             targetName  = found
             packageName = package
             isByName    = byName
+            platforms   = conditionPlatforms
         }
     }
 
@@ -1487,6 +1614,10 @@ struct SwiftFormulaConverter: Node {
             let manifest = packageFolder.flatMap { externalManifests[$0] } ?? rootManifest
             placed.packageName = manifest.name
             placed.packageLanguageMode = manifest.languageMode
+            // A dependency conditional on platforms is one only where it holds, as SwiftPM
+            // builds it; the package is vendored whatever the platform, as SwiftPM
+            // resolves it (`referencedDependencies`).
+            placed.dependencies = target.dependencies.filter { Self.holds(platforms: $0.platforms, on: platform) }
             placed.clangInfo = clangInfo(target, folder)
             placed.resources = resources(placed, folder)
             return placed
@@ -1995,6 +2126,10 @@ struct SwiftFormulaConverter: Node {
         return identifier
     }
 
+    /// What SwiftPM defines for every target of a package: `-D SWIFT_PACKAGE` for Swift,
+    /// `-DSWIFT_PACKAGE=1` for C, which code tells a package build from an Xcode one by.
+    static let swiftPackageCondition = "SWIFT_PACKAGE"
+
     // "MyTarget-A" → "compilerMyTarget_A"  (must be a valid formula identifier)
     private func compilerFuncName(for targetName: String) -> String {
         "compiler\(sanitizedIdentifier(targetName))"
@@ -2115,7 +2250,8 @@ struct SwiftFormulaConverter: Node {
     /// path, looks for it. The include finder is not used: these targets include by search
     /// path (`#include <parser.h>`), which it cannot resolve.
     ///
-    /// The target's `.define` settings are the preprocessor's `defines`, a key of their
+    /// The target's `.define` settings are the preprocessor's `defines`, after
+    /// `SWIFT_PACKAGE=1`, which SwiftPM defines for every C target, a key of their
     /// own rather than `arguments`: a literal replaces the key it names in the settings it
     /// is laid over, so a define carried as `arguments` would drop the project's own
     /// `clang.preprocessor.arguments` for every target that has one. The compiler gets
@@ -2143,9 +2279,7 @@ struct SwiftFormulaConverter: Node {
         let folderWires = folders.map { "            '\($0)': Folder(path: '\($0)').manifest" }
 
         var literals = objectiveCLiterals(target: target, includingModuleName: true)
-        if !target.cDefines.isEmpty {
-            literals["defines"] = target.cDefines.joined(separator: ",")
-        }
+        literals["defines"] = (["\(Self.swiftPackageCondition)=1"] + target.cDefines).joined(separator: ",")
         let configExpr = Self.configurationExpression(namespace: Self.clangPreprocessorNamespace,
                                                       packageFolder: buildRoot(defaultingTo: packageFolder),
                                                       literals: literals)
@@ -2227,8 +2361,13 @@ struct SwiftFormulaConverter: Node {
         if !swiftSettings.experimentalFeatures.isEmpty {
             derived["experimentalFeatures"] = swiftSettings.experimentalFeatures.joined(separator: ",")
         }
-        if !swiftSettings.defines.isEmpty {
-            derived["defines"] = swiftSettings.defines.joined(separator: ",")
+        // SwiftPM defines `SWIFT_PACKAGE` for every target it compiles, and code branches
+        // on it: GRDB 6 imports its `CSQLite` shims under it and the SDK's `SQLite3`
+        // otherwise, which lacks them. And it names the package, so that a `package`
+        // declaration is seen by the package's other targets.
+        derived["defines"] = ([Self.swiftPackageCondition] + swiftSettings.defines).joined(separator: ",")
+        if let packageName = target.packageName {
+            derived["packageName"] = Self.c99Identifier(packageName)
         }
         // A JSON list rather than comma-joined: a flag is free text, and may hold a comma.
         if !swiftSettings.unsafeFlags.isEmpty {
