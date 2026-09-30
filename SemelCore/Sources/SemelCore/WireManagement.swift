@@ -174,10 +174,11 @@ extension Wire {
             throw WireError.failedToDeleteWire
         }
 
-        let fromNode = try database.node.select(nodeID: fromNodeID).makeNode()
-
-        let noOutputWires = try fromNode.hasNoOutputWires()
-        let deletable     = try fromNode.canBeDeleted()
+        // A kind this server does not link cannot be asked, and is deletable once nothing
+        // reads it (`NodeRecord.deleteUnlinked`).
+        let fromRecord    = try database.node.select(nodeID: fromNodeID)
+        let noOutputWires = try database.wire.select(comingFromNodeID: fromNodeID).isEmpty
+        let deletable     = try fromRecord.linkedNodeType == nil || fromRecord.makeNode().canBeDeleted()
 
         if noOutputWires && deletable {
             // fromNode has no remaining consumers — mark it for deferred deletion.

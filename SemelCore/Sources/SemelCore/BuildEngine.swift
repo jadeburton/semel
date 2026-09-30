@@ -820,6 +820,13 @@ public final class BuildEngine {
                         continue
                     }
                     try nodeRecord.setScheduled(false)
+                    // Nothing can run a kind this server does not link. Its error is its
+                    // result, written here with the other results (B-130).
+                    guard nodeRecord.linkedNodeType != nil else {
+                        try nodeRecord.publishUnlinkedKindError()
+                        settleTally.noteResult(nodeID: nodeID, fromCache: false)
+                        continue
+                    }
                     running.insert(nodeID)
                     runningDescriptions.append((nodeID, describeForProgress(nodeRecord)))
                     group.addTask {
@@ -1017,6 +1024,11 @@ public final class BuildEngine {
     func processOneNode(_ nodeRecord: NodeRecord) throws {
         try nodeRecord.setScheduled(false)
 
+        guard nodeRecord.linkedNodeType != nil else {
+            try nodeRecord.publishUnlinkedKindError()
+            return
+        }
+
         let node = try nodeRecord.makeNode()
         guard type(of: node).descriptor.hasInputs else {
             Debug.warn("attempted to process a node that declares no inputs")
@@ -1057,6 +1069,13 @@ extension BuildEngine {
 
             // Skip if already cascade-deleted by an earlier step in this pass.
             guard try database.node.find(nodeID: nodeID) != nil else {
+                continue
+            }
+
+            guard nodeRecord.linkedNodeType != nil else {
+                if try nodeRecord.deleteUnlinked() {
+                    deletedCount += 1
+                }
                 continue
             }
 

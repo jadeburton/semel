@@ -162,7 +162,10 @@ public final class RequestHandler {
             FatalErrors.handler(error)
             return (.error(.unrecoverable(message: "\(error)")), nil)
         } catch {
-            return (.error(.nodeError(description: error.localizedDescription)), nil)
+            // Interpolated, as the client prints its own errors: `localizedDescription` of a
+            // Swift error that is not a `LocalizedError` is "The operation couldn't be
+            // completed", a type name and a case number.
+            return (.error(.nodeError(description: "\(error)")), nil)
         }
     }
 

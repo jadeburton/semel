@@ -1046,6 +1046,17 @@ inside the dataflow model: it can be wired, downstream nodes can see it, and it 
 keys. A private state field would be invisible to all three. The fix is to declare what that
 output means, not to invent a state slot beside the ports.
 
+*A node whose type is gone keeps the rule (B-130).* A row of a kind the server no longer
+links cannot run, and when woken publishes an error naming its kind on the ports it holds —
+a function of its row, as a node whose `process` always throws is — so its readers carry it
+and the report names it, rather than the push that woke it failing or the server refusing
+the graph at launch. What it leans on: the collector deletes such a node once nothing reads
+it without asking its type whether to keep it, because what `canBeDeleted` keeps is user
+intent, and only the engine's own `StaticFile` and `Folder`, always linked, hold any. If an
+external port kind lets a plugin declare a source of its own, a plugin's node could be held
+by user intent too, and that has to be readable from the row — a pin on a port, as
+`Folder`'s is — not asked of a type that may be gone.
+
 *Cost to know before starting.* If either external inputs or structural dependencies become
 declared, `StaticFile` and `Folder` become nodes the engine schedules and processes — which is
 arguably more correct, since a push *is* an event that should run the node. But

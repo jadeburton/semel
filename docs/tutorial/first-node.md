@@ -13,7 +13,8 @@ term stops making sense.
 
 Last walked through at commit `d5cc9f1`, Parts 1 and 2 again when the prompt learned to
 print a settle summary, and every transcript again when a build learned to print its
-summary once, after its last settle, with the artifact diff under it. The commits in
+summary once, after its last settle, with the artifact diff under it; the cleanup's
+wrong-order transcripts when a node of a removed type became an error the report names. The commits in
 between change documents, comments, tests and the shape of the reference node's loop — not
 what anything prints.
 
@@ -642,7 +643,7 @@ Now the experiments from Part 2, on your own node:
 
 Keep the node if you like it. If you want the checkout back as it was, the order matters,
 because your graph database holds a `MyLineCounter` node and a server built without that
-type cannot read it.
+type cannot run it.
 
 First, in the **shell** terminal, take the product out of the formula: delete the
 `lines.txt` line from `~/semel-playground/hello/hello.fmla`. Then, at the **prompt**:
@@ -682,23 +683,63 @@ meant to delete, while `semelserv` keeps the type it was linked with.
 
 Restart `semelserv` in the **server** terminal. In the **shell**, `git status` is clean.
 
-Do it the other way round — remove the type first — and the next build that wakes the node
-says so:
+Do it the other way round — remove the type first, restart `semelserv` — and the graph
+still holds your node, of a type the server no longer has. Nothing is said while nothing
+wakes it: a build with no change is clean, and exports the `lines.txt` it already had. The
+next build that wakes the node says so. Add a line to `hello2.c`, as in Part 4, and build:
 
 ```
+Push folder: hello
+Push file: hello/hello.fmla [no change]
+Push file: hello/semel.config [no change]
+Push file: hello/src/common.h [no change]
+Push file: hello/src/hello.c [no change]
+Push file: hello/src/hello.h [no change]
+Push file: hello/src/hello2.c
+Push file: hello/src/main.c [no change]
+Settled.
+❌ 11 nodes scheduled, 8 computed, 3 from cache, 2 errors
+2 errors across 2 nodes:
+
 ❌ ProjectBuilder #13 'input:/hello/hello.fmla'
    · no node type is registered under the name 'MyLineCounter'
+
+❌ kind 43 #37
+   · its kind 43 is a type this server does not link. Link the type again, or take it out of the formula and build, which lets the node go; reset discards the derived state that is stuck.
+   · and 1 node downstream carries it
 ```
 
-The number after `#` is the node's row in the graph, the same one `check` names it by;
-yours depends on what the home held before, so it may differ.
+Two failures, one cause. The formula names a type the server does not register, and the
+node the formula made from it is still in the graph, named by its kind — the number you
+gave `MyLineCounter` — since there is no longer a type to name it by. The one downstream
+is `lines.txt`, and a failed build exports nothing. The number after `#` is the node's row
+in the graph, the same one `check` names it by; yours depends on what the home held before,
+so it may differ.
 
 The way out is the same step you skipped: delete the `lines.txt` line from the formula and
-build again. That clears the error, though while a stale row survives a build that wakes
-it may stop pushing at a bare
-`The operation couldn’t be completed. (SemelNodeKit.TypeRegistryError error 1.)` and
-export nothing; `check` names the row. `reset` clears that. It is not scoped to this
-tutorial — what you pushed is kept, and everything built from it is discarded and rebuilt: every product and
+build again.
+
+```
+Push folder: hello
+Push file: hello/hello.fmla
+Push file: hello/semel.config [no change]
+Push file: hello/src/common.h [no change]
+Push file: hello/src/hello.c [no change]
+Push file: hello/src/hello.h [no change]
+Push file: hello/src/hello2.c [no change]
+Push file: hello/src/main.c [no change]
+Settled.
+✅ 2 nodes scheduled, 2 computed, 0 from cache, 0 errors
+   disappeared: output:/hello/lines.txt
+No errors.
+Exported 3 files into /Users/you/semel-playground/out
+```
+
+Nothing reads your node any more, so the graph lets it go, as it lets go of any node
+nothing reads, and `check` finds nothing. Linking the type again would have done as well:
+the node comes back as it was. For derived state that stays stuck whatever you do, the
+node's line names the last resort, `reset`. It is not scoped to this tutorial — what you
+pushed is kept, and everything built from it is discarded and rebuilt: every product and
 intermediate of every project in this home, not only of `hello`. The cached builds are
 kept, so that rebuild is a pass of cache lookups rather than a cold build. The graph it
 discards is copied aside first, and the reply says where:
