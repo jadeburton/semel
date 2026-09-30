@@ -53,6 +53,7 @@ final class XcodeProjectTests: XCTestCase {
                     "INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
                     "INFOPLIST_KEY_UILaunchScreen_Generation[sdk=macosx*]" = NO;
                     INFOPLIST_FILE = IceCubesApp/Info.plist;
+                    GENERATE_INFOPLIST_FILE = YES;
                     ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
                 }; };
                 C4 = { isa = XCBuildConfiguration; name = Release; buildSettings = { PRODUCT_NAME = "Ice Cubes"; }; };
@@ -751,6 +752,77 @@ final class XcodeProjectTests: XCTestCase {
         XCTAssertEqual(third.asked, second.asked, "a package's own folders, and a folder two levels down, are not asked about")
         XCTAssertTrue(third.isComplete)
         XCTAssertEqual(third.packagePaths, ["../Shared/Kit", "Modules/Networking", "Packages/Timeline"])
+    }
+
+    /// The shapes CodeEdit's project gives its app's products (B-77): one product through
+    /// several dependencies, some naming its remote package and some — left from when it
+    /// was a local package — none, or a second reference to the same repository that the
+    /// project no longer lists; a product the frameworks phase links that the target's
+    /// dependencies do not name; and SwiftLint's plugin, a target dependency on a
+    /// `plugin:` product.
+    static let codeEditProductsFixture = """
+        // !$*UTF8*$!
+        {
+            archiveVersion = 1;
+            objectVersion = 73;
+            objects = {
+                P1 = { isa = PBXProject; buildConfigurationList = CL1; mainGroup = G1; targets = ( T1 );
+                       packageReferences = ( R1, R3, R4, R5 ); };
+                CL1 = { isa = XCConfigurationList; buildConfigurations = ( C1 ); };
+                C1 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { }; };
+                G1 = { isa = PBXGroup; children = ( SG1 ); sourceTree = "<group>"; };
+                SG1 = { isa = PBXFileSystemSynchronizedRootGroup; path = CodeEdit; sourceTree = "<group>"; };
+                R1 = { isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/CodeEditApp/CodeEditSourceEditor"; };
+                R2 = { isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/CodeEditApp/CodeEditSourceEditor"; };
+                R3 = { isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/ChimeHQ/LanguageClient"; };
+                R4 = { isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/lukepistrol/SwiftLintPlugin"; };
+                R5 = { isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/thecoolwinter/SwiftTerm"; };
+                T1 = { isa = PBXNativeTarget; name = CodeEdit; productType = "com.apple.product-type.application";
+                       buildConfigurationList = CL1; buildPhases = ( BP1 ); fileSystemSynchronizedGroups = ( SG1 );
+                       dependencies = ( TD1 );
+                       packageProductDependencies = ( PD1, PD2, PD3, PD4, PD5, PD6 ); };
+                BP1 = { isa = PBXFrameworksBuildPhase; files = ( BF1, BF2 ); };
+                BF1 = { isa = PBXBuildFile; productRef = PD2; };
+                BF2 = { isa = PBXBuildFile; productRef = PD7; };
+                TD1 = { isa = PBXTargetDependency; productRef = PD8; };
+                PD1 = { isa = XCSwiftPackageProductDependency; productName = CodeEditSourceEditor; };
+                PD2 = { isa = XCSwiftPackageProductDependency; package = R1; productName = CodeEditSourceEditor; };
+                PD3 = { isa = XCSwiftPackageProductDependency; package = R2; productName = CodeEditSourceEditor; };
+                PD4 = { isa = XCSwiftPackageProductDependency; productName = SwiftTerm; };
+                PD5 = { isa = XCSwiftPackageProductDependency; package = R5; productName = SwiftTerm; };
+                PD6 = { isa = XCSwiftPackageProductDependency; productName = Timeline; };
+                PD7 = { isa = XCSwiftPackageProductDependency; package = R3; productName = LanguageClient; };
+                PD8 = { isa = XCSwiftPackageProductDependency; package = R4; productName = "plugin:SwiftLint"; };
+            };
+            rootObject = P1;
+        }
+        """
+
+    /// Xcode finds a product by name in the whole package graph, so a dependency naming no
+    /// package is the remote package's product when another names it with one — here
+    /// before that one is even met, and with the project listing another reference to the
+    /// same repository — and a product is linked once however many dependencies name it.
+    /// One no dependency names with a package is a local package's, as before.
+    func test_aProductNamingNoPackageIsTheRemoteOneWhenAnotherDependencyNamesItsPackage() throws {
+        let target = try XCTUnwrap(try XcodeProject(pbxproj: Data(Self.codeEditProductsFixture.utf8)).targets.first)
+
+        XCTAssertEqual(target.packageProducts, [
+            .remote(product: "CodeEditSourceEditor", repositoryURL: "https://github.com/CodeEditApp/CodeEditSourceEditor"),
+            .remote(product: "SwiftTerm", repositoryURL: "https://github.com/thecoolwinter/SwiftTerm"),
+            .local(product: "Timeline"),
+            .remote(product: "LanguageClient", repositoryURL: "https://github.com/ChimeHQ/LanguageClient"),
+        ], "each once; the frameworks phase's LanguageClient too; the plugin is not a product to link")
+    }
+
+    /// A target dependency on a `plugin:` product is a plugin the target runs.
+    func test_readsThePluginsATargetRuns() throws {
+        let target = try XCTUnwrap(try XcodeProject(pbxproj: Data(Self.codeEditProductsFixture.utf8)).targets.first)
+
+        XCTAssertEqual(target.plugins, ["SwiftLint"])
+        XCTAssertEqual(XcodeProjectConverter.pluginNotice(targets: [target]),
+                       "Build-tool plugins are not run (B-77): SwiftLint on CodeEdit. "
+                     + "Each target builds without what its plugins would do.")
+        XCTAssertNil(XcodeProjectConverter.pluginNotice(targets: [try app()]), "no plugin, nothing said")
     }
 
     /// NetNewsWire's project file names no local package; its synchronized folders are

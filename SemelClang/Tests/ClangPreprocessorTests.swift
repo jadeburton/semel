@@ -146,6 +146,60 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         XCTAssertFalse(executor.lastArguments.contains("-fmodules"), "\(executor.lastArguments)")
     }
 
+    /// What `clang -E -fmodules -fmodule-name=Kit` writes for a source including a header
+    /// its target's own `include/module.modulemap` covers (CodeEditTextViewObjC's), cut down.
+    private let preprocessedWithOwnModule = """
+        # 1 "src/Kit.m"
+        #pragma clang module import Foundation /* clang -E: implicit import for #import <Foundation/Foundation.h> */
+        # 1 "include/Kit.h" 1
+        #pragma clang module begin Kit
+        #pragma clang module import Foundation /* clang -E: implicit import for #import <Foundation/Foundation.h> */
+        void KitHello(void);
+        #pragma clang module end /*Kit*/
+        # 3 "src/Kit.m" 2
+        void KitHello(void) { NSLog(@"hi"); }
+
+        """
+
+    /// The compiler, handed preprocessed text alone, cannot enter the module the two pragmas
+    /// mark (`must specify '-fmodule-name'`, and with it `no module map available`), so the
+    /// target's own module is handed on as the text it is (B-77). Imports stay, and so does
+    /// what was between the pragmas.
+    func test_theTargetsOwnModuleIsHandedOnAsText() throws {
+        executor.producedFiles["src/Kit.m.p"] = Array(preprocessedWithOwnModule.utf8)
+        let output = try makeTool().process(input: try makeInput(sourcePath: "src/Kit.m", otherSettings: objectiveCSettings))
+
+        let text = try XCTUnwrap(output.outputValues[ClangPreprocessor.output]).expectValue().resolveAsString()
+        XCTAssertEqual(text, """
+            # 1 "src/Kit.m"
+            #pragma clang module import Foundation /* clang -E: implicit import for #import <Foundation/Foundation.h> */
+            # 1 "include/Kit.h" 1
+            #pragma clang module import Foundation /* clang -E: implicit import for #import <Foundation/Foundation.h> */
+            void KitHello(void);
+            # 3 "src/Kit.m" 2
+            void KitHello(void) { NSLog(@"hi"); }
+
+            """)
+    }
+
+    /// Only the target's own module, a submodule of it included, and each end with its own
+    /// begin; bytes that are not UTF-8 pass through untouched. Without modules, or for a
+    /// language that loads none, the output is clang's as it stands.
+    func test_onlyTheOwnModulesPragmasAreTakenOut() throws {
+        let text = Array("#pragma clang module begin Kit.Private\na\n#pragma clang module begin Other\nb\n".utf8)
+            + [0xFF, 0x0A]
+            + Array("#pragma clang module end /*Other*/\n#pragma clang module end /*Kit.Private*/\n#pragma clang module begin Kitchen\nc\n#pragma clang module end /*Kitchen*/\n".utf8)
+        let kept = ClangPreprocessor.ownModuleAsText(text, moduleName: "Kit")
+
+        XCTAssertEqual(kept, Array("a\n#pragma clang module begin Other\nb\n".utf8) + [0xFF, 0x0A]
+                           + Array("#pragma clang module end /*Other*/\n#pragma clang module begin Kitchen\nc\n#pragma clang module end /*Kitchen*/\n".utf8))
+
+        executor.producedFiles["src/plain.c.p"] = Array(preprocessedWithOwnModule.utf8)
+        let plain = try makeTool().process(input: try makeInput(sourcePath: "src/plain.c", otherSettings: objectiveCSettings))
+        XCTAssertEqual(try XCTUnwrap(plain.outputValues[ClangPreprocessor.output]).expectValue().resolveAsString(),
+                       preprocessedWithOwnModule)
+    }
+
     /// A hand-written formula's Objective-C is compiled as it always was: neither flag is
     /// Semel's choice to make for it.
     func test_withoutTheSettingsAnObjectiveCSourceTakesNeitherFlag() throws {

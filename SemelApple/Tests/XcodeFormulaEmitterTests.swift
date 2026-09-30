@@ -87,6 +87,22 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         }
     }
 
+    /// A documentation catalog in the sources phase — CodeEdit lists `Documentation.docc`
+    /// — builds nothing a build uses, and is passed over rather than refused (B-77).
+    func test_aListedDocumentationCatalogIsPassedOver() throws {
+        let pbxproj = XcodeProjectTests.groupedFixture
+            .replacingOccurrences(of: "F4 = { isa = PBXFileReference; lastKnownFileType = text; path = LICENSE.txt;",
+                                  with: "F4 = { isa = PBXFileReference; lastKnownFileType = folder.documentationcatalog; path = Documentation.docc;")
+            .replacingOccurrences(of: "BP1 = { isa = PBXSourcesBuildPhase; files = ( BF1, BF2, BF3 ); };",
+                                  with: "BP1 = { isa = PBXSourcesBuildPhase; files = ( BF1, BF2, BF3, BF8 ); };\n"
+                                      + "BF8 = { isa = PBXBuildFile; fileRef = F4; };")
+            .replacingOccurrences(of: "files = ( BF4, BF5, BF6 )", with: "files = ( BF4, BF5 )")
+        let formula = try groupedFormula(pbxproj: pbxproj)
+
+        XCTAssertTrue(formula.contains("'App/App.swift': StaticFile(path: 'input:/repo/App/App.swift').output"), formula)
+        XCTAssertFalse(formula.contains("Documentation.docc"), formula)
+    }
+
     /// A listed Objective-C source is compiled through clang, over the folder it sits in
     /// as its header folder, and linked beside the Swift.
     func test_aListedObjectiveCSourceIsCompiledAndLinked() throws {
@@ -201,6 +217,36 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(signer.contains("        entitlements: ['entitlements': InfoPlistBuilder(\n            buildSettings: '{"), signer)
         XCTAssertTrue(signer.contains("\"PRODUCT_BUNDLE_IDENTIFIER\":\"com.example.IceCubesApp\""), signer)
         XCTAssertTrue(signer.contains("            base: ['base': StaticFile(path: 'input:/repo/App/App.entitlements').output]\n        ).plist]"), signer)
+    }
+
+    /// The sandbox and hardened-runtime settings are entitlements Xcode signs with, laid
+    /// over the file's: CodeEdit's app sets `RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION`,
+    /// without which its hardened app cannot load Sparkle (B-77). A setting alone, with no
+    /// file, is entitlements too; `NO` and an empty access level are none.
+    func test_theSandboxAndRuntimeSettingsAreEntitlements() throws {
+        let settings: [String: String] = [
+            "CODE_SIGN_ENTITLEMENTS": "App/App.entitlements",
+            "ENABLE_APP_SANDBOX": "YES",
+            "RUNTIME_EXCEPTION_ALLOW_JIT": "YES",
+            "RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION": "YES",
+            "ENABLE_INCOMING_NETWORK_CONNECTIONS": "NO",
+            "ENABLE_USER_SELECTED_FILES": "readwrite",
+            "ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER": "readonly",
+            "ENABLE_FILE_ACCESS_MUSIC_FOLDER": "",
+        ]
+        let signer = try block("func signed_IceCubesApp() =\n    CodeSigner(", in: try macFormula(extra: settings))
+        XCTAssertTrue(signer.contains("        entitlements: ['entitlements': InfoPlistBuilder(\n"
+                                      + "            keys: '{\"com.apple.security.app-sandbox\":true,"
+                                      + "\"com.apple.security.cs.allow-jit\":true,"
+                                      + "\"com.apple.security.cs.disable-library-validation\":true,"
+                                      + "\"com.apple.security.files.downloads.read-only\":true,"
+                                      + "\"com.apple.security.files.user-selected.read-write\":true}',\n"), signer)
+        XCTAssertTrue(signer.contains("            base: ['base': StaticFile(path: 'input:/repo/App/App.entitlements').output]\n        ).plist]"), signer)
+
+        let settingsAlone = try block("func signed_IceCubesApp() =\n    CodeSigner(",
+                                      in: try macFormula(extra: ["RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION": "YES"]))
+        XCTAssertTrue(settingsAlone.contains("keys: '{\"com.apple.security.cs.disable-library-validation\":true}'"), settingsAlone)
+        XCTAssertFalse(settingsAlone.contains("base: ['base': StaticFile"), settingsAlone)
     }
 
     /// A named identity is read and said: Semel signs ad-hoc, whatever certificate the
@@ -499,7 +545,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         let app = try XCTUnwrap(emitter.project.targets.first(where: \.isApplication))
         let settings = XcodeBuildSettings(values: [
             "PRODUCT_NAME": "Ice Cubes", "PRODUCT_MODULE_NAME": "Ice_Cubes", "PRODUCT_BUNDLE_IDENTIFIER": "com.example.app",
-            "IPHONEOS_DEPLOYMENT_TARGET": "18.0", "TARGETED_DEVICE_FAMILY": "1,2,7",
+            "IPHONEOS_DEPLOYMENT_TARGET": "18.0", "TARGETED_DEVICE_FAMILY": "1,2,7", "GENERATE_INFOPLIST_FILE": "YES",
             "INFOPLIST_KEY_UISupportedInterfaceOrientations": "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft",
             "INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad": "UIInterfaceOrientationPortrait",
             "INFOPLIST_KEY_UIApplicationSceneManifest_Generation": "YES",
@@ -518,6 +564,29 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertEqual(keys["UIDeviceFamily"] as? [Int], [1, 2], "family 7 is visionOS, not built here")
     }
 
+    /// With `GENERATE_INFOPLIST_FILE = NO` the project's file is the plist and Xcode passes
+    /// the `INFOPLIST_KEY_*` settings over: CodeEdit's `INFOPLIST_KEY_NSPrincipalClass`
+    /// names `CodeEdit.CodeEditApplication`, a class its app does not have, and an app
+    /// whose plist names it exits at launch (B-77). The keys Xcode's processing adds to
+    /// any plist stay.
+    func test_theInfoPlistKeySettingsAreReadOnlyForAGeneratedPlist() throws {
+        let emitter = try emitter()
+        let app = try XCTUnwrap(emitter.project.targets.first(where: \.isApplication))
+        var values = ["PRODUCT_NAME": "CodeEdit", "PRODUCT_BUNDLE_IDENTIFIER": "app.codeedit.CodeEdit",
+                      "MACOSX_DEPLOYMENT_TARGET": "14.0", "GENERATE_INFOPLIST_FILE": "NO",
+                      "INFOPLIST_KEY_NSPrincipalClass": "CodeEdit.CodeEditApplication"]
+
+        let notGenerated = try TargetIdentity(target: app, settings: XcodeBuildSettings(values: values), sdk: "macosx")
+            .generatedInfoPlistKeys(settings: XcodeBuildSettings(values: values))
+        XCTAssertNil(notGenerated["NSPrincipalClass"])
+        XCTAssertEqual(notGenerated["LSMinimumSystemVersion"] as? String, "14.0")
+
+        values["GENERATE_INFOPLIST_FILE"] = "YES"
+        let generated = try TargetIdentity(target: app, settings: XcodeBuildSettings(values: values), sdk: "macosx")
+            .generatedInfoPlistKeys(settings: XcodeBuildSettings(values: values))
+        XCTAssertEqual(generated["NSPrincipalClass"] as? String, "CodeEdit.CodeEditApplication")
+    }
+
     /// Two settings can name one plist key: `X_Generation` stands for an empty `X`, and
     /// `X_iPad` for `X~ipad` a project may also write literally. Which of them the key
     /// ends up holding must not depend on `Dictionary`'s iteration order, which is seeded
@@ -528,7 +597,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         let generated = ["UILaunchScreen", "UIApplicationShortcutItems", "UIApplicationSceneManifest"]
         let iPad = ["UIStatusBarStyle", "UIUserInterfaceStyle", "UILaunchStoryboardName"]
 
-        var values = ["PRODUCT_NAME": "Ice Cubes", "PRODUCT_BUNDLE_IDENTIFIER": "com.example.app"]
+        var values = ["PRODUCT_NAME": "Ice Cubes", "PRODUCT_BUNDLE_IDENTIFIER": "com.example.app", "GENERATE_INFOPLIST_FILE": "YES"]
         for key in generated {
             values["INFOPLIST_KEY_\(key)_Generation"] = "YES"
             values["INFOPLIST_KEY_\(key)"] = "from the literal setting"
@@ -815,7 +884,14 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertEqual(folder(iOS, 7, "Extra/"), "Extra")
         XCTAssertEqual(folder(iOS, 10), "Frameworks")
         XCTAssertNil(folder(mac, 16))
+        XCTAssertNil(folder(mac, 16, "Extras"), "the products folder itself is outside the bundle")
         XCTAssertNil(folder(mac, 0, "/usr/local"))
+        // The products folder with a path naming one of the bundle's folders by its setting
+        // is that folder: CodeEdit's extension point, `$(EXTENSIONS_FOLDER_PATH)` (B-77).
+        XCTAssertEqual(folder(mac, 16, "$(EXTENSIONS_FOLDER_PATH)"), "Contents/Extensions")
+        XCTAssertEqual(folder(iOS, 16, "$(EXTENSIONS_FOLDER_PATH)"), "Extensions")
+        XCTAssertEqual(folder(mac, 16, "$(CONTENTS_FOLDER_PATH)/Library/LoginItems"), "Contents/Library/LoginItems")
+        XCTAssertEqual(folder(mac, 16, "$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Extra"), "Contents/Resources/Extra")
     }
 
     /// A folder a copy-files phase names is copied whole, and one copied into a folder the

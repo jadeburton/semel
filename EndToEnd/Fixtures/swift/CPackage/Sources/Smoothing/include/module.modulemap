@@ -1,0 +1,4 @@
+module Smoothing {
+    header "Smoothing.h"
+    export *
+}

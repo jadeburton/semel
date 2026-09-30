@@ -65,6 +65,10 @@ enum Projects {
     /// target that `@import`s Foundation and compiles only under ARC, and C targets with an
     /// umbrella header or an umbrella directory and no module map — one of them nested in
     /// the folder of the Swift target that excludes and imports it, as Zip's Minizip is.
+    /// And what CodeEdit's packages need (B-77 item 3): an Objective-C target whose own
+    /// module map covers its header, `SWIFT_PACKAGE` in Swift and Objective-C, a `package`
+    /// function called across targets, Swift in a documentation catalog that must not be
+    /// compiled, and a dependency held on macOS alone.
     static let swiftCPackage = Project(
         name: "swift-c-package",
         source: .fixture(folder: "."),

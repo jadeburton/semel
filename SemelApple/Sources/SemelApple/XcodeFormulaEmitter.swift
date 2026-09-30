@@ -66,11 +66,13 @@ struct XcodeFormulaEmitter {
 
         /// The folder of the bundle a copy-files phase copies to, with the phase's own
         /// folder under it — Xcode's `dstSubfolderSpec` as the bundle lays it out — or nil
-        /// for a destination outside the bundle: the products folder (16), an absolute
-        /// path (0), and the rest Xcode no longer offers.
+        /// for a destination outside the bundle: the products folder (16) but for a path
+        /// naming a folder of the bundle by its setting, an absolute path (0), and the
+        /// rest Xcode no longer offers.
         func folder(forCopyDestination destination: XcodeProject.CopyDestination) -> String? {
             let contents = isShallow ? "" : "Contents/"
             let base: String
+            var path = destination.path
             switch destination.subfolderSpec {
             case 1:  base = ""
             case 6:  base = isShallow ? "" : "Contents/MacOS"
@@ -79,13 +81,38 @@ struct XcodeFormulaEmitter {
             case 11: base = "\(contents)SharedFrameworks"
             case 12: base = "\(contents)SharedSupport"
             case 13: base = "\(contents)PlugIns"
+            case 16:
+                // The products folder, which is outside the bundle unless the path names one
+                // of the bundle's own folders by its setting: CodeEdit's ExtensionKit
+                // extension point goes to `$(EXTENSIONS_FOLDER_PATH)`, `Contents/Extensions`.
+                guard let (variable, folder) = bundleFolderVariables(contents: contents).first(where: {
+                    path == "$(\($0.0))" || path.hasPrefix("$(\($0.0))/")
+                }) else {
+                    return nil
+                }
+                base = folder
+                path = String(path.dropFirst("$(\(variable))".count))
             default: return nil
             }
-            let path = destination.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            path = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             if path.isEmpty {
                 return base
             }
             return base.isEmpty ? path : "\(base)/\(path)"
+        }
+
+        /// The settings Xcode names a bundle's folders by, relative to the products folder
+        /// (`EXTENSIONS_FOLDER_PATH` is `CodeEdit.app/Contents/Extensions`), each with its
+        /// folder in the bundle; the longer names first, as none is a prefix of another.
+        func bundleFolderVariables(contents: String) -> [(String, String)] {
+            [("UNLOCALIZED_RESOURCES_FOLDER_PATH", resourcesFolder),
+             ("SHARED_FRAMEWORKS_FOLDER_PATH", "\(contents)SharedFrameworks"),
+             ("SHARED_SUPPORT_FOLDER_PATH", "\(contents)SharedSupport"),
+             ("EXECUTABLE_FOLDER_PATH", isShallow ? "" : "Contents/MacOS"),
+             ("EXTENSIONS_FOLDER_PATH", "\(contents)Extensions"),
+             ("FRAMEWORKS_FOLDER_PATH", frameworksFolder),
+             ("CONTENTS_FOLDER_PATH", isShallow ? "" : "Contents"),
+             ("PLUGINS_FOLDER_PATH", "\(contents)PlugIns")]
         }
 
         func resourcePath(at path: String) -> String {
@@ -189,14 +216,14 @@ struct XcodeFormulaEmitter {
         for anExtension in extensions {
             let extensionSettings = try settings(anExtension)
             let parts = try bundle(for: anExtension, settings: extensionSettings, listing: listing)
-            let signed = signedBundle(parts, for: anExtension, settings: extensionSettings)
+            let signed = try signedBundle(parts, for: anExtension, settings: extensionSettings)
             blocks += signed.blocks
             plugIns.append(.tree(folder: layout.plugInPath(named: anExtension.productFileName),
                                  inputs: "\(Self.quoted(anExtension.productFileName)): \(signed.expression)"))
         }
         var parts = try bundle(for: application, settings: applicationSettings, listing: listing)
         parts.parts += plugIns
-        let signed = signedBundle(parts, for: application, settings: applicationSettings)
+        let signed = try signedBundle(parts, for: application, settings: applicationSettings)
         blocks += signed.blocks
         blocks.append("product \(Self.quoted(applicationBundle + "/")) = \(signed.expression)")
         return blocks.joined(separator: "\n\n") + "\n"
@@ -222,8 +249,11 @@ struct XcodeFormulaEmitter {
     /// NetNewsWire's `Mac Developer`), said in the formula and signed ad-hoc anyway: Semel
     /// signs with no certificate, and an ad-hoc signature is what lets the app run here.
     /// The setting a real identity would take is the signer's `identity`.
+    ///
+    /// The entitlements are the file's and, laid over them, what the target's sandbox and
+    /// hardened-runtime settings stand for (`entitlements(fromSettings:)`).
     func signedBundle(_ parts: BundleParts, for target: XcodeProject.Target,
-                      settings: XcodeBuildSettings) -> (blocks: [String], expression: String) {
+                      settings: XcodeBuildSettings) throws -> (blocks: [String], expression: String) {
         let name = FormulaIdentifier.sanitized(target.name)
         var blocks = parts.blocks
         blocks.append(parts.tree(named: "bundle_\(name)"))
@@ -247,15 +277,78 @@ struct XcodeFormulaEmitter {
                   "    CodeSigner(\n" +
                   "        configuration: ['config': \(signerConfiguration)],\n" +
                   "        bundle: [\(Self.quoted(target.productFileName)): bundle_\(name)().files]"
-        if let entitlements = settings["CODE_SIGN_ENTITLEMENTS"].map(Self.projectRelativePath), !entitlements.isEmpty {
-            signer += ",\n        entitlements: ['entitlements': InfoPlistBuilder(\n" +
-                      "            \(InfoPlistBuilder.buildSettingsProperty): '\(parts.buildSettingsJSON)',\n" +
-                      "            base: ['base': StaticFile(path: \(Self.quoted("\(build.projectFolder)/\(entitlements)"))).output]\n" +
-                      "        ).plist]"
+        let entitlementsFile = settings["CODE_SIGN_ENTITLEMENTS"].map(Self.projectRelativePath).flatMap { $0.isEmpty ? nil : $0 }
+        let entitlementsFromSettings = Self.entitlements(fromSettings: settings)
+        if entitlementsFile != nil || !entitlementsFromSettings.isEmpty {
+            signer += ",\n        entitlements: ['entitlements': InfoPlistBuilder(\n"
+            if !entitlementsFromSettings.isEmpty {
+                signer += "            \(InfoPlistBuilder.keysProperty): '\(try Self.json(entitlementsFromSettings))',\n"
+            }
+            signer += "            \(InfoPlistBuilder.buildSettingsProperty): '\(parts.buildSettingsJSON)'"
+            if let entitlementsFile {
+                signer += ",\n            base: ['base': StaticFile(path: \(Self.quoted("\(build.projectFolder)/\(entitlementsFile)"))).output]"
+            }
+            signer += "\n        ).plist]"
         }
         signer += "\n    )"
         blocks.append(signer)
         return (blocks, "signed_\(name)().files")
+    }
+
+    /// The Boolean settings Xcode's Signing & Capabilities editor writes for the sandbox
+    /// and the hardened runtime (`CoreBuildSystem.xcspec`, "App Sandbox & Hardened
+    /// Runtime"), each with the entitlement Xcode signs with when it is `YES`.
+    static let entitlementFlags: [String: String] = [
+        "ENABLE_APP_SANDBOX": "com.apple.security.app-sandbox",
+        "AUTOMATION_APPLE_EVENTS": "com.apple.security.automation.apple-events",
+        "RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES": "com.apple.security.cs.allow-dyld-environment-variables",
+        "RUNTIME_EXCEPTION_ALLOW_JIT": "com.apple.security.cs.allow-jit",
+        "RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY": "com.apple.security.cs.allow-unsigned-executable-memory",
+        "RUNTIME_EXCEPTION_DEBUGGING_TOOL": "com.apple.security.cs.debugger",
+        "RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION": "com.apple.security.cs.disable-executable-page-protection",
+        "RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION": "com.apple.security.cs.disable-library-validation",
+        "ENABLE_INCOMING_NETWORK_CONNECTIONS": "com.apple.security.network.server",
+        "ENABLE_OUTGOING_NETWORK_CONNECTIONS": "com.apple.security.network.client",
+        "ENABLE_RESOURCE_ACCESS_CAMERA": "com.apple.security.device.camera",
+        "ENABLE_RESOURCE_ACCESS_AUDIO_INPUT": "com.apple.security.device.audio-input",
+        "ENABLE_RESOURCE_ACCESS_USB": "com.apple.security.device.usb",
+        "ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY": "com.apple.security.personal-information.photos-library",
+        "ENABLE_RESOURCE_ACCESS_PRINTING": "com.apple.security.print",
+        "ENABLE_RESOURCE_ACCESS_BLUETOOTH": "com.apple.security.device.bluetooth",
+        "ENABLE_RESOURCE_ACCESS_CONTACTS": "com.apple.security.personal-information.addressbook",
+        "ENABLE_RESOURCE_ACCESS_LOCATION": "com.apple.security.personal-information.location",
+        "ENABLE_RESOURCE_ACCESS_CALENDARS": "com.apple.security.personal-information.calendars",
+    ]
+
+    /// The ones that take `readonly` or `readwrite`, each the entitlement's stem, which the
+    /// value completes: `ENABLE_USER_SELECTED_FILES = readwrite` is
+    /// `com.apple.security.files.user-selected.read-write`.
+    static let entitlementAccessLevels: [String: String] = [
+        "ENABLE_USER_SELECTED_FILES": "com.apple.security.files.user-selected",
+        "ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER": "com.apple.security.files.downloads",
+        "ENABLE_FILE_ACCESS_PICTURE_FOLDER": "com.apple.security.assets.pictures",
+        "ENABLE_FILE_ACCESS_MUSIC_FOLDER": "com.apple.security.assets.music",
+        "ENABLE_FILE_ACCESS_MOVIES_FOLDER": "com.apple.security.assets.movies",
+    ]
+
+    /// What a target's sandbox and hardened-runtime settings add to its entitlements, as
+    /// Xcode adds them when it signs: CodeEdit's `RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION
+    /// = YES` is the entitlement that lets its app, signed with the hardened runtime, load
+    /// Sparkle, whose signature is not its own (B-77). Without it the process is killed at
+    /// launch: `Library not loaded … different Team IDs`.
+    static func entitlements(fromSettings settings: XcodeBuildSettings) -> [String: Any] {
+        var entitlements: [String: Any] = [:]
+        for (setting, entitlement) in entitlementFlags.sorted(by: { $0.key < $1.key }) where settings[setting] == "YES" {
+            entitlements[entitlement] = true
+        }
+        for (setting, stem) in entitlementAccessLevels.sorted(by: { $0.key < $1.key }) {
+            switch settings[setting] {
+            case "readonly":  entitlements["\(stem).read-only"] = true
+            case "readwrite": entitlements["\(stem).read-write"] = true
+            default:          break
+            }
+        }
+        return entitlements
     }
 
     // MARK: - Packages
@@ -378,9 +471,10 @@ struct XcodeFormulaEmitter {
         // no folder of its own compiles what it borrows, and nothing else.
         // A target lists its files through groups (B-77) or owns synchronized folders;
         // either way it has to have a Swift source somewhere. A listed C-family source is
-        // compiled through clang beside it; any other listed file that is not Swift is a
-        // build this converter cannot write yet, said rather than dropped.
-        let everyListedSource = target.sourcePaths(forSDK: build.sdk)
+        // compiled through clang beside it; a documentation catalog gives nothing a build
+        // uses and is passed over; any other listed file that is not Swift is a build this
+        // converter cannot write yet, said rather than dropped.
+        let everyListedSource = target.sourcePaths(forSDK: build.sdk).filter { !Self.isDocumentationOnly($0) }
         let listedSources  = everyListedSource.filter { $0.hasSuffix(".swift") }
         let listedCFamily  = everyListedSource.filter(Self.isCFamilySource)
         let listedOther    = everyListedSource.filter { !$0.hasSuffix(".swift") && !Self.isCFamilySource($0) }
@@ -923,6 +1017,13 @@ struct XcodeFormulaEmitter {
     /// Folders Xcode compiles with a tool Semel does not run.
     static let notBuiltFolderExtensions: Set<String> = ["xcdatamodeld", "xcdatamodel", "docc"]
 
+    /// A documentation catalog, which a sources phase may list (CodeEdit's
+    /// `Documentation.docc`): `docc` runs only in a documentation build, so an app's
+    /// bundle holds nothing of it, and a build that leaves it out builds what Xcode's does.
+    static func isDocumentationOnly(_ path: String) -> Bool {
+        (path as NSString).pathExtension.lowercased() == "docc"
+    }
+
     /// The role of the folder at `relativePath` in a synchronized folder whose group names
     /// `explicitFolders`; placed, when copied whole, as a file there would be: under its
     /// own name, or its language folder's.
@@ -1265,6 +1366,13 @@ struct TargetIdentity {
         // `UISupportedInterfaceOrientations~ipad` — and the last one written wins. A
         // Dictionary's iteration order is seeded per process, so an unsorted walk would
         // put a different value in the emitted formula from one run to the next (B-04).
+        // Only when the plist is generated: with `GENERATE_INFOPLIST_FILE = NO` Xcode
+        // reads the project's file alone and passes these over, and CodeEdit's
+        // `INFOPLIST_KEY_NSPrincipalClass` names a class its app does not have, which
+        // `NSApplicationMain` exits on (B-77).
+        guard settings["GENERATE_INFOPLIST_FILE"] == "YES" else {
+            return keys
+        }
         for (setting, value) in settings.values.sorted(by: { $0.key < $1.key })
         where setting.hasPrefix("INFOPLIST_KEY_") {
             let key = String(setting.dropFirst("INFOPLIST_KEY_".count))

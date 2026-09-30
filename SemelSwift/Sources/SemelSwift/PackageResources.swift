@@ -80,9 +80,12 @@ enum PackageResources {
     static let interfaceBuilderExtensions: Set<String> = ["xib", "storyboard"]
 
     /// Whether the converter's walk descends into a folder of this name: not a hidden
-    /// one, and not one that is a resource whole.
+    /// one, not one that is a resource whole, and not a documentation catalog, which is
+    /// neither sources nor resources to a build (`SourceScope` passes it over too).
     static func isWalked(folderName: String) -> Bool {
-        !folderName.hasPrefix(".") && !wholeFolderExtensions.contains((folderName as NSString).pathExtension.lowercased())
+        let pathExtension = (folderName as NSString).pathExtension.lowercased()
+        return !folderName.hasPrefix(".") && !wholeFolderExtensions.contains(pathExtension)
+            && pathExtension != SourceScope.documentationCatalogExtension
     }
 
     /// Every resource of `target`, whose folder is `targetFolder`, read from `manifests`

@@ -108,7 +108,48 @@ public struct ClangPreprocessor: Node {
     /// 4: a `.S` is preprocessed as assembly with no standard, where it was taken for C.
     /// 5: `modules`, `objectiveCARC` and `moduleName` reach the command line (B-77).
     /// 6: a header folder's tree is asked for, where its subfolders were walked (B-135).
-    public static let implementationVersion = 6
+    /// 7: the target's own module is handed on as text, without the `#pragma clang module
+    /// begin`/`end` that mark it (B-77).
+    public static let implementationVersion = 7
+
+    /// `preprocessed` with the `#pragma clang module begin`/`end` lines around the target's
+    /// own module taken out, and everything between them kept.
+    ///
+    /// With modules and `-fmodule-name`, a header of the module being built is included as
+    /// text, as it should be, but when a module map in a header folder covers it — a
+    /// target's own `include/module.modulemap`, CodeEditTextViewObjC's — `-E` marks the text
+    /// as that module's with the two pragmas, so that a compile of it rebuilds the module.
+    /// The compiler, handed the text alone, fails on the first: `must specify
+    /// '-fmodule-name'`, and with it `no module map available`, since the map is not among
+    /// its inputs. Without them the text is what it is in SwiftPM's build of the file, the
+    /// target's headers read as text. Any other module's pragmas are kept, begin and end
+    /// paired, though `-E` writes an import for another module's header, never a begin.
+    /// Bytes, not a string: preprocessed text holds whatever bytes its string literals do.
+    static func ownModuleAsText(_ preprocessed: [UInt8], moduleName: String) -> [UInt8] {
+        let beginPrefix = Array("#pragma clang module begin ".utf8)
+        let endPrefix   = Array("#pragma clang module end".utf8)
+        let ownModule   = Array(moduleName.utf8)
+        let lines = preprocessed.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false)
+        var keptLines: [ArraySlice<UInt8>] = []
+        keptLines.reserveCapacity(lines.count)
+        // For each begin still open, whether it was taken out, so its end goes with it.
+        var openBegins: [Bool] = []
+        for line in lines {
+            if line.starts(with: beginPrefix) {
+                let named = line.dropFirst(beginPrefix.count).prefix { $0 != UInt8(ascii: " ") && $0 != UInt8(ascii: "\t") }
+                let isOwn = named.elementsEqual(ownModule)
+                    || (named.starts(with: ownModule) && named.dropFirst(ownModule.count).first == UInt8(ascii: "."))
+                openBegins.append(isOwn)
+                if isOwn {
+                    continue
+                }
+            } else if line.starts(with: endPrefix), let isOwn = openBegins.popLast(), isOwn {
+                continue
+            }
+            keptLines.append(line)
+        }
+        return Array(keptLines.joined(separator: [UInt8(ascii: "\n")]))
+    }
 
     public var thisNode: NodeRecord
 
@@ -355,7 +396,14 @@ public struct ClangPreprocessor: Node {
                                       inputFiles: inputFiles,
                                       expectedOutputFileNames: [outputFilename])
 
-        return .init(output: try result.asOutputNodeValue(tool: "clang", settings: settings),
+        var output = try result.asOutputNodeValue(tool: "clang", settings: settings)
+        if let moduleName = inputs.configuration.features.moduleName,
+           inputs.configuration.features.loadsModules(forLanguage: language),
+           case .value(let preprocessed) = output {
+            output = .value(try Self.ownModuleAsText(try preprocessed.resolve(), moduleName: moduleName).intern())
+        }
+
+        return .init(output: output,
                      errorLog: .value(try result.errorOutput.intern()),
                      infoLog: .value(try result.infoOutput.intern()),
                      headerInputFilesWireSpecs: headerInputFilesWireSpecs,
