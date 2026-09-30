@@ -130,29 +130,28 @@ final class PackageResourcesTests: SemelSwiftTestCase {
         }
         """
 
-    /// Runs the converter until it stops asking for subfolders, answering each demand from
-    /// `manifests`; a folder it asks for that is not there is answered empty.
+    /// The target folder's tree, folded from `manifests`: a folder they do not list holds
+    /// nothing.
+    private func targetTree(_ manifests: [String: FolderManifest]) throws -> NodeValue {
+        .value(try FolderSubtreeManifest.folding(at: targetFolder, listings: manifests.mapValues(\.entries)).toJSON().intern())
+    }
+
+    /// Runs the converter once, with the target folder's tree folded from `manifests`: the
+    /// tree is every folder below the target, so the pass that has it makes the formula.
     private func formula(manifests: [String: FolderManifest], packageManifest: String? = nil) throws -> String {
         let packageFolder = "input:/pkg"
         let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind))
-        var subfolders: [String: NodeValue] = [:]
-        for _ in 0..<6 {
-            let output = try converter.process(input: ProcessInput(inputValues: [
-                SwiftFormulaConverter.packageFolder:        ["folder": .value(try FolderManifest(baseFolderPath: packageFolder, entries: []).toJSON().intern())],
-                SwiftFormulaConverter.packageJSON:          ["json":   .value(try (packageManifest ?? libManifest).intern())],
-                SwiftFormulaConverter.externalPackageJSONs: [:],
-                SwiftFormulaConverter.targetFolders:        [targetFolder: .value(try XCTUnwrap(manifests[targetFolder]).toJSON().intern())],
-                SwiftFormulaConverter.targetSubfolders:     subfolders,
-            ]))
-            if case .value(let hash) = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]) {
-                return try hash.resolveAsString()
-            }
-            for folder in (output.inputWireSpecs[SwiftFormulaConverter.targetSubfolders] ?? [:]).keys where subfolders[folder] == nil {
-                subfolders[folder] = .value(try (manifests[folder] ?? manifest(folder)).toJSON().intern())
-            }
+        let output = try converter.process(input: ProcessInput(inputValues: [
+            SwiftFormulaConverter.packageFolder:        ["folder": .value(try FolderManifest(baseFolderPath: packageFolder, entries: []).toJSON().intern())],
+            SwiftFormulaConverter.packageJSON:          ["json":   .value(try (packageManifest ?? libManifest).intern())],
+            SwiftFormulaConverter.externalPackageJSONs: [:],
+            SwiftFormulaConverter.targetFolders:        [targetFolder: try targetTree(manifests)],
+        ]))
+        guard case .value(let hash) = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]) else {
+            XCTFail("the pass with the target's tree made no formula: \(String(describing: output.outputValues[SwiftFormulaConverter.formulaOutput]))")
+            return ""
         }
-        XCTFail("the converter kept asking for subfolders")
-        return ""
+        return try hash.resolveAsString()
     }
 
     /// The target compiles with the accessor's bundle name, its resources become one
@@ -210,18 +209,30 @@ final class PackageResourcesTests: SemelSwiftTestCase {
         XCTAssertTrue(formula.contains("func bundles_pkg() =\n    TreeMerger(input: []).files"), formula)
     }
 
-    /// The walk asks for every subfolder that is not a resource whole, and for nothing
-    /// inside a catalog or an `.lproj`.
-    func test_theConverterWalksSubfoldersButNotResourcesWhole() throws {
+    /// The tree is read into every subfolder that is not a resource whole, and not into a
+    /// catalog or an `.lproj`: what is below one is never read, so a subtree the store
+    /// cannot give back there changes nothing (B-135). The one demand is the target's tree.
+    func test_theConverterReadsSubfoldersButNotResourcesWhole() throws {
+        let unreadable = String(repeating: "0", count: 64)
+        let tree = FolderSubtreeManifest(entries: [
+            FolderSubtreeEntry(name: "Kit.swift", isFolder: false, isPinned: true),
+            FolderSubtreeEntry(name: "Assets.xcassets", isFolder: true, isPinned: true, subtree: unreadable),
+            FolderSubtreeEntry(name: "en.lproj", isFolder: true, isPinned: true, subtree: unreadable),
+            FolderSubtreeEntry(name: "Views", isFolder: true, isPinned: true,
+                               subtree: try FolderSubtreeManifest(entries: [FolderSubtreeEntry(name: "View.swift", isFolder: false, isPinned: true)])
+                                   .toJSON().intern()),
+        ])
         let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind))
         let output = try converter.process(input: ProcessInput(inputValues: [
             SwiftFormulaConverter.packageFolder:        ["folder": .value(try FolderManifest(baseFolderPath: "input:/pkg", entries: []).toJSON().intern())],
             SwiftFormulaConverter.packageJSON:          ["json":   .value(try libManifest.intern())],
             SwiftFormulaConverter.externalPackageJSONs: [:],
-            SwiftFormulaConverter.targetFolders:        [targetFolder: .value(try foodTruckKit[targetFolder]!.toJSON().intern())],
+            SwiftFormulaConverter.targetFolders:        [targetFolder: .value(try tree.toJSON().intern())],
         ]))
 
-        XCTAssertEqual(Set((output.inputWireSpecs[SwiftFormulaConverter.targetSubfolders] ?? [:]).keys),
-                       ["\(targetFolder)/Resources", "\(targetFolder)/Views"])
+        let formula = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]).expectValue().resolveAsString()
+        XCTAssertTrue(formula.contains("catalogs: ['Assets.xcassets': Folder(path: 'input:/pkg/Sources/Lib/Assets.xcassets').manifest]"), formula)
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]).rendered,
+                       [targetFolder: "Folder(path: '\(targetFolder)').subtreeManifest"])
     }
 }

@@ -37,48 +37,12 @@ final class FolderTreeWalkTests: XCTestCase {
         XCTAssertEqual(Set(specs.keys), ["input:/pkg/Sources/One.swift", "input:/pkg/Sources/Two.txt"])
     }
 
-    /// The same narrowing for subfolders: a caller can stop the walk from descending into
-    /// a subfolder it already knows is out of scope.
-    func test_subfolderSpecsRestrictsToTheFoldersIncludeAccepts() {
-        let manifest = FolderManifest(baseFolderPath: "input:/pkg",
-                                      entries: [folder("Core"), folder("Vendor")])
-
-        let specs = FolderTreeWalk.subfolderSpecs(of: [manifest]) { $0 != "input:/pkg/Vendor" }
-
-        XCTAssertEqual(specs.rendered, ["input:/pkg/Core": "Folder(path: 'input:/pkg/Core').manifest"])
-    }
-
-    /// From the root down, as far as the manifests that have arrived reach: a subfolder
-    /// whose manifest is still on its way is where the walk stops, and a manifest the root
-    /// no longer reaches is not walked however long it stays on its wire.
-    func test_subfolderSpecsBelowARootWalksAsFarAsTheArrivedManifestsReach() {
-        let arrived = [
-            "input:/src":           FolderManifest(baseFolderPath: "input:/src", entries: [file("a.c"), folder("lib")]),
-            "input:/src/lib":       FolderManifest(baseFolderPath: "input:/src/lib", entries: [folder("deep"), folder("skip")]),
-            "input:/src/gone":      FolderManifest(baseFolderPath: "input:/src/gone", entries: [folder("stale")]),
-        ]
-
-        let specs = FolderTreeWalk.subfolderSpecs(below: "input:/src", arrived: arrived) { !$0.hasSuffix("/skip") }
-
-        XCTAssertEqual(specs.keys.sorted(), ["input:/src/lib", "input:/src/lib/deep"])
-    }
-
-    /// Nothing below a root whose own manifest has not arrived.
-    func test_subfolderSpecsBelowARootThatHasNotArrivedIsEmpty() {
-        XCTAssertTrue(FolderTreeWalk.subfolderSpecs(below: "input:/src", arrived: [:]).isEmpty)
-    }
-
-    /// A subfolder that is a symbolic link holds what it names, and a walk reading files
-    /// descends into it; a walk building a tree does not, and is handed the link to place
-    /// (B-77).
-    func test_aWalkBuildingATreeDoesNotDescendIntoAFolderLink() {
+    /// A subfolder that is a symbolic link is handed to a node building a tree to place
+    /// where it stands, and no other subfolder is (B-77).
+    func test_aFolderLinkIsHandedToTheNodeBuildingATree() {
         let manifest = FolderManifest(baseFolderPath: "input:/F/Versions",
                                       entries: [folder("A"), .init(name: "Current", isFolder: true, isPinned: true, symbolicLinkTarget: "A")])
 
-        XCTAssertEqual(FolderTreeWalk.subfolderSpecs(of: [manifest]).keys.sorted(),
-                       ["input:/F/Versions/A", "input:/F/Versions/Current"])
-        XCTAssertEqual(FolderTreeWalk.subfolderSpecs(of: [manifest], intoSymbolicLinks: false).keys.sorted(),
-                       ["input:/F/Versions/A"])
         XCTAssertEqual(FolderTreeWalk.symbolicLinkFolders(of: [manifest]), ["input:/F/Versions/Current": "A"])
     }
 }

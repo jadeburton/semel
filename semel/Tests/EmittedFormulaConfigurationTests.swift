@@ -120,14 +120,14 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
         let folderManifest = FolderManifest(baseFolderPath: packageFolder, entries: [])
         let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind))
         // Every compilable target's folder, holding one Swift file: the converter asks for
-        // these to tell C targets from Swift ones (B-54), and a manifest is what says so.
+        // these to tell C targets from Swift ones (B-54), and the folder's tree is what says
+        // so (B-135).
         var targetFolders: [String: NodeValue] = [:]
         for (folder, source) in ["input:/repo/app/Sources/App": "App.swift",
                                  "input:/repo/app/Sources/Lib": "Lib.swift",
                                  "input:/repo/Helper/Sources/Helper": "Helper.swift"] {
-            let manifest = FolderManifest(baseFolderPath: folder,
-                                          entries: [FolderManifestEntry(name: source, isFolder: false, isPinned: true)])
-            targetFolders[folder] = .value(try manifest.toJSON().intern())
+            let tree = FolderSubtreeManifest(entries: [FolderSubtreeEntry(name: source, isFolder: false, isPinned: true)])
+            targetFolders[folder] = .value(try tree.toJSON().intern())
         }
         let output = try converter.process(input: ProcessInput(inputValues: [
             SwiftFormulaConverter.packageFolder: ["folder": .value(try folderManifest.toJSON().intern())],

@@ -20,15 +20,17 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind))
     }
 
-    /// The converter asks for every compilable target's folder manifest before generating
-    /// (B-54: the folder is what says whether a target is C or Swift). The manifests these
-    /// tests do not care about are supplied here from the JSON itself, one `.swift` file
-    /// per target; `folderContents` overrides a folder's entries for the tests that do.
-    private func targetFolderManifests(packageFolder: String,
-                                       json: String,
-                                       externalManifests: [String: String],
-                                       folderContents: [String: [FolderManifestEntry]]) throws -> [String: NodeValue] {
-        var manifests: [String: NodeValue] = [:]
+    /// The converter asks for every compilable target's folder as a tree before generating
+    /// (B-54: the folder is what says whether a target is C or Swift; B-77, B-135: the
+    /// folders below it say which resources it carries). The trees these tests do not care
+    /// about are supplied here from the JSON itself, one `.swift` file per target;
+    /// `folderContents` gives a folder's entries, and every folder's below it, for the
+    /// tests that do.
+    private func targetFolderTrees(packageFolder: String,
+                                   json: String,
+                                   externalManifests: [String: String],
+                                   folderContents: [String: [FolderManifestEntry]]) throws -> [String: NodeValue] {
+        var trees: [String: NodeValue] = [:]
         for (folder, text) in [(packageFolder, json)] + externalManifests.map { ($0.key, $0.value) } {
             let object = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
             for target in (object?["targets"] as? [[String: Any]]) ?? [] {
@@ -37,11 +39,12 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                 guard !["test", "system", "system-target", "plugin", "macro", "binary"].contains(type) else { continue }
                 let relative = PackageClangTarget.normalized(target["path"] as? String ?? "Sources/\(name)")
                 let path = PackageClangTarget.joined(folder, relative)
-                let entries = folderContents[path] ?? [FolderManifestEntry(name: "\(name).swift", isFolder: false, isPinned: true)]
-                manifests[path] = .value(try FolderManifest(baseFolderPath: path, entries: entries).toJSON().intern())
+                var listings = folderContents
+                listings[path] = folderContents[path] ?? [FolderManifestEntry(name: "\(name).swift", isFolder: false, isPinned: true)]
+                trees[path] = .value(try FolderSubtreeManifest.folding(at: path, listings: listings).toJSON().intern())
             }
         }
-        return manifests
+        return trees
     }
 
     private func convert(packageFolder: String = "input:/pkg",
@@ -62,47 +65,38 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             SwiftFormulaConverter.packageJSON:          ["json":   .value(try json.intern())],
             SwiftFormulaConverter.externalPackageJSONs: externalValues,
             SwiftFormulaConverter.targetFolders:        supplyTargetFolders
-                ? try targetFolderManifests(packageFolder: packageFolder, json: json,
-                                            externalManifests: externalManifests, folderContents: folderContents)
+                ? try targetFolderTrees(packageFolder: packageFolder, json: json,
+                                        externalManifests: externalManifests, folderContents: folderContents)
                 : [:],
-            SwiftFormulaConverter.targetSubfolders:     [:],
             SwiftFormulaConverter.dependencyLocks:        [:],
             SwiftFormulaConverter.dependencyContentRoots: [:],
         ]
-        // The converter walks each target's subfolders for its resources (B-77), one level
-        // per run: every subfolder it asks for is answered from `folderContents`, or as
-        // empty, until it stops asking. Every vendored package's lock (B-06) is answered
-        // from `locks` by its path, or as a file nobody pushed; the content root of each
-        // package whose lock is there, from `contentRoots`. The linker's settings, asked for
-        // when a linker setting is conditional on a platform (B-55), from `linkerSettings`,
-        // and left unanswered without it.
+        // Every tree the converter asks for holding binary targets' artifacts (B-77) is
+        // answered from `folderContents`, or as empty. Every vendored package's lock (B-06)
+        // is answered from `locks` by its path, or as a file nobody pushed; the content root
+        // of each package whose lock is there, from `contentRoots`. The linker's settings,
+        // asked for when a linker setting is conditional on a platform (B-55), from
+        // `linkerSettings`, and left unanswered without it.
         let converter = try makeConverter()
         for _ in 0..<8 {
             let output = try converter.process(input: ProcessInput(inputValues: inputValues))
             func asked(_ port: String) -> [String] {
                 (output.inputWireSpecs[port] ?? [:]).keys.filter { inputValues[port]?[$0] == nil }.sorted()
             }
-            let subfolders    = asked(SwiftFormulaConverter.targetSubfolders)
             let lockFiles     = asked(SwiftFormulaConverter.dependencyLocks)
             let lockedFolders = asked(SwiftFormulaConverter.dependencyContentRoots)
             let linkerConfigs = linkerSettings == nil ? [] : asked(SwiftFormulaConverter.linkerConfiguration)
             let binaryFolders = asked(SwiftFormulaConverter.binaryArtifactFolders)
-            guard !subfolders.isEmpty || !lockFiles.isEmpty || !lockedFolders.isEmpty || !linkerConfigs.isEmpty
-                    || !binaryFolders.isEmpty else {
+            guard !lockFiles.isEmpty || !lockedFolders.isEmpty || !linkerConfigs.isEmpty || !binaryFolders.isEmpty else {
                 return output
             }
             for folder in binaryFolders {
                 inputValues[SwiftFormulaConverter.binaryArtifactFolders, default: [:]][folder] =
-                    .value(try FolderManifest(baseFolderPath: folder, entries: folderContents[folder] ?? []).toJSON().intern())
+                    .value(try FolderSubtreeManifest.folding(at: folder, listings: folderContents).toJSON().intern())
             }
             for key in linkerConfigs {
                 inputValues[SwiftFormulaConverter.linkerConfiguration, default: [:]][key] =
                     .value(try XCTUnwrap(linkerSettings).intern())
-            }
-            for folder in subfolders {
-                let entries = folderContents[folder] ?? []
-                inputValues[SwiftFormulaConverter.targetSubfolders]?[folder] =
-                    .value(try FolderManifest(baseFolderPath: folder, entries: entries).toJSON().intern())
             }
             for lockFile in lockFiles {
                 inputValues[SwiftFormulaConverter.dependencyLocks]?[lockFile] =
@@ -113,7 +107,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                     .value(try XCTUnwrap(contentRoots[folder], "the converter asked for the content root of \(folder)"))
             }
         }
-        XCTFail("the converter kept asking for subfolders, locks or content roots")
+        XCTFail("the converter kept asking for trees, locks or content roots")
         return try converter.process(input: ProcessInput(inputValues: inputValues))
     }
 
@@ -1037,11 +1031,10 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         var output = try converter.process(input: ProcessInput(inputValues: inputValues))
         for _ in 0..<8 {
             var askedForMore = false
-            for port in [SwiftFormulaConverter.targetFolders, SwiftFormulaConverter.targetSubfolders,
-                         SwiftFormulaConverter.binaryArtifactFolders] {
+            for port in [SwiftFormulaConverter.targetFolders, SwiftFormulaConverter.binaryArtifactFolders] {
                 for folder in (output.inputWireSpecs[port] ?? [:]).keys where inputValues[port]?[folder] == nil {
                     inputValues[port, default: [:]][folder] =
-                        .value(try FolderManifest(baseFolderPath: folder, entries: []).toJSON().intern())
+                        .value(try FolderSubtreeManifest(entries: []).toJSON().intern())
                     askedForMore = true
                 }
             }
@@ -1071,13 +1064,14 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                      + "cannot be built either — product(s) Sparkle")
         XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]?.isEmpty, true,
                        "a binary target has no source folder")
-        XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.binaryArtifactFolders]?.isEmpty, true,
-                       "the package lists no semel-artifacts, so nothing under it is asked for")
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.binaryArtifactFolders]).rendered,
+                       ["input:/pkg": "Folder(path: 'input:/pkg').subtreeManifest"],
+                       "the package's own tree, which says it holds no semel-artifacts, and nothing under it")
     }
 
-    /// The folders of a vendored copy with no `semel-artifacts`: the package folder, which
-    /// is there, and nothing below it — a folder asked for that the copy lacks would be a
-    /// ghost its content root folds, and the lock would fail on it (B-133).
+    /// What a vendored copy with no `semel-artifacts` is asked for: the tree of the package
+    /// folder, which is there, and nothing below it — a folder asked for that the copy lacks
+    /// would be a ghost its content root folds, and the lock would fail on it (B-133).
     func test_aVendoredPackageIsAskedOnlyForTheArtifactFoldersItLists() throws {
         let vendored = "input:/repo/Dependencies/Sparkle"
         let root = """
@@ -1665,10 +1659,68 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let output = try convert(json: appOverCLib, supplyTargetFolders: false)
 
         XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]).rendered,
-                       ["input:/pkg/Sources/App": "Folder(path: 'input:/pkg/Sources/App').manifest",
-                        "input:/pkg/src":         "Folder(path: 'input:/pkg/src').manifest",
-                        "input:/pkg/extensions":  "Folder(path: 'input:/pkg/extensions').manifest"])
+                       ["input:/pkg/Sources/App": "Folder(path: 'input:/pkg/Sources/App').subtreeManifest",
+                        "input:/pkg/src":         "Folder(path: 'input:/pkg/src').subtreeManifest",
+                        "input:/pkg/extensions":  "Folder(path: 'input:/pkg/extensions').subtreeManifest"])
         XCTAssertNotNil(try pendingReason(output).range(of: "target folder"))
+    }
+
+    /// The passes a conversion takes, from a converter with nothing wired, answering each
+    /// pass's demands as the engine would, until one publishes a formula: the package's
+    /// folder and manifest, then every target's tree (B-135).
+    private func passesToConvert(json: String, listings: [String: [FolderManifestEntry]]) throws -> (passes: Int, formula: String) {
+        let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind, name: nil,
+                                                                       properties: ["path": "input:/pkg"], scheduled: false, identity: nil))
+        var inputValues: [String: [String: NodeValue]] = [:]
+        for pass in 1...8 {
+            let output = try converter.process(input: ProcessInput(inputValues: inputValues))
+            if case .value(let hash)? = output.outputValues[SwiftFormulaConverter.formulaOutput] {
+                return (pass, try hash.resolveAsString())
+            }
+            for (port, specs) in output.inputWireSpecs {
+                for (key, spec) in specs where inputValues[port]?[key] == nil {
+                    switch spec.outputPort {
+                    case FileSystemNodes.folderManifestPort:
+                        inputValues[port, default: [:]][key] =
+                            .value(try FolderManifest(baseFolderPath: key, entries: listings[key] ?? []).toJSON().intern())
+                    case FileSystemNodes.folderSubtreeManifestPort:
+                        inputValues[port, default: [:]][key] =
+                            .value(try FolderSubtreeManifest.folding(at: key, listings: listings).toJSON().intern())
+                    default:
+                        // The package's manifest, read by its reader.
+                        inputValues[port, default: [:]][key] = .value(try json.intern())
+                    }
+                }
+            }
+        }
+        XCTFail("no formula after eight passes")
+        return (0, "")
+    }
+
+    /// A target whose resources are three folders down is converted in the passes the
+    /// package's folder and manifest and the target's tree need — three, however deep the
+    /// target goes — where a walk over manifests took a pass per level (B-135).
+    func test_aTargetThreeFoldersDeepIsConvertedInThePassesItsTreeNeedsNotOnePerLevel() throws {
+        let json = """
+            {"name": "pkg", "dependencies": [],
+             "products": [{"name": "pkg", "targets": ["Lib"], "type": {"library": ["automatic"]}}],
+             "targets": [{"name": "Lib", "type": "regular", "path": "Sources/Lib", "dependencies": [], "resources": []}]}
+            """
+        let shallow = ["input:/pkg/Sources/Lib": [file("Lib.swift"), folder("en.lproj")],
+                       "input:/pkg/Sources/Lib/en.lproj": [file("Localizable.strings")]]
+        let deep = ["input:/pkg/Sources/Lib":          [file("Lib.swift"), folder("A")],
+                    "input:/pkg/Sources/Lib/A":        [folder("B")],
+                    "input:/pkg/Sources/Lib/A/B":      [folder("C")],
+                    "input:/pkg/Sources/Lib/A/B/C":    [folder("en.lproj")],
+                    "input:/pkg/Sources/Lib/A/B/C/en.lproj": [file("Localizable.strings")]]
+
+        let shallowConversion = try passesToConvert(json: json, listings: shallow)
+        let deepConversion    = try passesToConvert(json: json, listings: deep)
+
+        XCTAssertEqual(shallowConversion.passes, 3, "the package's folder and manifest, then the target's tree, then the formula")
+        XCTAssertEqual(deepConversion.passes, shallowConversion.passes, "three folders down costs no pass more")
+        XCTAssertTrue(deepConversion.formula.contains("Folder(path: 'input:/pkg/Sources/Lib/A/B/C/en.lproj').manifest"),
+                      deepConversion.formula)
     }
 
     func test_aTargetWhoseFolderHoldsCSourcesIsBuiltThroughTheClangNodes() throws {
@@ -2131,7 +2183,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             let output = try convert(json: json, supplyTargetFolders: false)
 
             XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]).rendered,
-                           ["input:/pkg": "Folder(path: 'input:/pkg').manifest"], "path: \"\(spelling)\"")
+                           ["input:/pkg": "Folder(path: 'input:/pkg').subtreeManifest"], "path: \"\(spelling)\"")
         }
     }
 
@@ -2141,7 +2193,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let output = try convert(json: json, supplyTargetFolders: false)
 
         let demanded = try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]).rendered
-        XCTAssertEqual(demanded["input:/pkg/src"], "Folder(path: 'input:/pkg/src').manifest", "\(demanded)")
+        XCTAssertEqual(demanded["input:/pkg/src"], "Folder(path: 'input:/pkg/src').subtreeManifest", "\(demanded)")
         XCTAssertFalse(demanded.keys.contains { $0.hasSuffix("/") }, "\(demanded)")
     }
 

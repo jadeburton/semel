@@ -6,10 +6,10 @@
 //  package manifest into one: a formula names the project —
 //  `include XcodeProjectConverter(path: <IceCubesApp.xcodeproj>, root: <.>).formula` —
 //  and the node wires what it needs itself: the project file, the xcconfig files it
-//  names and the files they include, the manifests of the folders that are the targets' sources, walked to
-//  every subfolder so the resources in them are known, and those of every synchronized
-//  folder and the folders directly in it, where Xcode finds local packages the project
-//  file does not name (`LocalPackageSearch`). No tool runs; the project file is
+//  names and the files they include, the trees of the folders that are the targets'
+//  sources, read to every subfolder so the resources in them are known, and those of every
+//  synchronized folder, whose folders directly in it are where Xcode finds local packages
+//  the project file does not name (`LocalPackageSearch`). No tool runs; the project file is
 //  a property list. `XcodeProject` reads it, `XcodeBuildSettings` evaluates it, and
 //  `XcodeFormulaEmitter` writes the formula; this node owns the wires and the waiting.
 
@@ -48,8 +48,9 @@ public struct XcodeProjectConverter: Node {
     /// folder leaves out nothing under it, and a bundle whose settings ask for the hardened
     /// runtime is signed with it (B-77); at 13, the application built is the one whose
     /// `SDKROOT` is of the SDK's platform family, not the first, so NetNewsWire's simulator
-    /// build is its iOS app (B-77).
-    public static let implementationVersion = 13
+    /// build is its iOS app (B-77); at 14, the targets' folders and the synchronized folders
+    /// are asked for as trees, one wire each, where they were walked a level a pass (B-135).
+    public static let implementationVersion = 14
 
     // MARK: Ports
 
@@ -59,9 +60,9 @@ public struct XcodeProjectConverter: Node {
     /// include, keyed by path. One the clone does not have arrives without a value: an
     /// `#include?` then moves on, and anything else is read as empty and reported.
     static let xcconfigs = "xcconfigs"
-    /// The targets' synchronized folders and every folder under them, and every other
-    /// synchronized folder of the project with the folders directly in it — where local
-    /// packages are found — keyed by path.
+    /// The subtree manifests of the targets' synchronized folders, and of every other
+    /// synchronized folder of the project — the folders directly in which are where local
+    /// packages are found — keyed by path (B-135).
     static let folders = "folders"
     static let formulaOutput = "formula"
     static let infoLog = "infoLog"
@@ -245,10 +246,10 @@ public struct XcodeProjectConverter: Node {
         let bundleTargets = project.bundleTargets(of: application)
         let embedded = Array(bundleTargets.dropFirst())
 
-        // ── the target's folders, walked ─────────────────────────────────────
-        // Demanded alongside the xcconfig files, so the two waits overlap.
-        let manifests = FolderTreeWalk.manifests(in: input, port: Self.folders)
-        let arrived = Dictionary(uniqueKeysWithValues: manifests.map { ($0.key, $0.manifest) })
+        // ── the target's folders, as trees ───────────────────────────────────
+        // Demanded alongside the xcconfig files, so the two waits overlap, and each whole on
+        // one wire, so however deep a folder goes it is in on the next pass (B-135).
+        let trees = FolderTreeWalk.trees(in: input, port: Self.folders)
         // The application's folders and every embedded extension's: each is a bundle
         // whose resources come from its own folder. A localized resource one of them
         // borrows (`/Localized/ShareExtension/…`) is found by walking the folder in the
@@ -262,64 +263,62 @@ public struct XcodeProjectConverter: Node {
             }
             return folder.isEmpty ? "\(projectFolder)/\(borrowed.folder)" : "\(projectFolder)/\(borrowed.folder)/\(folder)"
         }
-        var demanded: [String] = []
-        var seen = Set<String>()
-        func demand(_ folder: String) {
-            if seen.insert(folder).inserted {
-                demanded.append(folder)
-            }
+        var walkedRoots: [String] = []
+        for folder in sourceFolders + borrowedWalks where !walkedRoots.contains(folder) {
+            walkedRoots.append(folder)
+            specs[Self.folders]?[folder] = .folderTree(at: folder)
         }
-        (sourceFolders + borrowedWalks).forEach(demand)
         // A folder the group names in `explicitFolders` is one item, copied whole.
         let explicitFolderPaths = Set(bundleTargets.flatMap(\.synchronizedFolders).flatMap { folder in
             folder.explicitFolders.map { "\(projectFolder)/\(folder.path)/\($0)" }
         })
-        var index = 0
-        while index < demanded.count {
-            let folder = demanded[index]
-            index += 1
-            specs[Self.folders]?[folder] = .folderManifest(at: folder)
-            guard let manifest = arrived[folder] else {
+        // Every group below the walked folders, read from their trees. A catalog is compiled
+        // whole by its own node, and a folder copied whole by a `FolderTreeBuilder`, each
+        // walking it itself; only a group is read here.
+        var arrived: [String: FolderManifest] = [:]
+        for root in walkedRoots {
+            guard let tree = trees[root] else {
                 continue
             }
-            // A catalog is compiled whole by its own node, and a folder copied whole by a
-            // `FolderTreeBuilder`, each walking it itself; only a group is walked here.
-            for entry in manifest.entries where entry.isFolder && entry.isPinned {
-                let path = "\(folder)/\(entry.name)"
-                if XcodeFormulaEmitter.folderRole(at: entry.name) == .group && !explicitFolderPaths.contains(path) {
-                    demand(path)
-                }
+            let reached = try tree.folderManifests(at: root) { subfolder in
+                XcodeFormulaEmitter.folderRole(at: Path(subfolder).lastComponent ?? subfolder) == .group
+                    && !explicitFolderPaths.contains(subfolder)
             }
+            arrived.merge(reached) { existing, _ in existing }
         }
 
         // ── the local packages in the synchronized folders ──────────────────
-        // On the same port: a folder a target owns is asked about by both walks and is
-        // one wire. A folder that is not there holds no package, where a target's missing
-        // folder is waited on; the difference is that no target needs this one.
-        let folderValues = input.inputValues[Self.folders] ?? [:]
+        // On the same port: a folder a target owns is asked about by both and is one wire,
+        // one tree, which answers for the folders directly in it as well. A folder that is
+        // not there holds no package, where a target's missing folder is waited on; the
+        // difference is that no target needs this one.
+        var searched: [String: FolderManifest] = [:]
+        for relativePath in project.synchronizedFolderPaths {
+            guard let path = Self.inputPath(of: relativePath, in: projectFolder) else {
+                continue
+            }
+            specs[Self.folders]?[path] = .folderTree(at: path)
+            guard let tree = trees[path] else {
+                continue
+            }
+            let reached = try tree.folderManifests(at: path) { subfolder in
+                Path(subfolder).deletingLastComponent?.string == path
+                    && !LocalPackageSearch.cannotBeAPackage(Path(subfolder).lastComponent ?? subfolder)
+            }
+            searched.merge(reached) { existing, _ in existing }
+        }
         let packageSearch = LocalPackageSearch(project: project) { relativePath in
             guard let path = Self.inputPath(of: relativePath, in: projectFolder) else {
                 return LocalPackageSearch.Contents()
             }
-            if let manifest = arrived[path] {
-                return LocalPackageSearch.Contents(manifest)
-            }
-            switch folderValues[path] {
-            case nil, .noValue(.pending):
-                return nil
-            case .value, .noValue:
-                return LocalPackageSearch.Contents()
-            }
-        }
-        for path in packageSearch.asked.compactMap({ Self.inputPath(of: $0, in: projectFolder) }) {
-            specs[Self.folders]?[path] = .folderManifest(at: path)
+            return searched[path].map(LocalPackageSearch.Contents.init)
         }
 
         guard !expansions.values.contains(where: \.isWaiting) else {
             return pending("waiting for the xcconfig files", specs: specs)
         }
-        guard demanded.allSatisfy({ arrived[$0] != nil }) else {
-            return pending("walking the target's folders", specs: specs)
+        guard walkedRoots.allSatisfy({ trees[$0] != nil }) else {
+            return pending("waiting for the target's folders", specs: specs)
         }
         guard packageSearch.isComplete else {
             return pending("looking for local packages in the synchronized folders", specs: specs)
@@ -340,8 +339,8 @@ public struct XcodeProjectConverter: Node {
         var listings: [String: XcodeFormulaEmitter.FolderListing] = [:]
         for sourceFolder in Set(sourceFolders + lendingFolders).sorted() {
             var listing = XcodeFormulaEmitter.FolderListing()
-            for folder in demanded where folder == sourceFolder || folder.hasPrefix(sourceFolder + "/") {
-                guard let manifest = arrived[folder] else { continue }
+            for (folder, manifest) in arrived.sorted(by: { $0.key < $1.key })
+                where folder == sourceFolder || folder.hasPrefix(sourceFolder + "/") {
                 let prefix = folder == sourceFolder ? "" : String(folder.dropFirst(sourceFolder.count + 1)) + "/"
                 for entry in manifest.entries where entry.isPinned {
                     if entry.isFolder {

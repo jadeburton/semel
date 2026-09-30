@@ -142,7 +142,7 @@ final class FormulaPreludeTests: SemelCoreTestCase {
         let output = try ProjectBuilder(thisNode: builderRecord).process(input: ProcessInput(inputValues: [
             ProjectBuilder.projectFileInputPort:  ["input:/repo/semel.fmla": .value(try formula.intern())],
             ProjectBuilder.productInputPort:      [:],
-            ProjectBuilder.foldersInputPort:      [:],
+            ProjectBuilder.folderTreesInputPort:  [:],
             ProjectBuilder.graphImportsInputPort: [:],
             ProjectBuilder.includesInputPort:     [preludeSpec: .value(try text.intern())],
         ]))

@@ -33,15 +33,13 @@ struct SwiftFormulaConverter: Node {
     static let formulaOutput        = "formula"
     static let infoLog              = "infoLog"
     static let externalPackageJSONs = "externalPackageJSONs"
-    /// The folder manifest of every compilable target, root and dependencies alike, keyed
-    /// by folder path. A manifest says nothing about a target's language; the folder does:
-    /// C sources and no Swift make it a C target (B-54), built through the clang nodes.
+    /// The subtree manifest of every compilable target's folder, root and dependencies
+    /// alike, keyed by folder path (B-135). A package manifest says nothing about a target's
+    /// language; the folder does: C sources and no Swift make it a C target (B-54), built
+    /// through the clang nodes. And the folders below it say which resources it carries —
+    /// a catalog at its top, `Resources/en.lproj` two levels down (B-77) — so the whole
+    /// tree is asked for, on one wire, and has arrived on the next pass however deep it is.
     static let targetFolders        = "targetFolders"
-    /// Every folder under a compilable target's folder that is not a resource whole,
-    /// keyed by path: what says which resources a target carries — a catalog at its top,
-    /// `Resources/en.lproj` two levels down (B-77). Walked level by level once the
-    /// target folders are in.
-    static let targetSubfolders     = "targetSubfolders"
     /// The folder of every dependency package whose manifest has not arrived, keyed by
     /// path, wired for as long as the converter waits for it. The value is never read: the
     /// wire is how the stall names what it waits for, typed. A folder nobody has pushed
@@ -60,11 +58,12 @@ struct SwiftFormulaConverter: Node {
     /// (B-55, B-77). One question for both: `prepare` writes the compiler's and the linker's
     /// `sdk` together, and the product the compile goes into is linked for the linker's.
     static let linkerConfiguration    = "linkerConfiguration"
-    /// The folders a binary target's `.xcframework` is found through, keyed by path (B-77):
-    /// a `path:` one's own folder, or for a downloaded or zipped one the package folder,
-    /// its `semel-artifacts` and the target's folder in that, each asked for only once the
-    /// one above lists it — a folder asked for under a vendored package that is not there
-    /// would be a ghost its content root folds, failing the lock (B-133).
+    /// The trees a binary target's `.xcframework` is found in, keyed by path (B-77): a
+    /// `path:` one's own folder, or for a downloaded or zipped one the package folder,
+    /// whose tree says whether `semel-artifacts/<Target>` is there and what it holds. The
+    /// package's tree and never the folders below it: a folder asked for under a vendored
+    /// package that is not there would be a ghost its content root folds, failing the lock
+    /// (B-133), and a tree is read, not demanded, below the folder it is asked of (B-135).
     static let binaryArtifactFolders  = "binaryArtifactFolders"
 
     /// The folder in a package where `semel-swift prepare` puts a binary target's artifact,
@@ -110,8 +109,10 @@ struct SwiftFormulaConverter: Node {
     /// platform is decided for the one being built, and a target declaring no language
     /// mode compiles in its package's, from the tools version or `swiftLanguageModes` (B-77);
     /// at 14, a xib or a storyboard among a target's resources is compiled into its bundle
-    /// by ibtool rather than copied (B-77).
-    public static let implementationVersion = 14
+    /// by ibtool rather than copied (B-77); at 15, a target's folder and a binary target's
+    /// package are asked for as trees, one wire each, where their subfolders were walked a
+    /// level a pass (B-135).
+    public static let implementationVersion = 15
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -146,7 +147,6 @@ struct SwiftFormulaConverter: Node {
             .dynamic(packageJSON),
             .dynamic(externalPackageJSONs),
             .dynamic(targetFolders),
-            .dynamic(targetSubfolders),
             .dynamic(awaitedPackageFolders),
             .dynamic(dependencyLocks),
             .dynamic(dependencyContentRoots),
@@ -319,38 +319,28 @@ struct SwiftFormulaConverter: Node {
             ]
         }
 
-        // ── every compilable target's folder, to tell C targets from Swift ones ──
-        // A manifest says nothing about a target's language; its folder does. The
-        // folders are asked for once every manifest is in, so this is one more pass.
+        // ── every compilable target's folder, as a tree (B-135) ────────────────
+        // A manifest says nothing about a target's language, and nothing about the
+        // resources below its folder; the folder's tree says both. The trees are asked for
+        // once every manifest is in, so this is one more pass, however deep they are.
         var targetFolderSpecs: [String: GraphSpecNode] = [:]
         for (packageFolder, manifest) in [(rootPackageFolder, rootManifest)] + availableManifests.sorted(by: { $0.key < $1.key }) {
             for target in manifest.targets where target.isCompilable {
                 let folder = target.folder(in: packageFolder)
-                targetFolderSpecs[folder] = .folderManifest(at: folder)
+                targetFolderSpecs[folder] = .folderTree(at: folder)
             }
         }
         demands.targetFolders = targetFolderSpecs
 
         // ── every binary target's .xcframework (B-77) ─────────────────────────
-        // Asked for with the target folders, one level a pass, only as far as what has
-        // arrived lists.
-        let binaryWalk = BinaryArtifactWalk(
+        // Asked for with the target folders, as the trees of the packages that hold them.
+        let binaryWalk = try BinaryArtifactWalk(
             packages: [(rootPackageFolder, rootManifest)] + availableManifests.sorted(by: { $0.key < $1.key }).map { ($0.key, $0.value) },
-            rootFolderManifest: folderManifest,
-            arrived: Dictionary(FolderTreeWalk.manifests(in: input, port: Self.binaryArtifactFolders).map { ($0.key, $0.manifest) },
-                                uniquingKeysWith: { first, _ in first }))
+            trees: FolderTreeWalk.trees(in: input, port: Self.binaryArtifactFolders))
         demands.binaryArtifactFolders = binaryWalk.specs
 
-        var targetFolderManifests: [String: FolderManifest] = [:]
-        for (folder, nodeValue) in input.inputValues[Self.targetFolders] ?? [:] {
-            guard let json = try? nodeValue.expectValue().resolveAsString(),
-                  let manifest = try? TypeRegistry.decode(encodedJSON: json) as? FolderManifest else {
-                continue
-            }
-            targetFolderManifests[folder] = manifest
-        }
-
-        let missingFolders = targetFolderSpecs.keys.filter { targetFolderManifests[$0] == nil }.sorted()
+        let targetTrees = FolderTreeWalk.trees(in: input, port: Self.targetFolders)
+        let missingFolders = targetFolderSpecs.keys.filter { targetTrees[$0] == nil }.sorted()
         guard missingFolders.isEmpty else {
             return try pendingOutput(
                 reason: "SwiftFormulaConverter: waiting for \(missingFolders.count) target folder(s):\n"
@@ -359,44 +349,22 @@ struct SwiftFormulaConverter: Node {
         }
         guard binaryWalk.waiting.isEmpty else {
             return try pendingOutput(
-                reason: "SwiftFormulaConverter: walking \(binaryWalk.waiting.count) folder(s) for binary targets' artifacts:\n"
+                reason: "SwiftFormulaConverter: waiting for \(binaryWalk.waiting.count) folder(s) holding binary targets' artifacts:\n"
                       + binaryWalk.waiting.map { "  \($0)" }.joined(separator: "\n"),
                 demands: demands)
         }
 
         // ── every target folder's subfolders, for the resources a target carries (B-77) ──
-        // Level by level, one pass each; a folder that is a resource whole — a catalog,
-        // an `.lproj` — is named and not entered. The compiler walks these same folders
-        // for its sources, so the folder nodes exist already; this adds wires to them.
-        var folderManifests = targetFolderManifests
-        for (folder, nodeValue) in (input.inputValues[Self.targetSubfolders] ?? [:]).sorted(by: { $0.key < $1.key }) {
-            guard let json = try? nodeValue.expectValue().resolveAsString(),
-                  let manifest = try? TypeRegistry.decode(encodedJSON: json) as? FolderManifest else {
-                continue
+        // Read from the trees; a folder that is a resource whole — a catalog, an `.lproj` —
+        // is named and not entered. A target at its package's root is its package's tree,
+        // and the other targets' folders in it are read as that target's subfolders, as a
+        // walk from its folder always reached them.
+        var folderManifests: [String: FolderManifest] = [:]
+        for (folder, tree) in targetTrees.sorted(by: { $0.key < $1.key }) where targetFolderSpecs[folder] != nil {
+            let reached = try tree.folderManifests(at: folder) { subfolder in
+                PackageResources.isWalked(folderName: Path(subfolder).lastComponent ?? subfolder)
             }
-            folderManifests[folder] = manifest
-        }
-        var subfolderSpecs: [String: GraphSpecNode] = [:]
-        var walked = targetFolderSpecs.keys.sorted()
-        var walkIndex = 0
-        while walkIndex < walked.count {
-            let folder = walked[walkIndex]
-            walkIndex += 1
-            guard let manifest = folderManifests[folder] else {
-                continue
-            }
-            for entry in manifest.entries where entry.isFolder && entry.isPinned && PackageResources.isWalked(folderName: entry.name) {
-                let subfolder = "\(folder)/\(entry.name)"
-                subfolderSpecs[subfolder] = .folderManifest(at: subfolder)
-                walked.append(subfolder)
-            }
-        }
-        demands.targetSubfolders = subfolderSpecs
-        let missingSubfolders = subfolderSpecs.keys.filter { folderManifests[$0] == nil }.sorted()
-        guard missingSubfolders.isEmpty else {
-            return try pendingOutput(
-                reason: "SwiftFormulaConverter: walking \(missingSubfolders.count) target subfolder(s) for resources",
-                demands: demands)
+            folderManifests.merge(reached) { existing, _ in existing }
         }
 
         // The platform is the SDK the product's linker links against, by its own default
@@ -476,7 +444,6 @@ struct SwiftFormulaConverter: Node {
         var contentRoots:          [String: GraphSpecNode] = [:]
         var awaitedPackageFolders: [String: GraphSpecNode] = [:]
         var targetFolders:         [String: GraphSpecNode] = [:]
-        var targetSubfolders:      [String: GraphSpecNode] = [:]
         var linkerConfiguration:   [String: GraphSpecNode] = [:]
         var binaryArtifactFolders: [String: GraphSpecNode] = [:]
 
@@ -487,7 +454,6 @@ struct SwiftFormulaConverter: Node {
                                 SwiftFormulaConverter.dependencyLocks:        locks,
                                 SwiftFormulaConverter.dependencyContentRoots: contentRoots,
                                 SwiftFormulaConverter.targetFolders:          targetFolders,
-                                SwiftFormulaConverter.targetSubfolders:       targetSubfolders,
                                 SwiftFormulaConverter.awaitedPackageFolders:  awaitedPackageFolders,
                                 SwiftFormulaConverter.linkerConfiguration:    linkerConfiguration,
                                 SwiftFormulaConverter.binaryArtifactFolders:  binaryArtifactFolders]) { _, new in new }
@@ -559,26 +525,22 @@ struct SwiftFormulaConverter: Node {
         case notAnXCFramework(String, contents: [String])
     }
 
-    /// The folders every binary target's `.xcframework` is found through, one level a pass,
-    /// and where each one is once the walk is done, keyed `<package folder>/<target>`.
+    /// The trees every binary target's `.xcframework` is found in, and where each one is once
+    /// they have arrived, keyed `<package folder>/<target>`.
     ///
     /// A `path:` `.xcframework` is asked for directly: the manifest names it, as it names a
     /// target's source folder. A downloaded or zipped one is in `semel-artifacts/<Target>`,
-    /// where `prepare` put it or did not; the walk asks for the package folder, then for
-    /// `semel-artifacts` only if the package lists it, then for the target's folder only if
-    /// that lists it, so nothing it asks for under a vendored package is a ghost that package's
-    /// content root would fold (B-133).
+    /// where `prepare` put it or did not; the package folder's tree says which, and what is
+    /// there, on the pass it arrives (B-135). Nothing is asked for below the package folder,
+    /// so nothing asked for under a vendored package is a ghost that package's content root
+    /// would fold (B-133).
     private struct BinaryArtifactWalk {
         var specs: [String: GraphSpecNode] = [:]
-        /// The folders asked for whose manifests have not arrived, sorted.
+        /// The folders asked for whose trees have not arrived, sorted.
         var waiting: [String] = []
         var locations: [String: BinaryArtifactLocation] = [:]
 
-        init(packages: [(folder: String, manifest: SPMManifest)], rootFolderManifest: FolderManifest,
-             arrived: [String: FolderManifest]) {
-            func lists(_ manifest: FolderManifest, folder name: String) -> Bool {
-                manifest.entries.contains { $0.isFolder && $0.isPinned && $0.name == name }
-            }
+        init(packages: [(folder: String, manifest: SPMManifest)], trees: [String: FolderSubtreeManifest]) throws {
             var unanswered = Set<String>()
             for (packageFolder, manifest) in packages {
                 for target in manifest.targets {
@@ -592,8 +554,8 @@ struct SwiftFormulaConverter: Node {
                             locations[key] = .notAnXCFramework(folder, contents: [])
                             continue
                         }
-                        specs[folder] = .folderManifest(at: folder)
-                        guard let xcframework = arrived[folder] else {
+                        specs[folder] = .folderTree(at: folder)
+                        guard let xcframework = trees[folder] else {
                             unanswered.insert(folder)
                             continue
                         }
@@ -603,31 +565,16 @@ struct SwiftFormulaConverter: Node {
 
                     let artifactsFolder = "\(packageFolder)/\(SwiftFormulaConverter.artifactsFolderName)"
                     let targetFolder    = "\(artifactsFolder)/\(target.name)"
-                    var packageManifest: FolderManifest? = rootFolderManifest
-                    if packageFolder != rootFolderManifest.baseFolderPath {
-                        specs[packageFolder] = .folderManifest(at: packageFolder)
-                        packageManifest = arrived[packageFolder]
-                    }
-                    guard let packageManifest else {
+                    specs[packageFolder] = .folderTree(at: packageFolder)
+                    guard let packageTree = trees[packageFolder] else {
                         unanswered.insert(packageFolder)
                         continue
                     }
-                    guard lists(packageManifest, folder: SwiftFormulaConverter.artifactsFolderName) else {
+                    // Down to the target's folder and no further: what is in it is all
+                    // this asks, and the `.xcframework` below it is the slice selector's.
+                    let reached = try packageTree.folderManifests(at: packageFolder) { $0 == artifactsFolder || $0 == targetFolder }
+                    guard let targetManifest = reached[targetFolder] else {
                         locations[key] = .missing(targetFolder)
-                        continue
-                    }
-                    specs[artifactsFolder] = .folderManifest(at: artifactsFolder)
-                    guard let artifactsManifest = arrived[artifactsFolder] else {
-                        unanswered.insert(artifactsFolder)
-                        continue
-                    }
-                    guard lists(artifactsManifest, folder: target.name) else {
-                        locations[key] = .missing(targetFolder)
-                        continue
-                    }
-                    specs[targetFolder] = .folderManifest(at: targetFolder)
-                    guard let targetManifest = arrived[targetFolder] else {
-                        unanswered.insert(targetFolder)
                         continue
                     }
                     let held = targetManifest.entries.filter(\.isPinned).map(\.name).sorted()

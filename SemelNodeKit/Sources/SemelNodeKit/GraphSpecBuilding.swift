@@ -71,6 +71,7 @@ public enum FileSystemNodes {
     public static let folderTypeName = "Folder"
     public static let folderManifestPort = "manifest"
     public static let folderContentRootPort = "contentRoot"
+    public static let folderSubtreeManifestPort = "subtreeManifest"
 }
 
 /// The three settings nodes a toolchain wires its tools' configuration through, by the
@@ -162,5 +163,17 @@ public extension GraphSpecNode {
         GraphSpecNode(typeName: FileSystemNodes.folderTypeName,
                       properties: [GraphSpecProperty(key: "path", value: path)],
                       outputPort: FileSystemNodes.folderContentRootPort)
+    }
+
+    /// A pushed folder's subtree manifest — what it holds at every depth, by name (B-135) —
+    /// read at its subtree-manifest port. The same folder node again. One wire answers for
+    /// the whole tree on the next pass, where a walk over manifests was a wire and a pass
+    /// per level; `FolderSubtreeManifest.folderManifests(at:)` reads it back as the
+    /// manifests such a walk would have gathered. Keyed, like every demand of a folder, by
+    /// the folder's path, which is what that reading is given.
+    static func folderTree(at path: String) -> GraphSpecNode {
+        GraphSpecNode(typeName: FileSystemNodes.folderTypeName,
+                      properties: [GraphSpecProperty(key: "path", value: path)],
+                      outputPort: FileSystemNodes.folderSubtreeManifestPort)
     }
 }

@@ -23,7 +23,7 @@ final class SwiftCompilerResourceBundleTests: SemelSwiftTestCase {
         ToolRunnerRegistry.instance.registerTool(descriptor: descriptor, toolExecutor: executor)
     }
 
-    /// One source file, walked and supplied, so the compile runs.
+    /// One source file, its folder's tree in and the file supplied, so the compile runs.
     private func compile(extraConfiguration: [String]) throws {
         let configuration = ([
             "toolDescriptor.name=\(descriptor.name)",
@@ -34,9 +34,11 @@ final class SwiftCompilerResourceBundleTests: SemelSwiftTestCase {
         ] + extraConfiguration).joined(separator: "\n")
         let folder = try FolderManifest(baseFolderPath: "input:/pkg/Sources/Kit",
                                         entries: [FolderManifestEntry(name: "Kit.swift", isFolder: false, isPinned: true)])
+        let tree = FolderSubtreeManifest(entries: [FolderSubtreeEntry(name: "Kit.swift", isFolder: false, isPinned: true)])
         let input = ProcessInput(inputValues: [
             SwiftCompiler.configuration:    ["config": .value(try configuration.intern())],
             SwiftCompiler.inputFolder:      ["folder0": .value(try folder.toJSON().intern())],
+            SwiftCompiler.inputFolderTrees: ["input:/pkg/Sources/Kit": .value(try tree.toJSON().intern())],
             SwiftCompiler.inputSourceFiles: ["input:/pkg/Sources/Kit/Kit.swift": .value(try "// kit".intern())],
         ])
         _ = try SwiftCompiler(thisNode: NodeRecord(id: 1, kind: SwiftCompiler.kind)).process(input: input)

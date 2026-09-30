@@ -28,10 +28,9 @@ final class ConfigFileTests: SemelSwiftTestCase {
     private func formula(packageFolder: String = "input:/pkg") throws -> String {
         let manifest = FolderManifest(baseFolderPath: packageFolder, entries: [])
         let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind))
-        // The target's folder, holding a Swift file: what the converter asks for to tell a
-        // C target from a Swift one (B-54).
-        let libFolder = FolderManifest(baseFolderPath: "\(packageFolder)/Sources/Lib",
-                                       entries: [FolderManifestEntry(name: "Lib.swift", isFolder: false, isPinned: true)])
+        // The target's folder, as a tree holding a Swift file: what the converter asks for to
+        // tell a C target from a Swift one (B-54).
+        let libFolder = FolderSubtreeManifest(entries: [FolderSubtreeEntry(name: "Lib.swift", isFolder: false, isPinned: true)])
         let output = try converter.process(input: ProcessInput(inputValues: [
             SwiftFormulaConverter.packageFolder:        ["folder": .value(try manifest.toJSON().intern())],
             SwiftFormulaConverter.packageJSON:          ["json":   .value(try plainManifest.intern())],
@@ -94,9 +93,8 @@ final class ConfigFileTests: SemelSwiftTestCase {
             """
         let packageFolder = "input:/pkg"
         let folderManifest = FolderManifest(baseFolderPath: packageFolder, entries: [])
-        func swiftFolder(_ name: String) -> FolderManifest {
-            FolderManifest(baseFolderPath: "\(packageFolder)/Sources/\(name)",
-                           entries: [FolderManifestEntry(name: "main.swift", isFolder: false, isPinned: true)])
+        func swiftFolder(_ name: String) -> FolderSubtreeManifest {
+            FolderSubtreeManifest(entries: [FolderSubtreeEntry(name: "main.swift", isFolder: false, isPinned: true)])
         }
         let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind))
         let output = try converter.process(input: ProcessInput(inputValues: [

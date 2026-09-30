@@ -33,9 +33,9 @@ final class ClangPreludeTests: XCTestCase {
         let preludeText = FormulaPrelude.publishedText(namespace: "clang", text: SemelClang.prelude)
         return try FormulaFile.parse(formula, basePath: basePath,
                                      wildcardExpander: { pattern in
-                                         ProjectBuilder.wildcardMatch(pattern: pattern,
-                                                                      folderPath: ProjectBuilder.extractFolderPath(fromGlobPattern: pattern),
-                                                                      manifests: manifests).paths
+                                         let folder = ProjectBuilder.extractFolderPath(fromGlobPattern: pattern)
+                                         let tree = try FolderSubtreeManifest.folding(at: folder, listings: manifests.mapValues(\.entries))
+                                         return try ProjectBuilder.wildcardMatch(pattern: pattern, folderPath: folder, tree: tree)
                                      },
                                      includeReader: { $0.asString(omitOutputPort: false) == preludeSpec ? preludeText : nil })
     }

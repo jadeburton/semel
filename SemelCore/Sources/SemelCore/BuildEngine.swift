@@ -60,6 +60,7 @@ public final class BuildEngine {
     static func registerTypes() throws {
         try TypeRegistry.register(types: [
             FolderManifest.self,
+            FolderSubtreeManifest.self,
             TreeManifest.self,
             OutputFile.self,
             TreeFile.self,

@@ -25,7 +25,7 @@ class SemelClangTestCase: XCTestCase {
 
         // FolderManifest is decoded by the compiler node, and TypeRegistry resolves it
         // through the same process-global registry production uses.
-        try TypeRegistry.register(types: [FolderManifest.self])
+        try TypeRegistry.register(types: [FolderManifest.self, FolderSubtreeManifest.self])
         try SemelClang.register()
     }
 

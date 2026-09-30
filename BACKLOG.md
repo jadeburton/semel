@@ -118,6 +118,70 @@ file's row (0.4 s without it). What remains of the 0.7 s is the client opening a
 8,041 files, on every core; a cache of hashes by size and modification time would take most
 of it, at the price of trusting a timestamp.
 
+Measured 2026-09-30, before and after a folder's subtree manifest (B-135): a cold build's
+passes, counted as every `process` run a debug `semelserv` logs, by node type, over the
+IceCubes app (`icecubes-app`, `prepare --platform ios-simulator`) and NetNewsWire's Mac app
+(`netnewswire-mac` with its overlay, `--platform macos`), each into a fresh home from one
+prepared copy; before is `main` at `b2eaf0a`, after is B-135 on that same commit, both
+without B-132's push. A run a node makes and then publishes
+nothing is a pass it waited through; a fetch "not ready" is a node read and put back
+because an input was pending.
+
+| IceCubes app | before | after |
+|---|---|---|
+| evaluations, all nodes (fetches not ready) | 823 (1,023) | 749 (1,000) |
+| `SwiftFormulaConverter`, 17 nodes | 140 runs, 4–11 each, median 10 | 100 runs, 4–8, median 7 |
+| `XcodeProjectConverter` | 6 runs | 3 |
+| `ProjectBuilder` (not ready) | 9 (139) | 8 (126) |
+| `ProjectFinder` (not ready); wires into it | 14 (9); 1,672 | 6 (6); 2 |
+| `SwiftCompiler`, 35 nodes | 112 runs, at most 5 for one | 92, at most 3 |
+| `ClangPreprocessor`, 35 nodes; `AssetCatalogCompiler`, 4 | 70; 14 | 70; 12 |
+| wires in the settled graph | 9,314 | 6,327 |
+
+| NetNewsWire, Mac | before | after |
+|---|---|---|
+| evaluations, all nodes (fetches not ready) | 1,379 (1,264) | 1,089 (1,014) |
+| `SwiftFormulaConverter`, 20 nodes | 113 runs, 3–8 each, median 5.5 | 86 runs, 3–6, median 4 |
+| `XcodeProjectConverter` | 9 runs | 7 |
+| `ProjectBuilder` (not ready) | 9 (129) | 8 (119) |
+| `ProjectFinder` (not ready); wires into it | 17 (9); 808 | 7 (6); 2 |
+| `ClangPreprocessor`, 71 nodes | 444 runs, median 7 | 205, median 3 |
+| `SwiftCompiler`, 23 nodes | 56 runs, at most 5 for one | 52, at most 3 |
+| `XCFrameworkSliceSelector`; `AssetCatalogCompiler` | 9; 4 | 3; 3 |
+| wires in the settled graph | 27,728 | 24,505 |
+
+The walks are gone from the counts: no converter, compiler or preprocessor runs once per
+level of a folder any more, and the finder reads one wire. What a converter's runs are now
+is its inputs arriving: the reader's manifest, the dependencies' manifests a level of the
+dependency graph per pass, the target trees, the locks and then the content roots they are
+compared with (B-06). The Xcode converter's seven on NetNewsWire are its xcconfig includes,
+followed a file per pass; the builder's eight are its includes arriving.
+
+Wall time says less than the counts on this machine today: other builds shared it, its
+load average went from 4 to 16 between runs, and the same binaries' cold build of IceCubes
+ranged over 105–166 s. Release binaries, one build per row, load average in brackets:
+
+| cold build, release | before | after |
+|---|---|---|
+| IceCubes app | 105.2 s (4.7), 138.5 s (7.4), 117.7 s (13.3), 166.4 s (9.6) | 115.4 s (7.7), 132.9 s (4.7), 120.6 s (9.9), 210.9 s (15.2) |
+| NetNewsWire, Mac | 65.5 s (3.8), 134.2 s (16.3) | 64.7 s (11.4), 78.8 s (9.7) |
+
+In debug binaries, where every evaluation costs more, the difference shows: 250 s against
+148 s for IceCubes and 250 s against 146 s for NetNewsWire, the settle after the push 168 s
+against 74 s for IceCubes (at load averages of about 7 before and 5 after). The server's own CPU time over a release cold build, which is the
+engine and not the tools, was 65.4 s against 66.2 s for IceCubes and 60.3 s against 52.1 s for
+NetNewsWire in the quietest pair of each: the passes the walks cost were latency more than
+work.
+
+What a release cold build of IceCubes spends its time on now, from `sample`s of the server:
+the push, file by file (about 30 s; B-132 makes an unchanged push cheap, not a first one);
+then the flush that drains after it, rebuilding
+manifests and folding content roots (`symbolicLinkTargets`, `pinnedStates` and
+`contentStates`, each a join over a folder's children, per folder marked) for 15–20 s before
+any node is selected — the subtree manifests' own folds do not appear in the samples; then
+the thirty package readers' `swift package dump-package`; then the compiles. On NetNewsWire,
+with a third of the files, the push is 9 s and the build is the compiles.
+
 
 ## Design, correctness and code quality
 

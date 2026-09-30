@@ -95,5 +95,11 @@ public enum Semel {
     /// `semel-folder-content-root 4` (B-132). Every preserved folder holds a root folded
     /// under 3, which a push comparing roots with the disk would never match, so the rebuild
     /// folds them again.
-    public static let version = "0.1.14"
+    ///
+    /// 0.1.15: a `Folder` publishes a third derived value, the names of everything below it,
+    /// on a new `subtreeManifest` port (B-135), and `ProjectFinder` reads the input file
+    /// system through it on one port where it walked the folders on two. The reason 0.1.6
+    /// was a bump: the rebuild folds every preserved folder's subtree manifest, which makes
+    /// the rows; and the finder it preserves drops the wires of the ports it no longer has.
+    public static let version = "0.1.15"
 }

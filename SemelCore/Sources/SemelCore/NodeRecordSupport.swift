@@ -205,12 +205,13 @@ extension NodeRecord {
     }
 
     func readFromOutputPort(_ outputPort: String) throws -> NodeValue {
-        // A folder's two derived values are rebuilt on demand (B-25, B-26): reading one is
-        // what makes it current.
+        // A folder's three derived values are rebuilt on demand (B-25, B-26, B-135): reading
+        // one is what makes it current.
         if kind == Folder.kind {
             switch outputPort {
-            case Folder.folderManifestOutputPort: try Folder.flushManifestIfDirty(nodeID: try requireID())
-            case Folder.contentRootOutputPort:    try Folder.flushContentRootIfDirty(nodeID: try requireID())
+            case Folder.folderManifestOutputPort:  try Folder.flushManifestIfDirty(nodeID: try requireID())
+            case Folder.contentRootOutputPort:     try Folder.flushContentRootIfDirty(nodeID: try requireID())
+            case Folder.subtreeManifestOutputPort: try Folder.flushSubtreeManifestIfDirty(nodeID: try requireID())
             default: break
             }
         }

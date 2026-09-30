@@ -2,9 +2,10 @@
 //  SwiftCompilerTests.swift
 //  semel_tests
 //
-//  A FolderManifest lists only a folder's immediate children, so discovering the sources
-//  of a nested target takes more than one pass. These tests pin down that walk: which
-//  subfolders the tool asks for, and which .swift files it ends up compiling.
+//  A FolderManifest lists only a folder's immediate children, and the folder's tree every
+//  name below it (B-135), so discovering the sources of a nested target takes the run that
+//  asks for the tree and the one that has it. These tests pin down that read: what the tool
+//  asks for, and which .swift files it ends up compiling.
 //
 
 @testable import SemelSwift
@@ -40,8 +41,13 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         .value(try FolderManifest(baseFolderPath: baseFolderPath, entries: entries).toJSON().intern())
     }
 
+    /// `subfolders` are the listings of the folders below the root, by path. With
+    /// `treeArrived`, the root's tree is on `inputFolderTrees`, folded from them and the
+    /// root's own listing (B-135); without, the run is the first, which has the root's
+    /// manifest alone.
     private func makeInput(folder rootFolder: NodeValue,
                            subfolders: [String: NodeValue] = [:],
+                           treeArrived: Bool = true,
                            extraConfiguration: [String] = []) throws -> ProcessInput {
         let configuration = ([
             "toolDescriptor.name=\(descriptor.name)",
@@ -50,50 +56,66 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
             "toolDescriptor.architecture=\(descriptor.architecture)",
             "moduleName=GRDB",
         ] + extraConfiguration).joined(separator: "\n")
-        return ProcessInput(inputValues: [
-            SwiftCompiler.configuration:   ["config": .value(try configuration.intern())],
-            SwiftCompiler.inputFolder:     ["folder0": rootFolder],
-            SwiftCompiler.inputSubfolders: subfolders,
-        ])
+        var inputValues: [String: [String: NodeValue]] = [
+            SwiftCompiler.configuration: ["config": .value(try configuration.intern())],
+            SwiftCompiler.inputFolder:   ["folder0": rootFolder],
+        ]
+        if treeArrived {
+            var listings: [String: [FolderManifestEntry]] = [:]
+            for value in [rootFolder] + Array(subfolders.values) {
+                let listing: FolderManifest = try TypeRegistry.decodeAndCast(encodedJSON: try value.expectValue().resolveAsString())
+                listings[listing.baseFolderPath] = listing.entries
+            }
+            let rootPath = try (TypeRegistry.decodeAndCast(encodedJSON: try rootFolder.expectValue().resolveAsString()) as FolderManifest)
+                .baseFolderPath
+            inputValues[SwiftCompiler.inputFolderTrees] =
+                [rootPath: .value(try FolderSubtreeManifest.folding(at: rootPath, listings: listings).toJSON().intern())]
+        }
+        return ProcessInput(inputValues: inputValues)
     }
 
     private func sourceSpecs(_ output: ProcessOutput) throws -> [String] {
         try XCTUnwrap(output.inputWireSpecs[SwiftCompiler.inputSourceFiles]).keys.sorted()
     }
 
-    private func subfolderSpecs(_ output: ProcessOutput) throws -> [String: String] {
-        try XCTUnwrap(output.inputWireSpecs[SwiftCompiler.inputSubfolders]).rendered
+    private func treeSpecs(_ output: ProcessOutput) throws -> [String: String] {
+        try XCTUnwrap(output.inputWireSpecs[SwiftCompiler.inputFolderTrees]).rendered
     }
 
-    // MARK: - Subfolder discovery
+    // MARK: - The folder's tree (B-135)
 
-    func test_asksForAManifestForEachSubfolderOfTheSourceFolder() throws {
+    /// The first run has the folder's own listing: it asks for the folder's tree, and for
+    /// the files it can already see.
+    func test_asksForTheTreeOfTheSourceFolderAndItsOwnFilesOnTheFirstRun() throws {
         let output = try makeTool().process(input: try makeInput(
-            folder: try manifest("input:/pkg/GRDB", [file("Fixits.swift"), folder("Core"), folder("Record")])))
+            folder: try manifest("input:/pkg/GRDB", [file("Fixits.swift"), folder("Core"), folder("Record")]),
+            treeArrived: false))
 
-        XCTAssertEqual(try subfolderSpecs(output),
-                       ["input:/pkg/GRDB/Core":   "Folder(path: 'input:/pkg/GRDB/Core').manifest",
-                        "input:/pkg/GRDB/Record": "Folder(path: 'input:/pkg/GRDB/Record').manifest"])
+        XCTAssertEqual(try treeSpecs(output), ["input:/pkg/GRDB": "Folder(path: 'input:/pkg/GRDB').subtreeManifest"])
+        XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/GRDB/Fixits.swift"])
     }
 
-    /// The walk goes one level per run, so a grandchild is only requested once its
-    /// parent's manifest has arrived. Without this the tree stops at depth one.
-    func test_asksForNestedSubfoldersOnceTheirParentManifestHasArrived() throws {
+    /// Once the tree is in, every folder at every depth is read from it and its files
+    /// asked for, in one run: a grandchild's file with the rest, and nothing more asked
+    /// for than the tree.
+    func test_asksForTheFilesOfEveryFolderInTheTreeOnceItHasArrived() throws {
         let output = try makeTool().process(input: try makeInput(
             folder: try manifest("input:/pkg/GRDB", [folder("Core")]),
-            subfolders: ["input:/pkg/GRDB/Core": try manifest("input:/pkg/GRDB/Core", [folder("Support")])]))
+            subfolders: ["input:/pkg/GRDB/Core":         try manifest("input:/pkg/GRDB/Core", [folder("Support")]),
+                         "input:/pkg/GRDB/Core/Support": try manifest("input:/pkg/GRDB/Core/Support", [file("Utils.swift")])]))
 
-        XCTAssertEqual(try subfolderSpecs(output)["input:/pkg/GRDB/Core/Support"],
-                       "Folder(path: 'input:/pkg/GRDB/Core/Support').manifest")
+        XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/GRDB/Core/Support/Utils.swift"])
+        XCTAssertEqual(try treeSpecs(output).keys.sorted(), ["input:/pkg/GRDB"])
     }
 
-    /// An unpinned folder is a ghost — the user deleted it or never pushed it. Watching
-    /// one would resurrect it, which is what ProjectFinder's isPinned check avoids too.
-    func test_doesNotAskForManifestsForUnpinnedSubfolders() throws {
+    /// An unpinned folder is a ghost — the user deleted it or never pushed it. Its files are
+    /// not asked for, which would resurrect them.
+    func test_doesNotReadIntoUnpinnedSubfolders() throws {
         let output = try makeTool().process(input: try makeInput(
-            folder: try manifest("input:/pkg/GRDB", [.init(name: "Core", isFolder: true, isPinned: false)])))
+            folder: try manifest("input:/pkg/GRDB", [.init(name: "Core", isFolder: true, isPinned: false)]),
+            subfolders: ["input:/pkg/GRDB/Core": try manifest("input:/pkg/GRDB/Core", [file("Gone.swift")])]))
 
-        XCTAssertEqual(try subfolderSpecs(output), [:])
+        XCTAssertEqual(try sourceSpecs(output), [])
     }
 
     // MARK: - Source discovery
@@ -133,17 +155,18 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
 
     // MARK: - Compiling once the walk has finished (B-112)
 
-    /// A run that finds a subfolder or a file not yet wired is part-way through the walk:
-    /// a compile now would be of a partial source set, published as a module its importers
+    /// A run that asks for a tree or a file not yet wired has not seen every source: a
+    /// compile now would be of a partial source set, published as a module its importers
     /// compile against and then compile again.
     func test_aRunThatFindsSomethingNewDoesNotCompile() throws {
-        var input = try makeInput(folder: try manifest("input:/pkg/GRDB", [file("Fixits.swift"), folder("Core")])).inputValues
+        var input = try makeInput(folder: try manifest("input:/pkg/GRDB", [file("Fixits.swift"), folder("Core")]),
+                                  treeArrived: false).inputValues
         input[SwiftCompiler.inputSourceFiles] = ["input:/pkg/GRDB/Fixits.swift": .value(try "// fixits".intern())]
 
         let output = try makeTool().process(input: ProcessInput(inputValues: input))
 
         XCTAssertTrue(executor.invocations.isEmpty, "swiftc ran on a partial source set")
-        XCTAssertEqual(try subfolderSpecs(output).keys.sorted(), ["input:/pkg/GRDB/Core"])
+        XCTAssertEqual(try treeSpecs(output).keys.sorted(), ["input:/pkg/GRDB"])
         for port in [SwiftCompiler.outputObject, SwiftCompiler.outputModule] {
             XCTAssertTrue(output.outputValues[port]?.isPending == true, port)
         }
@@ -179,41 +202,50 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/semel/main.swift"])
     }
 
-    func test_doesNotDescendIntoSubfoldersOutsideAnExplicitSourcesList() throws {
+    func test_doesNotReadIntoSubfoldersOutsideAnExplicitSourcesList() throws {
         let output = try makeTool().process(input: try makeInput(
             folder: try manifest("input:/pkg/semel", [file("main.swift"), folder("Tests")]),
+            subfolders: ["input:/pkg/semel/Tests": try manifest("input:/pkg/semel/Tests", [file("Test.swift")])],
             extraConfiguration: ["sourcePaths=main.swift"]))
 
-        XCTAssertEqual(try subfolderSpecs(output), [:])
+        XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/semel/main.swift"])
     }
 
-    /// A listed source path may sit inside a subfolder, so the walk still has to descend
-    /// through that subfolder's ancestors to reach it.
-    func test_descendsIntoASubfolderThatLeadsToAListedSourcePath() throws {
+    /// A listed source path may sit inside a subfolder, so the tree is still read through
+    /// that subfolder's ancestors to reach it, and no further.
+    func test_readsIntoASubfolderThatLeadsToAListedSourcePath() throws {
         let output = try makeTool().process(input: try makeInput(
             folder: try manifest("input:/pkg/target", [folder("Core"), folder("Ignored")]),
+            subfolders: ["input:/pkg/target/Core":    try manifest("input:/pkg/target/Core", [file("Thing.swift"), file("Other.swift")]),
+                         "input:/pkg/target/Ignored": try manifest("input:/pkg/target/Ignored", [file("Thing.swift")])],
             extraConfiguration: ["sourcePaths=Core/Thing.swift"]))
 
-        XCTAssertEqual(try subfolderSpecs(output).keys.sorted(), ["input:/pkg/target/Core"])
+        XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/target/Core/Thing.swift"])
     }
 
     func test_skipsExcludedPaths() throws {
         let output = try makeTool().process(input: try makeInput(
             folder: try manifest("input:/pkg/target", [file("Keep.swift"), file("Drop.swift"), folder("Vendor")]),
+            subfolders: ["input:/pkg/target/Vendor": try manifest("input:/pkg/target/Vendor", [file("Vendored.swift")])],
             extraConfiguration: ["excludedPaths=Drop.swift,Vendor"]))
 
         XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/target/Keep.swift"])
-        XCTAssertEqual(try subfolderSpecs(output), [:])
     }
 
-    /// A flat target must keep behaving exactly as it did before the walk existed —
-    /// this is the shape every existing test project has.
-    func test_flatSourceFolderStillCompilesItsFilesAndAsksForNoSubfolders() throws {
-        let output = try makeTool().process(input: try makeInput(
-            folder: try manifest("input:/pkg/Sources/MyLibraryTargetA", [file("Thing.swift")])))
+    /// A flat target compiles on the run after its first, as it did before the tree: the
+    /// first asks for its files and its tree together, and the tree adds nothing.
+    func test_aFlatSourceFolderCompilesOnTheRunAfterItsFirst() throws {
+        var input = try makeInput(folder: try manifest("input:/pkg/Sources/MyLibraryTargetA", [file("Thing.swift")]),
+                                  treeArrived: false).inputValues
+        let first = try makeTool().process(input: ProcessInput(inputValues: input))
+        XCTAssertEqual(try sourceSpecs(first), ["input:/pkg/Sources/MyLibraryTargetA/Thing.swift"])
+        XCTAssertEqual(try treeSpecs(first).keys.sorted(), ["input:/pkg/Sources/MyLibraryTargetA"])
 
-        XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/Sources/MyLibraryTargetA/Thing.swift"])
-        XCTAssertEqual(try subfolderSpecs(output), [:])
+        input = try makeInput(folder: try manifest("input:/pkg/Sources/MyLibraryTargetA", [file("Thing.swift")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/pkg/Sources/MyLibraryTargetA/Thing.swift": .value(try "// thing".intern())]
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        XCTAssertEqual(executor.lastArguments.filter { $0.hasSuffix(".swift") }, ["input:/pkg/Sources/MyLibraryTargetA/Thing.swift"])
     }
 
     // MARK: - Extra sources

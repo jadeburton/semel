@@ -271,6 +271,54 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertTrue(above.contains("folder\thash \(try folded.intern())\t3\tsrc\n"), above)
     }
 
+    // MARK: - The subtree-manifest port, added to `Folder` after graphs existed
+
+    /// B-135, the case 0.1.6 was: a preserved folder has no `subtreeManifest` row, and the
+    /// rebuild folds one for every folder before it returns, the one above carrying the
+    /// one below — not the empty tree a folder with no row would read as.
+    func test_aGraphFromBeforeTheSubtreeManifestPortComesUpWithItsTreesFolded() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        let folder = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src/lib"), pinned: true)
+        let (fileNode, _) = try GraphSpecNode.staticFile(at: "input:/src/lib/a.c").findOrCreateMatchingNode()
+        _ = try XCTUnwrap(fileNode.nodeAsAny() as? StaticFile).replaceContent(try "int a;".intern())
+        try Folder.flushDirtyManifests()
+        for node in try engine.database.node.selectAll() where node.kind == Folder.kind {
+            _ = try engine.database.outputPort.delete(nodeID: try node.requireID(),
+                                                      nameSymbolID: Folder.subtreeManifestOutputPort.asSymbolID())
+        }
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.13")
+
+        try engine.reconcileVersionMarkers()
+
+        let rootTree: FolderSubtreeManifest = try TypeRegistry.decodeAndCast(
+            encodedJSON: try engine.inputFileSystem.readFromOutputPort(Folder.subtreeManifestOutputPort).expectValue().resolveAsString())
+        let manifests = try rootTree.folderManifests(at: Folder.inputFileSystemName)
+        XCTAssertEqual(manifests["input:/src/lib"]?.entries.map(\.name), ["a.c"], "the root's tree reaches the file two folders down")
+        XCTAssertNotNil(try engine.database.outputPort.select(nodeID: try folder.requireID(),
+                                                              nameSymbolID: Folder.subtreeManifestOutputPort.asSymbolID()))
+        XCTAssertFalse(GraphCheck.run(database: engine.database)
+                        .findings.contains { $0.kind == .missingOutputPort },
+                       "and the graph reports no node missing a port row")
+    }
+
+    /// The finder is preserved with its wires, and one release's finder read the input file
+    /// system on two ports this one does not have (B-135). The rebuild drops the wires into
+    /// them, which would otherwise hold up every folder they come from, read by nothing.
+    func test_theRebuildDropsTheWiresIntoPortsAPreservedNodeNoLongerHas() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        let folder = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)
+        let finderID = try engine.projectFinder.requireID()
+        try Wire.connectWire(database: engine.database,
+                             fromNodeID: try folder.requireID(), fromSymbolID: Folder.folderManifestOutputPort.asSymbolID(),
+                             toNodeID: finderID, toSymbolID: "watchedFolders".asSymbolID(),
+                             name: "input:/src".asSymbolID())
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.13")
+
+        try engine.reconcileVersionMarkers()
+
+        XCTAssertTrue(try engine.database.wire.select(goingToNodeID: finderID, toSymbolID: "watchedFolders".asSymbolID()).isEmpty)
+    }
+
     // MARK: - The mode port, added to `StaticFile` after graphs existed
 
     /// B-108, the case 0.1.6 was for a folder: a preserved file holds only the ports of the

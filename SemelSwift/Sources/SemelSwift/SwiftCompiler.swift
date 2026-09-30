@@ -208,8 +208,9 @@ struct SwiftCompiler: Node {
 
     /// At 2, no module interface and no `swiftinterface` port: a package target's
     /// `-warnings-as-errors` made swiftc's warning that an interface wants library evolution
-    /// fatal (B-77).
-    public static let implementationVersion = 2
+    /// fatal (B-77). At 3, the folder's tree is asked for on `inputFolderTrees`, where its
+    /// subfolders were walked on `inputSubfolders` a level per run (B-135).
+    public static let implementationVersion = 3
 
     // MARK: Ports
 
@@ -219,12 +220,12 @@ struct SwiftCompiler: Node {
     /// from another target's folder. Placed in the sandbox under `extra/` by wire key.
     static let inputExtraSourceFiles = "extraSourceFiles"
     static let inputFolder           = "inputFolder"          // manifest to watch for swift files
-    /// Dynamic port — one manifest per subfolder discovered beneath `inputFolder`.
-    /// A FolderManifest lists only its immediate children, so a nested source tree is
-    /// walked one level per process() run: each pass wires the subfolders it has just
-    /// learned about, which schedules another pass. Same idiom as ProjectFinder's
-    /// watchedFolderManifest port. Wire key = the subfolder's full input path.
-    static let inputSubfolders       = "inputSubfolders"
+    /// Dynamic port — the subtree manifest of each folder on `inputFolder`, keyed by that
+    /// folder's path (B-135). A manifest lists only a folder's own children; the tree lists
+    /// every folder below, so a nested source tree is known on the pass after the first,
+    /// however deep, and its files are asked for then, where a walk asked for one more level
+    /// of subfolders per run.
+    static let inputFolderTrees      = "inputFolderTrees"
     static let inputModules          = "inputModules"         // one wire per upstream swiftmodule
     /// Trees of `.swiftmodule` files, one wire each — what a package's `modules_P()`
     /// carries: every module behind a product, decided by the package's converter, made
@@ -283,7 +284,7 @@ struct SwiftCompiler: Node {
             .optional(bridgingHeader),
             .optional(headerTrees),
             .dynamic(inputSourceFiles),
-            .dynamic(inputSubfolders),
+            .dynamic(inputFolderTrees),
             .dynamic(inputModuleMapFiles),
         ],
         outputPorts: [outputObject, outputModule, infoLog]
@@ -312,16 +313,17 @@ struct SwiftCompiler: Node {
         /// Every file of every header tree, under `objc/`, less the bridging header itself.
         let objectiveCHeaderFiles: [FileNameAndContent]
         let inputFolderManifests: [(String, FolderManifest)]
-        let subfolderManifests: [(String, FolderManifest)]
+        /// The tree of each folder on `inputFolder` that has arrived, keyed by its path.
+        let inputFolderTrees: [String: FolderSubtreeManifest]
         let moduleMapFolderManifests: [(String, FolderManifest)]
-        /// The names of the wires the walk has placed on its dynamic ports so far.
+        /// The names of the wires placed on the dynamic ports so far.
         let wiredSourceFiles: Set<String>
-        let wiredSubfolders: Set<String>
+        let wiredFolderTrees: Set<String>
         let wiredModuleMapFiles: Set<String>
 
         init(input: ProcessInput) throws {
             wiredSourceFiles    = Set((input.inputValues[SwiftCompiler.inputSourceFiles] ?? [:]).keys)
-            wiredSubfolders     = Set((input.inputValues[SwiftCompiler.inputSubfolders] ?? [:]).keys)
+            wiredFolderTrees    = Set((input.inputValues[SwiftCompiler.inputFolderTrees] ?? [:]).keys)
             wiredModuleMapFiles = Set((input.inputValues[SwiftCompiler.inputModuleMapFiles] ?? [:]).keys)
 
             let configString = try input.inputValues[SwiftCompiler.configuration]!
@@ -382,11 +384,14 @@ struct SwiftCompiler: Node {
             inputFolderManifests = try SwiftCompiler.decodeFolderManifests(
                 input: input, port: SwiftCompiler.inputFolder)
 
-            // Decoded strictly, like inputFolder: a subfolder manifest that failed to
-            // arrive would silently shrink the source set, and a partial whole-module
-            // compile fails with baffling "cannot find type" errors far from the cause.
-            subfolderManifests = try SwiftCompiler.decodeFolderManifests(
-                input: input, port: SwiftCompiler.inputSubfolders)
+            // Decoded strictly, like inputFolder: a tree that failed to arrive would silently
+            // shrink the source set, and a partial whole-module compile fails with baffling
+            // "cannot find type" errors far from the cause.
+            let trees = FolderTreeWalk.trees(in: input, port: SwiftCompiler.inputFolderTrees)
+            for key in wiredFolderTrees.sorted() where trees[key] == nil {
+                throw NodeError.other(message: "Could not decode FolderSubtreeManifest on port \(SwiftCompiler.inputFolderTrees) for '\(key)'")
+            }
+            inputFolderTrees = trees
 
             var allModuleMapFolders = [(String, FolderManifest)]()
             for (key, value) in (input.inputValues[SwiftCompiler.inputModuleMapFolders] ?? [:]).sorted(by: { $0.key < $1.key }) {
@@ -422,7 +427,7 @@ struct SwiftCompiler: Node {
         let outputModule: NodeValue
         let infoLog:      NodeValue
         let inputSourceFilesSpecs:    [String: GraphSpecNode]
-        let inputSubfoldersSpecs:     [String: GraphSpecNode]
+        let inputFolderTreesSpecs:    [String: GraphSpecNode]
         let inputModuleMapFilesSpecs: [String: GraphSpecNode]
 
         func asProcessOutput() -> ProcessOutput {
@@ -431,7 +436,7 @@ struct SwiftCompiler: Node {
                                  SwiftCompiler.infoLog:      infoLog],
                   inputWireSpecs: [
                       SwiftCompiler.inputSourceFiles:    inputSourceFilesSpecs,
-                      SwiftCompiler.inputSubfolders:     inputSubfoldersSpecs,
+                      SwiftCompiler.inputFolderTrees:    inputFolderTreesSpecs,
                       SwiftCompiler.inputModuleMapFiles: inputModuleMapFilesSpecs
                   ])
         }
@@ -458,7 +463,7 @@ struct SwiftCompiler: Node {
 
     private func compile(inputs: SwiftCompilerInputs,
                          inputSourceFilesSpecs: [String: GraphSpecNode],
-                         inputSubfoldersSpecs: [String: GraphSpecNode],
+                         inputFolderTreesSpecs: [String: GraphSpecNode],
                          inputModuleMapFilesSpecs: [String: GraphSpecNode]) throws -> SwiftCompilerOutputs {
 
         guard !inputs.sourceFiles.isEmpty else {
@@ -467,7 +472,7 @@ struct SwiftCompiler: Node {
                          outputModule: error,
                          infoLog: .value(""),
                          inputSourceFilesSpecs: inputSourceFilesSpecs,
-                         inputSubfoldersSpecs: inputSubfoldersSpecs,
+                         inputFolderTreesSpecs: inputFolderTreesSpecs,
                          inputModuleMapFilesSpecs: inputModuleMapFilesSpecs)
         }
 
@@ -614,7 +619,7 @@ struct SwiftCompiler: Node {
                          outputModule: error,
                          infoLog: .value(try result.infoOutput.intern()),
                          inputSourceFilesSpecs: inputSourceFilesSpecs,
-                         inputSubfoldersSpecs: inputSubfoldersSpecs,
+                         inputFolderTreesSpecs: inputFolderTreesSpecs,
                          inputModuleMapFilesSpecs: inputModuleMapFilesSpecs)
         }
 
@@ -622,54 +627,60 @@ struct SwiftCompiler: Node {
                      outputModule: .value(moduleHash),
                      infoLog:      .value(try result.infoOutput.intern()),
                      inputSourceFilesSpecs: inputSourceFilesSpecs,
-                     inputSubfoldersSpecs: inputSubfoldersSpecs,
+                     inputFolderTreesSpecs: inputFolderTreesSpecs,
                      inputModuleMapFilesSpecs: inputModuleMapFilesSpecs)
     }
 
     private func process(inputs: SwiftCompilerInputs) throws -> SwiftCompilerOutputs {
-        // The target's own folder plus every subfolder discovered so far. Sources are
-        // gathered from all of them, and each is re-scanned for further subfolders, so
-        // the tree is walked one level per run until it is fully covered — the same walk
-        // ProjectFinder does for its watched folders and AssetCatalogCompiler does for a
-        // catalog's contents.
-        let allSourceFolders = (inputs.inputFolderManifests + inputs.subfolderManifests).map(\.1)
-
         // Scoped to the target's own roots: a subfolder manifest's base sits deeper, so
         // relative paths must be measured from where the target actually starts.
-        let scope = SourceScope(roots: inputs.inputFolderManifests.map { $0.1.baseFolderPath },
+        let roots = inputs.inputFolderManifests.map(\.1)
+        let scope = SourceScope(roots: roots.map(\.baseFolderPath),
                                 sourcePaths: inputs.configuration.sourcePaths,
                                 excludedPaths: inputs.configuration.excludedPaths)
 
-        // Only .swift files inside the target's scope are compiled; only folders that
-        // might still lead to one are worth walking further.
+        // Each folder's tree, asked for on the first run with the folder's own files; read
+        // down into every folder the target's scope reaches once it has arrived (B-135). A
+        // target's files are then known on the second run however deep they are, and a
+        // flat target's on the first, as before.
+        var inputFolderTreesSpecs: [String: GraphSpecNode] = [:]
+        var allSourceFolders: [FolderManifest] = []
+        for root in roots {
+            inputFolderTreesSpecs[root.baseFolderPath] = .folderTree(at: root.baseFolderPath)
+            guard let tree = inputs.inputFolderTrees[root.baseFolderPath] else {
+                allSourceFolders.append(root)
+                continue
+            }
+            let reached = try tree.folderManifests(at: root.baseFolderPath) { scope.includesFolder($0) }
+            allSourceFolders += reached.keys.sorted().compactMap { reached[$0] }
+        }
+
+        // Only .swift files inside the target's scope are compiled.
         let inputSourceFilesSpecs = FolderTreeWalk.fileSpecs(of: allSourceFolders) {
             $0.hasSuffix(".swift") && scope.includesFile($0)
         }
-        let inputSubfoldersSpecs = FolderTreeWalk.subfolderSpecs(of: allSourceFolders) {
-            scope.includesFolder($0)
-        }
         let inputModuleMapFilesSpecs = buildInputModuleMapFilesSpecs(moduleMapFolderManifests: inputs.moduleMapFolderManifests)
 
-        // A walk that has just found something is not finished: the new wires schedule
+        // A run that has just found something is not finished: the new wires schedule
         // another run, and a compile now would be of a partial source set — a module its
         // importers compile against and then compile again (B-112). The compile waits for
-        // the run that finds nothing new.
+        // the run that finds nothing new, which is one with every tree in.
         guard Set(inputSourceFilesSpecs.keys) == inputs.wiredSourceFiles,
-              Set(inputSubfoldersSpecs.keys) == inputs.wiredSubfolders,
+              Set(inputFolderTreesSpecs.keys) == inputs.wiredFolderTrees,
               Set(inputModuleMapFilesSpecs.keys) == inputs.wiredModuleMapFiles else {
             let walking = NodeValue.noValue(reason: .pending)
             return .init(outputObject: walking,
                          outputModule: walking,
                          infoLog: .value(""),
                          inputSourceFilesSpecs: inputSourceFilesSpecs,
-                         inputSubfoldersSpecs: inputSubfoldersSpecs,
+                         inputFolderTreesSpecs: inputFolderTreesSpecs,
                          inputModuleMapFilesSpecs: inputModuleMapFilesSpecs)
         }
 
         do {
             return try compile(inputs: inputs,
                                inputSourceFilesSpecs: inputSourceFilesSpecs,
-                               inputSubfoldersSpecs: inputSubfoldersSpecs,
+                               inputFolderTreesSpecs: inputFolderTreesSpecs,
                                inputModuleMapFilesSpecs: inputModuleMapFilesSpecs)
         } catch {
             let errorNodeValue = NodeValue.noValue(reason: .error(messageDataObjectHash: try error.localizedDescription.intern()))
@@ -677,7 +688,7 @@ struct SwiftCompiler: Node {
                          outputModule: errorNodeValue,
                          infoLog: .value(""),   // empty content never reaches the store
                          inputSourceFilesSpecs: inputSourceFilesSpecs,
-                         inputSubfoldersSpecs: inputSubfoldersSpecs,
+                         inputFolderTreesSpecs: inputFolderTreesSpecs,
                          inputModuleMapFilesSpecs: inputModuleMapFilesSpecs)
         }
     }

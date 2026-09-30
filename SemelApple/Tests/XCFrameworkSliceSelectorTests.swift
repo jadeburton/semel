@@ -43,8 +43,8 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
                                                           properties: [XCFrameworkSliceSelector.pathProperty: xcframework]))
     }
 
-    /// Runs the node until it asks for nothing new: every folder it asks for answered from
-    /// `folders` (files, subfolders), every file with its path as its bytes, every mode from
+    /// Runs the node until it asks for nothing new: every folder it asks for answered as its
+    /// tree from `folders` (files, subfolders), every file with its path as its bytes, every mode from
     /// `modes` or the default. A path in `links` is a symbolic link pushed as one, holding
     /// what it maps to: a subfolder listed so in its folder's manifest, a file with the
     /// target on its metadata. Returns the last pass's output.
@@ -60,12 +60,20 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
         for _ in 0..<10 {
             let output = try node.process(input: ProcessInput(inputValues: inputValues))
             var askedForMore = false
+            // A folder asked for is its tree (B-135), every folder below it listed from
+            // `folders`, a folder link carrying its target as its parent lists it.
+            func tree(_ folder: String) throws -> FolderSubtreeManifest {
+                let contents = folders[folder] ?? (files: [], folders: [])
+                return FolderSubtreeManifest(entries: contents.files.map { FolderSubtreeEntry(name: $0, isFolder: false, isPinned: true) }
+                    + (try contents.folders.map { name in
+                        let path = "\(folder)/\(name)"
+                        return FolderSubtreeEntry(name: name, isFolder: true, isPinned: true, symbolicLinkTarget: links[path],
+                                                  subtree: try tree(path).toJSON().intern())
+                    }))
+            }
             for (folder, _) in output.inputWireSpecs[XCFrameworkSliceSelector.sliceFolders] ?? [:]
             where inputValues[XCFrameworkSliceSelector.sliceFolders]?[folder] == nil {
-                let contents = folders[folder] ?? (files: [], folders: [])
-                let folderLinks = Dictionary(contents.folders.compactMap { name in links["\(folder)/\(name)"].map { (name, $0) } }) { first, _ in first }
-                inputValues[XCFrameworkSliceSelector.sliceFolders, default: [:]][folder] =
-                    try manifestValue(folder, files: contents.files, folders: contents.folders, folderLinks: folderLinks)
+                inputValues[XCFrameworkSliceSelector.sliceFolders, default: [:]][folder] = .value(try tree(folder).toJSON().intern())
                 askedForMore = true
             }
             for (file, _) in output.inputWireSpecs[XCFrameworkSliceSelector.sliceFiles] ?? [:]
@@ -141,9 +149,8 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
             TreeManifestEntry(path: "Tiny.framework/Versions/A/Tiny", hash: try "\(slice)/Versions/A/Tiny".intern(), mode: 0o755),
             TreeManifestEntry(path: "Tiny.framework/Versions/Current", symbolicLinkTarget: "A"),
         ])
-        XCTAssertEqual(output.inputWireSpecs[XCFrameworkSliceSelector.sliceFolders]?.keys.sorted(),
-                       [slice, "\(slice)/Versions", "\(slice)/Versions/A", "\(slice)/Versions/A/Resources"],
-                       "no folder link is walked")
+        XCTAssertEqual(output.inputWireSpecs[XCFrameworkSliceSelector.sliceFolders]?.keys.sorted(), [slice],
+                       "the slice is one tree (B-135), and the entries above hold nothing read through a folder link")
     }
 
     /// The simulator's slice is the `ios` one with the `simulator` variant, not the device's.

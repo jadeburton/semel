@@ -43,52 +43,56 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
         return .value(try text.intern())
     }
 
+    private var catalogListing: NodeValue {
+        get throws { try manifestValue(catalog, files: ["Contents.json"], folders: ["AccentColor.colorset"]) }
+    }
+
+    /// With `treeArrived`, the catalog's tree is in (B-135): the catalog's own listing and
+    /// the color set's below it.
     private func process(appIcon: String? = nil,
-                         subfolders: [String: NodeValue] = [:],
+                         treeArrived: Bool = false,
                          files: [String: NodeValue] = [:]) throws -> ProcessOutput {
         let node = try AssetCatalogCompiler(thisNode: NodeRecord(id: 1, kind: AssetCatalogCompiler.kind))
+        let listings = [catalog: try catalogListing,
+                        "\(catalog)/AccentColor.colorset": try manifestValue("\(catalog)/AccentColor.colorset", files: ["Contents.json"])]
         return try node.process(input: ProcessInput(inputValues: [
-            AssetCatalogCompiler.configuration:     ["configuration": try configuration(appIcon: appIcon)],
-            AssetCatalogCompiler.catalogs:          [catalog: try manifestValue(catalog, files: ["Contents.json"],
-                                                                                folders: ["AccentColor.colorset"])],
-            AssetCatalogCompiler.catalogSubfolders: subfolders,
-            AssetCatalogCompiler.catalogFiles:      files,
+            AssetCatalogCompiler.configuration: ["configuration": try configuration(appIcon: appIcon)],
+            AssetCatalogCompiler.catalogs:      [catalog: try catalogListing],
+            AssetCatalogCompiler.catalogTrees:  treeArrived ? try treeValues(from: listings).filter { $0.key == catalog } : [:],
+            AssetCatalogCompiler.catalogFiles:  files,
         ]))
     }
 
-    /// The whole catalog, as it stands once the walk has finished.
+    /// The whole catalog, as it stands once its tree and its files have arrived.
     private func processWholeCatalog(appIcon: String? = nil) throws -> ProcessOutput {
         try process(appIcon: appIcon,
-                    subfolders: ["\(catalog)/AccentColor.colorset":
-                                     try manifestValue("\(catalog)/AccentColor.colorset", files: ["Contents.json"])],
+                    treeArrived: true,
                     files: ["\(catalog)/Contents.json": .value(try "{}".intern()),
                             "\(catalog)/AccentColor.colorset/Contents.json": .value(try "{\"colors\":[]}".intern())])
     }
 
-    // MARK: - The walk
+    // MARK: - Reading the catalog
 
-    /// First pass: the catalog's manifest names a file and a subfolder, so both are
-    /// demanded, and nothing runs — actool over a catalog missing files would compile a
-    /// wrong Assets.car without complaint.
-    func test_demandsEverySubfolderAndFileBeforeRunning() throws {
+    /// First pass: the catalog's tree is demanded with the file its own listing names,
+    /// and nothing runs — actool over a catalog missing files would compile a wrong
+    /// Assets.car without complaint.
+    func test_demandsTheCatalogsTreeAndItsFilesBeforeRunning() throws {
         let output = try process()
 
-        XCTAssertEqual(output.inputWireSpecs[AssetCatalogCompiler.catalogSubfolders]?.rendered,
-                       ["\(catalog)/AccentColor.colorset": "Folder(path: '\(catalog)/AccentColor.colorset').manifest"])
+        XCTAssertEqual(output.inputWireSpecs[AssetCatalogCompiler.catalogTrees]?.rendered,
+                       [catalog: "Folder(path: '\(catalog)').subtreeManifest"])
         XCTAssertEqual(output.inputWireSpecs[AssetCatalogCompiler.catalogFiles]?.rendered,
                        ["\(catalog)/Contents.json": "StaticFile(path: '\(catalog)/Contents.json').output"])
         XCTAssertTrue(executor.invocations.isEmpty, "actool must not run on a partial catalog")
         guard case .noValue(.pending) = try XCTUnwrap(output.outputValues[AssetCatalogCompiler.output]) else {
-            return XCTFail("the tree is pending until the walk is done")
+            return XCTFail("the tree is pending until the catalog is in")
         }
     }
 
-    /// A subfolder that has arrived is walked in turn, so the demand grows until the tree
-    /// is exhausted.
-    func test_walksASubfolderOnceItsManifestHasArrived() throws {
-        let output = try process(subfolders: ["\(catalog)/AccentColor.colorset":
-                                                  try manifestValue("\(catalog)/AccentColor.colorset", files: ["Contents.json"])],
-                                 files: ["\(catalog)/Contents.json": .value(try "{}".intern())])
+    /// Once the tree has arrived every file below the catalog is demanded at once, however
+    /// deep, and nothing runs until they are all in.
+    func test_demandsEveryFileOfTheTreeOnceItHasArrived() throws {
+        let output = try process(treeArrived: true, files: ["\(catalog)/Contents.json": .value(try "{}".intern())])
 
         XCTAssertEqual(output.inputWireSpecs[AssetCatalogCompiler.catalogFiles]?.keys.sorted(),
                        ["\(catalog)/AccentColor.colorset/Contents.json", "\(catalog)/Contents.json"])

@@ -278,7 +278,7 @@ final class ErrorReportTests: SemelCoreTestCase {
         let input = ProcessInput(inputValues: [
             ProjectBuilder.projectFileInputPort:  ["input:/proj/build.fmla": .value(try broken.intern())],
             ProjectBuilder.productInputPort:      [:],
-            ProjectBuilder.foldersInputPort:      [:],
+            ProjectBuilder.folderTreesInputPort:  [:],
             ProjectBuilder.graphImportsInputPort: [:],
         ])
 

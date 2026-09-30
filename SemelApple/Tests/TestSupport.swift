@@ -20,7 +20,7 @@ class SemelAppleTestCase: XCTestCase {
         ToolRunnerRegistry.instance = ToolRunnerRegistry()
         // The manifests the nodes decode resolve through the same process-global registry
         // production uses.
-        try TypeRegistry.register(types: [FolderManifest.self, TreeManifest.self])
+        try TypeRegistry.register(types: [FolderManifest.self, FolderSubtreeManifest.self, TreeManifest.self])
         try SemelApple.register()
     }
 
@@ -39,6 +39,23 @@ class SemelAppleTestCase: XCTestCase {
         let entries = files.map { FolderManifestEntry(name: $0, isFolder: false, isPinned: true) }
                     + folders.map { FolderManifestEntry(name: $0, isFolder: true, isPinned: true, symbolicLinkTarget: folderLinks[$0]) }
         return .value(try FolderManifest(baseFolderPath: path, entries: entries).toJSON().intern())
+    }
+
+    /// A folder's subtree manifest as a `Folder` publishes it (B-135), folded from the
+    /// listings of every folder below it: `manifests` holds `manifestValue`s by path, and a
+    /// folder it does not hold is empty. One tree per path given, so whichever of them a
+    /// node asks for is there.
+    func treeValues(from manifests: [String: NodeValue]) throws -> [String: NodeValue] {
+        var listings: [String: [FolderManifestEntry]] = [:]
+        for (path, value) in manifests {
+            let manifest: FolderManifest = try TypeRegistry.decodeAndCast(encodedJSON: try value.expectValue().resolveAsString())
+            listings[path] = manifest.entries
+        }
+        var trees: [String: NodeValue] = [:]
+        for path in manifests.keys {
+            trees[path] = .value(try FolderSubtreeManifest.folding(at: path, listings: listings).toJSON().intern())
+        }
+        return trees
     }
 
     func treeManifest(from value: NodeValue?) throws -> TreeManifest {

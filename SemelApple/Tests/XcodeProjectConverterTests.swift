@@ -20,8 +20,9 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     /// for local packages as into every synchronized folder.
     private let notificationsFolder = "input:/repo/IceCubesNotifications"
 
-    /// `folders` as given, with the unowned folder holding a source and no package unless
-    /// the test says otherwise: a test about something else still has it answered.
+    /// `folders` as given — the listing of each folder by path, answered as the tree of
+    /// each (B-135) — with the unowned folder holding a source and no package unless the
+    /// test says otherwise: a test about something else still has it answered.
     private func process(projectFile: NodeValue? = nil,
                          xcconfigs: [String: NodeValue] = [:],
                          folders: [String: NodeValue] = [:]) throws -> ProcessOutput {
@@ -32,7 +33,7 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
             folders[notificationsFolder] = try manifestValue(notificationsFolder, files: ["NotificationService.swift"])
         }
         var inputs: [String: [String: NodeValue]] = [XcodeProjectConverter.xcconfigs: xcconfigs,
-                                                     XcodeProjectConverter.folders: folders]
+                                                     XcodeProjectConverter.folders: try treeValues(from: folders)]
         if let projectFile {
             inputs[XcodeProjectConverter.projectFile] = [self.projectFile: projectFile]
         }
@@ -69,10 +70,10 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.xcconfigs]?.rendered,
                        ["input:/repo/App.xcconfig": "StaticFile(path: 'input:/repo/App.xcconfig').output"])
         XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.folders]?.rendered,
-                       ["input:/repo/IceCubesApp": "Folder(path: 'input:/repo/IceCubesApp').manifest",
-                        "input:/repo/IceCubesShareExtension": "Folder(path: 'input:/repo/IceCubesShareExtension').manifest",
-                        "input:/repo/IceCubesNotifications": "Folder(path: 'input:/repo/IceCubesNotifications').manifest"],
-                       "the embedded extension's folder is walked too, and the folder no target owns is looked into")
+                       ["input:/repo/IceCubesApp": "Folder(path: 'input:/repo/IceCubesApp').subtreeManifest",
+                        "input:/repo/IceCubesShareExtension": "Folder(path: 'input:/repo/IceCubesShareExtension').subtreeManifest",
+                        "input:/repo/IceCubesNotifications": "Folder(path: 'input:/repo/IceCubesNotifications').subtreeManifest"],
+                       "the embedded extension's folder is read too, and the folder no target owns is looked into")
         XCTAssertTrue(isPending(output))
     }
 
@@ -80,40 +81,58 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         get throws { ("input:/repo/IceCubesShareExtension", try manifestValue("input:/repo/IceCubesShareExtension", files: ["Share.swift"])) }
     }
 
-    /// The folder is walked one level per pass, like every folder walk, except into a
-    /// catalog, which its own compiler walks.
-    func test_walksSubfoldersButNotCatalogs() throws {
+    /// The folder is one tree, however deep (B-135): what is asked for is the target's
+    /// folders and the synchronized folders, never a folder below one.
+    func test_asksForEachFolderAsOneTree() throws {
         let output = try process(projectFile: try fixtureProject,
                                  xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(messageDataObjectHash: try "absent".intern()))],
                                  folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp",
                                                                                          files: ["App.swift"],
-                                                                                         folders: ["Views", "Assets.xcassets"])])
+                                                                                         folders: ["Views", "Assets.xcassets"]),
+                                           "input:/repo/IceCubesApp/Views": try manifestValue("input:/repo/IceCubesApp/Views", folders: ["Rows"])])
 
         XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.folders]?.keys.sorted(),
-                       ["input:/repo/IceCubesApp", "input:/repo/IceCubesApp/Views", "input:/repo/IceCubesNotifications",
-                        "input:/repo/IceCubesShareExtension"])
-        XCTAssertTrue(isPending(output))
+                       ["input:/repo/IceCubesApp", "input:/repo/IceCubesNotifications", "input:/repo/IceCubesShareExtension"])
+        XCTAssertTrue(isPending(output), "the extension's folder has not arrived")
     }
 
-    /// Nor into a bundle, which is copied whole by a node that walks it itself, nor a
-    /// documentation catalog, which is not built: what is in them is never asked for.
-    /// (The folders themselves are asked about once, as every folder directly in a
-    /// synchronized folder is, for a package.)
-    func test_doesNotWalkIntoAFolderCopiedWholeOrNotBuilt() throws {
-        let output = try process(projectFile: try fixtureProject,
-                                 xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(messageDataObjectHash: try "absent".intern()))],
-                                 folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp", files: ["App.swift"],
-                                                                                         folders: ["Views", "Sounds.bundle", "Guide.docc"]),
-                                           "input:/repo/IceCubesApp/Views": try manifestValue("input:/repo/IceCubesApp/Views", folders: ["Rows"]),
-                                           "input:/repo/IceCubesApp/Sounds.bundle": try manifestValue("input:/repo/IceCubesApp/Sounds.bundle",
-                                                                                                       folders: ["Inner"]),
-                                           "input:/repo/IceCubesApp/Guide.docc": try manifestValue("input:/repo/IceCubesApp/Guide.docc",
-                                                                                                    folders: ["Resources"])])
+    /// Not into a catalog, which its own compiler walks, nor a bundle, copied whole by a
+    /// node that walks it itself, nor a documentation catalog, which is not built: what is
+    /// below them is never read, so a subtree the store cannot give back there changes
+    /// nothing, where one under a group would be the conversion's error. (A folder directly
+    /// in a synchronized folder is read one level for a package, as it always was asked
+    /// about, unless it is a catalog; so the bundle and the documentation are a level down.)
+    func test_doesNotReadIntoACatalogAFolderCopiedWholeOrOneNotBuilt() throws {
+        let unreadable = String(repeating: "0", count: 64)
+        func tree(_ entries: [FolderSubtreeEntry]) throws -> NodeValue {
+            .value(try FolderSubtreeManifest(entries: entries).toJSON().intern())
+        }
+        let views = try FolderSubtreeManifest(entries: [
+            FolderSubtreeEntry(name: "Row.swift", isFolder: false, isPinned: true),
+            FolderSubtreeEntry(name: "Sounds.bundle", isFolder: true, isPinned: true, subtree: unreadable),
+            FolderSubtreeEntry(name: "Guide.docc", isFolder: true, isPinned: true, subtree: unreadable),
+        ])
+        let app = try tree([
+            FolderSubtreeEntry(name: "App.swift", isFolder: false, isPinned: true),
+            FolderSubtreeEntry(name: "Assets.xcassets", isFolder: true, isPinned: true, subtree: unreadable),
+            FolderSubtreeEntry(name: "Views", isFolder: true, isPinned: true, subtree: try views.toJSON().intern()),
+        ])
+        let node = try XcodeProjectConverter(thisNode: NodeRecord(id: 1, kind: XcodeProjectConverter.kind, name: nil,
+                                                                  properties: ["path": projectPath], scheduled: false, identity: nil))
+        var folders = try treeValues(from: [notificationsFolder: try manifestValue(notificationsFolder, files: ["NotificationService.swift"]),
+                                            try extensionFolder.0: try extensionFolder.1])
+        folders["input:/repo/IceCubesApp"] = app
+        let inputs: [String: [String: NodeValue]] = [
+            XcodeProjectConverter.projectFile: [projectFile: try fixtureProject],
+            XcodeProjectConverter.xcconfigs:   ["input:/repo/App.xcconfig": .value(try "BUNDLE_ID_PREFIX = com.example".intern())],
+            XcodeProjectConverter.folders:     folders,
+        ]
 
-        let demanded = try XCTUnwrap(output.inputWireSpecs[XcodeProjectConverter.folders]).keys
-        XCTAssertTrue(demanded.contains("input:/repo/IceCubesApp/Views/Rows"), "\(demanded.sorted())")
-        XCTAssertFalse(demanded.contains("input:/repo/IceCubesApp/Sounds.bundle/Inner"), "\(demanded.sorted())")
-        XCTAssertFalse(demanded.contains("input:/repo/IceCubesApp/Guide.docc/Resources"), "\(demanded.sorted())")
+        let output = try node.process(input: ProcessInput(inputValues: inputs))
+        XCTAssertNoThrow(try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue())
+
+        folders["input:/repo/IceCubesApp"] = try tree([FolderSubtreeEntry(name: "Views", isFolder: true, isPinned: true, subtree: unreadable)])
+        XCTAssertThrowsError(try node.process(input: ProcessInput(inputValues: inputs.merging([XcodeProjectConverter.folders: folders]) { $1 })))
     }
 
     /// Everything there: the formula names the executable, the catalog, the plain
@@ -325,13 +344,9 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
             }
             for path in (output.inputWireSpecs[XcodeProjectConverter.folders] ?? [:]).keys.sorted()
             where inputs[XcodeProjectConverter.folders]?[path] == nil {
-                let relativePath = String(path.dropFirst(projectFolder.count + 1))
-                let isPackage = relativePath.hasPrefix("Modules/") && modules.contains(String(relativePath.dropFirst("Modules/".count)))
-                let given = folderContents[relativePath] ?? FolderContents()
-                inputs[XcodeProjectConverter.folders]?[path] = try manifestValue(
-                    path,
-                    files:   isPackage ? NetNewsWireModules.packageFolderFiles : given.files,
-                    folders: relativePath == "Modules" ? modules : isPackage ? NetNewsWireModules.packageFolderFolders : given.folders)
+                inputs[XcodeProjectConverter.folders]?[path] = .value(try netNewsWireTree(at: path, projectFolder: projectFolder,
+                                                                                          modules: modules, folders: folderContents)
+                                                                        .toJSON().intern())
                 answered = true
             }
             guard answered else {
@@ -342,20 +357,38 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         throw XCTSkip("the converter still demanded something new after ten passes")
     }
 
+    /// The tree of a folder of the NetNewsWire clone as `convertNetNewsWire` lays it out: a
+    /// folder holds what `folders` gives for its path relative to the project folder, or
+    /// nothing — except `Modules`, which holds the given packages, each holding what a
+    /// package folder of the clone holds.
+    private func netNewsWireTree(at path: String, projectFolder: String, modules: [String],
+                                 folders folderContents: [String: FolderContents]) throws -> FolderSubtreeManifest {
+        let relativePath = String(path.dropFirst(projectFolder.count + 1))
+        let isPackage = relativePath.hasPrefix("Modules/") && modules.contains(String(relativePath.dropFirst("Modules/".count)))
+        let given = folderContents[relativePath] ?? FolderContents()
+        let files   = isPackage ? NetNewsWireModules.packageFolderFiles : given.files
+        let folders = relativePath == "Modules" ? modules : isPackage ? NetNewsWireModules.packageFolderFolders : given.folders
+        return FolderSubtreeManifest(entries:
+            files.map { FolderSubtreeEntry(name: $0, isFolder: false, isPinned: true) }
+            + (try folders.map { name in
+                let subtree = try netNewsWireTree(at: "\(path)/\(name)", projectFolder: projectFolder, modules: modules, folders: folderContents)
+                return FolderSubtreeEntry(name: name, isFolder: true, isPinned: true, subtree: try subtree.toJSON().intern())
+            }))
+    }
+
     /// NetNewsWire names no package for fifteen of the products its apps link: the
-    /// converter looks into the synchronized `Modules` folder no target owns, and a level
-    /// later into each folder in it, finds the seventeen that hold a `Package.swift`, and
-    /// includes every one — so each `modules_`, `objects_`, `bundles_` and `linking_` func the formula
-    /// calls is one an included formula defines, a local package's or a remote one's.
+    /// converter looks into the synchronized `Modules` folder no target owns — its tree,
+    /// which lists each folder in it too (B-135) — finds the seventeen that hold a
+    /// `Package.swift`, and includes every one — so each `modules_`, `objects_`, `bundles_`
+    /// and `linking_` func the formula calls is one an included formula defines, a local
+    /// package's or a remote one's.
     func test_findsNetNewsWiresPackagesInItsModulesFolderAndDefinesWhatItCalls() throws {
         let modules = NetNewsWireModules.products.keys.sorted()
         let (output, demandedFolders, _) = try convertNetNewsWire(modules: modules)
 
         XCTAssertTrue(demandedFolders.contains("input:/nnw/Modules"))
-        for name in modules {
-            XCTAssertTrue(demandedFolders.contains("input:/nnw/Modules/\(name)"), name)
-        }
-        XCTAssertFalse(demandedFolders.contains("input:/nnw/Modules/Account/Sources"), "a package's own folders are its converter's")
+        XCTAssertFalse(demandedFolders.contains { $0.hasPrefix("input:/nnw/Modules/") },
+                       "the folders in it are read from its tree, not asked for: \(demandedFolders)")
 
         let formula = try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
         let includedLocal = modules.filter {
