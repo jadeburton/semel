@@ -32,6 +32,13 @@ final class FolderContentRootOnDiskTests: XCTestCase {
         let url = root.appendingPathComponent(relativePath)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try content.write(to: url, atomically: true, encoding: .utf8)
+        // Fixed, so the expected lines do not depend on the runner's umask.
+        chmod(url.path, 0o644)
+    }
+
+    /// A file's line as the engine folds it, pushed with the mode `write` gives it.
+    private func file(_ text: String) -> FolderChildContent {
+        .file(hash: hash(text), mode: 0o644)
     }
 
     private func folder(_ relativePath: String) -> URL {
@@ -51,11 +58,11 @@ final class FolderContentRootOnDiskTests: XCTestCase {
         try write("Pkg/empty.txt", "")
         try write("Pkg/Sources/Lib/Lib.swift", "public let answer = 42\n")
 
-        let lib = FolderContentRoot.document(of: [("Lib.swift", .file, .hash(hash("public let answer = 42\n")))])
+        let lib = FolderContentRoot.document(of: [("Lib.swift", .file, file("public let answer = 42\n"))])
         let sources = FolderContentRoot.document(of: [("Lib", .folder, .hash(hash(lib)))])
         let package = FolderContentRoot.document(of: [
-            ("Package.swift", .file,   .hash(hash("// swift-tools-version: 5.9\n"))),
-            ("empty.txt",     .file,   .hash("")),
+            ("Package.swift", .file,   file("// swift-tools-version: 5.9\n")),
+            ("empty.txt",     .file,   file("")),
             ("Sources",       .folder, .hash(hash(sources))),
         ])
 
@@ -69,6 +76,19 @@ final class FolderContentRootOnDiskTests: XCTestCase {
         try write("Pkg/Sources/Lib/Lib.swift", "let one = 2\n")
 
         XCTAssertNotEqual(try FolderContentRoot.root(ofFolderAt: folder("Pkg")), before)
+    }
+
+    /// B-132. A file made executable is a different tree, and a push comparing roots would
+    /// never send the change if the root did not move with it.
+    func test_aModeChangeMovesTheRoot() throws {
+        try write("Pkg/run.sh", "echo\n")
+        let before = try FolderContentRoot.root(ofFolderAt: folder("Pkg"))
+
+        chmod(folder("Pkg/run.sh").path, 0o755)
+
+        XCTAssertNotEqual(try FolderContentRoot.root(ofFolderAt: folder("Pkg")), before)
+        XCTAssertTrue(FolderContentRoot.document(of: [("run.sh", .file, .file(hash: hash("echo\n"), mode: 0o755))])
+                        .contains("file\thash \(hash("echo\n")) mode 755\t6\trun.sh\n"))
     }
 
     /// Not qualified by where the folder is, so a lock survives the dependency being moved.
@@ -120,10 +140,10 @@ final class FolderContentRootOnDiskTests: XCTestCase {
         try fileManager.createSymbolicLink(atPath: folder("Fw/Tiny").path, withDestinationPath: "Versions/Current/Tiny")
         try fileManager.createSymbolicLink(atPath: folder("Fw/Outside.h").path, withDestinationPath: "../outside.h")
 
-        let version  = FolderContentRoot.document(of: [("Tiny", .file, .hash(hash("binary")))])
+        let version  = FolderContentRoot.document(of: [("Tiny", .file, file("binary"))])
         let versions = FolderContentRoot.document(of: [("A",       .folder, .hash(hash(version))),
                                                        ("Current", .link,   .symbolicLinkTarget("A"))])
-        let framework = FolderContentRoot.document(of: [("Outside.h", .file,   .hash(hash("outside"))),
+        let framework = FolderContentRoot.document(of: [("Outside.h", .file,   file("outside")),
                                                         ("Tiny",      .link,   .symbolicLinkTarget("Versions/Current/Tiny")),
                                                         ("Versions",  .folder, .hash(hash(versions)))])
 

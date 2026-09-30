@@ -90,5 +90,10 @@ public enum Semel {
     /// twice over: every preserved folder is given the row for the port, and folded again,
     /// since a root folded under 2 is one a lock written by `prepare` can never match. What
     /// was pushed as a copy of a link becomes the link at the next push.
-    public static let version = "0.1.13"
+    ///
+    /// 0.1.14: a file's line in a content root carries its mode, under
+    /// `semel-folder-content-root 4` (B-132). Every preserved folder holds a root folded
+    /// under 3, which a push comparing roots with the disk would never match, so the rebuild
+    /// folds them again.
+    public static let version = "0.1.14"
 }

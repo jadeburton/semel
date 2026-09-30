@@ -111,6 +111,37 @@ extension RequestHandler {
         return .ok
     }
 
+    // MARK: - What a push compares (B-132)
+
+    /// The roots of the folder at `path` and every folder below it, as a JSON array of
+    /// `HeldFolderRoot` for the reply's body.
+    func contentRoots(path: String) throws -> Data {
+        let roots = try HeldTree.folderRoots(below: Path(path)).map {
+            HeldFolderRoot(path: $0.path.string, contentRoot: $0.contentRoot, isPinned: $0.isPinned)
+        }
+        return try MessageCoder.encode(roots)
+    }
+
+    /// The children of each folder at `paths`, as a JSON array of `HeldFolder` for the
+    /// reply's body; a path with no folder is left out.
+    func folderChildren(paths: [String]) throws -> Data {
+        var folders: [HeldFolder] = []
+        for path in paths {
+            guard let children = try HeldTree.children(ofFolderAt: Path(path)) else {
+                continue
+            }
+            folders.append(HeldFolder(path: path, children: children.map { child in
+                HeldChild(name:               child.name,
+                          kind:               child.kind == .folder ? .folder : .file,
+                          contentHash:        child.contentHash,
+                          mode:               child.mode,
+                          symbolicLinkTarget: child.symbolicLinkTarget,
+                          isPinned:           child.isPinned)
+            }))
+        }
+        return try MessageCoder.encode(folders)
+    }
+
     // MARK: - remove
 
     /// Deletes every match in the input file system. Deletions that succeed stand even if a

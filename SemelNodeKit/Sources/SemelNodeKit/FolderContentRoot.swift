@@ -17,9 +17,15 @@ import SemelDatabaseModels
 /// folder a file was taken out of and a folder that never held it are not the same folder,
 /// and a consumer comparing two roots asks which it is rather than matching a sentence.
 public enum FolderChildContent: Equatable {
-    /// The child's own content, named by its hash: a file's bytes, or a subfolder's content
-    /// root — which is folded the same way, so the fold reaches the whole subtree.
+    /// The child's own content, named by its hash: a subfolder's content root — which is
+    /// folded the same way, so the fold reaches the whole subtree.
     case hash(DataObjectHash)
+    /// A file's bytes, named by their hash, and the mode it was pushed with (B-132). The
+    /// mode is on the line because a tree carries it (`TreeManifest`): a file made
+    /// executable is a different tree to everything built from it, so a root that did not
+    /// move with it would call two trees one — and a client comparing roots to decide what
+    /// to push would never send the change.
+    case file(hash: DataObjectHash, mode: UInt16)
     /// Nothing has produced content for this name: a source nobody pushed, or a child that
     /// has not run.
     case notProduced
@@ -69,6 +75,9 @@ extension FolderChildContent {
     var token: String {
         switch self {
         case .hash(let hash): return "hash \(hash)"
+        // Octal, as a mode is written everywhere else a person reads one.
+        case .file(let hash, let mode):
+            return "hash \(hash) mode \(String(mode, radix: 8))"
         case .notProduced:    return "not-produced"
         case .deleted:        return "deleted"
         case .failed:         return "failed"
@@ -143,7 +152,10 @@ public enum FolderContentRoot {
     ///
     /// 3: a symbolic link inside its folder is a `link` line holding its target, where the
     /// fold read the bytes of what it named under its name (B-77).
-    public static let formatTag = "semel-folder-content-root 3"
+    ///
+    /// 4: a file's line carries its mode beside its hash, `hash <h> mode 755`, so a file
+    /// made executable moves the root (B-132).
+    public static let formatTag = "semel-folder-content-root 4"
 
     public static func document(of children: [(name: String, kind: FolderChildKind,
                                                content: FolderChildContent)]) -> String {
@@ -187,43 +199,21 @@ extension FolderContentRoot {
     /// What a push does that this cannot see: a file removed from disk since an earlier push
     /// is still in the graph, because a push only adds. The engine's root then differs from
     /// this one, which is right — the build is reading a tree the lock does not describe.
+    ///
+    /// The walk is `FolderOnDisk`'s, the one `push` compares with (B-132), so the lock and
+    /// the push cannot come to disagree about what a folder on disk folds to.
     public static func root(ofFolderAt folder: URL) throws -> DataObjectHash {
-        try walk(folder) ?? Sha256.hash(Data(document(of: []).utf8))
+        let onDisk = FolderOnDisk.read(folderAt: folder.path)
+        if let unreadable = onDisk.firstUnreadable {
+            throw unreadable
+        }
+        return onDisk.contentRoot ?? emptyFolderRoot
     }
 
-    /// The fold over `folder`, or nil when nothing below it would be pushed.
-    private static func walk(_ folder: URL) throws -> DataObjectHash? {
-        let lister = ExternalFileSystemLister(rootDirectoryPath: folder.path)
-        var lines: [(name: String, kind: FolderChildKind, content: FolderChildContent)] = []
-        for entry in lister.allFiles(inDirectoryPath: folder.path) {
-            let name  = entry.path.string
-            let child = folder.appendingPathComponent(name)
-            // A link, to a file or to a folder, is what it holds, and what it names is
-            // folded where it is.
-            if let target = entry.symbolicLinkTarget {
-                lines.append((name, .link, .symbolicLinkTarget(target)))
-                continue
-            }
-            switch entry.kind {
-            case .file:
-                let bytes: Data
-                do {
-                    bytes = try Data(contentsOf: child, options: .mappedIfSafe)
-                } catch {
-                    throw FolderContentRootError.unreadable(path: child.path, reason: error.localizedDescription)
-                }
-                lines.append((name, .file, .hash(Sha256.hash(bytes))))
-            case .folder:
-                guard let subfolderRoot = try walk(child) else {
-                    continue
-                }
-                lines.append((name, .folder, .hash(subfolderRoot)))
-            }
-        }
-        guard !lines.isEmpty else {
-            return nil
-        }
-        return Sha256.hash(Data(document(of: lines).utf8))
+    /// The root of a folder holding nothing: what the engine publishes for a folder it has
+    /// just made, and for a folder link whose referent holds nothing a push would push.
+    public static var emptyFolderRoot: DataObjectHash {
+        Sha256.hash(Data(document(of: []).utf8))
     }
 }
 

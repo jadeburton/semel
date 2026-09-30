@@ -47,9 +47,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsNineteen() {
-        XCTAssertEqual(ProtocolVersion.current, 19)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 19,
+    func test_currentProtocolVersionIsTwenty() {
+        XCTAssertEqual(ProtocolVersion.current, 20)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 20,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -123,6 +123,8 @@ final class MessageJSONTests: XCTestCase {
             .pushSymbolicLink(path: "Tiny.framework/Tiny", target: "Versions/Current/Tiny", referent: .file(mode: 0o755)),
             .pushSymbolicLink(path: "Tiny.framework/Versions/Current", target: "A", referent: .folder),
             .pushFolder(path: "src"),
+            .contentRoots(path: "src"),
+            .folderChildren(paths: ["src", "src/lib"]),
             .remove(pattern: "src/*.o"),
             .fetch(fileSystem: .output, path: "bin/app"),
             .errors,
@@ -141,6 +143,27 @@ final class MessageJSONTests: XCTestCase {
         for request in requests {
             XCTAssertEqual(try roundTrip(Request.daemon(request)), .daemon(request))
         }
+    }
+
+    // MARK: - What a push compares (B-132)
+
+    /// The records travel in a reply's body, typed: a folder's root and pin, and a child's
+    /// hash, mode and link target, each under its own key and absent where it has none.
+    func test_encodesWhatAPushComparesAsRecords() throws {
+        let root   = HeldFolderRoot(path: "src/lib", contentRoot: "9f86d0", isPinned: true)
+        let marked = HeldFolderRoot(path: "src", contentRoot: nil, isPinned: true)
+        let file   = HeldChild(name: "run.sh", kind: .file, contentHash: "abc", mode: 0o755, symbolicLinkTarget: nil,
+                               isPinned: true)
+        let link   = HeldChild(name: "Current", kind: .folder, contentHash: nil, mode: nil, symbolicLinkTarget: "A",
+                               isPinned: true)
+
+        XCTAssertEqual(try json(root), #"{"contentRoot":"9f86d0","isPinned":true,"path":"src\/lib"}"#)
+        XCTAssertEqual(try json(marked), #"{"isPinned":true,"path":"src"}"#)
+        XCTAssertEqual(try json(file), #"{"contentHash":"abc","isPinned":true,"kind":"file","mode":493,"name":"run.sh"}"#)
+        XCTAssertEqual(try json(link), #"{"isPinned":true,"kind":"folder","name":"Current","symbolicLinkTarget":"A"}"#)
+
+        let folder = HeldFolder(path: "fw/Versions", children: [file, link])
+        XCTAssertEqual(try MessageCoder.decode([HeldFolder].self, from: try MessageCoder.encode([folder])), [folder])
     }
 
     // MARK: - Daemon responses
@@ -214,6 +237,8 @@ final class MessageJSONTests: XCTestCase {
             .ok,
             .list(entries: [ListEntry(path: "a", kind: .file, size: 1, mode: 0o755, status: .pending)]),
             .pushFile(didChange: true),
+            .contentRoots,
+            .folderChildren,
             .remove(removedFiles: ["a", "b"], removedFolders: ["src"]),
             .fetch(mode: 0o644),
             .symbolicLink(target: "Versions/Current/Tiny"),

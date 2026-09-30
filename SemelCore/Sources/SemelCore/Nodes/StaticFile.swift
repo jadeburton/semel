@@ -120,8 +120,7 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable, File
     }
 
     /// The bytes. They are the folder's business, and so is the metadata when it changed:
-    /// a content root folds what a link says, which is on the metadata, and a mode change
-    /// folds to the same root again, which is cheap and rare.
+    /// a content root folds what a link says and a file's mode, both on the metadata.
     private func replaceContentWith(_ value: NodeValue, notifying metadataChanged: Bool = false) throws -> Bool {
         let changed = try thisNode.writeToOutputPort(Self.outputPort, value: value)
         if changed || metadataChanged {

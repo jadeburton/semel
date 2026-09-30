@@ -57,7 +57,9 @@ public enum ProtocolVersion {
     /// (B-109).
     /// Version 19 adds `pushSymbolicLink`, and `symbolicLink` in answer to a `fetch` of one
     /// (B-77).
-    public static let current = 19
+    /// Version 20 adds `contentRoots` and `folderChildren` and their replies, what a push
+    /// compares with the disk before it sends (B-132).
+    public static let current = 20
 }
 
 public struct Hello: Codable, Equatable, Sendable {

@@ -264,7 +264,7 @@ final class VersionMarkerTests: SemelCoreTestCase {
         try engine.reconcileVersionMarkers()
 
         let folded = try folder.readFromOutputPort(Folder.contentRootOutputPort).expectValue().resolveAsString()
-        XCTAssertTrue(folded.contains("file\thash \(try "int a;".intern())\t3\ta.c\n"), folded)
+        XCTAssertTrue(folded.contains("file\thash \(try "int a;".intern()) mode 644\t3\ta.c\n"), folded)
         // The folder above it carries the folder's own root, not an empty subtree.
         let above = try engine.inputFileSystem.readFromOutputPort(Folder.contentRootOutputPort)
             .expectValue().resolveAsString()
