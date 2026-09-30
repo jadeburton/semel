@@ -54,8 +54,14 @@ final class FilePluginTests: XCTestCase {
         XCTAssertEqual(context.messages, ["Push file: a.c"])
     }
 
+    /// B-132. A push of a folder asks what the server holds before it sends anything.
+    private func replyHoldingNothing() throws {
+        connection.reply(.contentRoots, body: try MessageCoder.encode([HeldFolderRoot]()))
+    }
+
     func test_pushOfAFolderSendsTheFolderThenItsFiles() throws {
         try write("src/a.c", "a")
+        try replyHoldingNothing()
         connection.reply(.ok)
         connection.reply(.ok)
         connection.reply(.pushFile(didChange: false))
@@ -63,7 +69,7 @@ final class FilePluginTests: XCTestCase {
 
         try run("push", ["src"])
 
-        XCTAssertEqual(connection.daemonRequests, [.beginBatch, .pushFolder(path: "src"),
+        XCTAssertEqual(connection.daemonRequests, [.contentRoots(path: "src"), .beginBatch, .pushFolder(path: "src"),
                                                    .pushFile(path: "src/a.c", mode: 0o644), .endBatch])
         XCTAssertEqual(context.messages, ["Push folder: src", "Push file: src/a.c [no change]"])
     }
@@ -79,6 +85,7 @@ final class FilePluginTests: XCTestCase {
         try fileManager.createSymbolicLink(atPath: externalRoot.appendingPathComponent("fw/Versions/Current").path, withDestinationPath: "A")
         try fileManager.createSymbolicLink(atPath: externalRoot.appendingPathComponent("fw/Tiny").path, withDestinationPath: "Versions/Current/Tiny")
         try fileManager.createSymbolicLink(atPath: externalRoot.appendingPathComponent("fw/Outside.h").path, withDestinationPath: "../outside.h")
+        try replyHoldingNothing()
         connection.reply(.ok)
         connection.reply(.ok)
         for _ in 0..<5 {
@@ -89,6 +96,7 @@ final class FilePluginTests: XCTestCase {
         try run("push", ["fw"])
 
         XCTAssertEqual(connection.daemonRequests, [
+            .contentRoots(path: "fw"),
             .beginBatch, .pushFolder(path: "fw"),
             .pushFile(path: "fw/Outside.h", mode: 0o644),
             .pushSymbolicLink(path: "fw/Tiny", target: "Versions/Current/Tiny", referent: .file(mode: 0o755)),
@@ -97,8 +105,8 @@ final class FilePluginTests: XCTestCase {
             .pushFile(path: "fw/Versions/Current/Tiny", mode: 0o755),
             .endBatch,
         ])
-        XCTAssertEqual(connection.requests[2].body, Data("outside".utf8))
-        XCTAssertEqual(connection.requests[3].body, Data("binary".utf8), "a link to a file carries what it names")
+        XCTAssertEqual(connection.requests[3].body, Data("outside".utf8))
+        XCTAssertEqual(connection.requests[4].body, Data("binary".utf8), "a link to a file carries what it names")
         XCTAssertTrue(context.messages.contains("Push link: fw/Versions/Current -> A"), "\(context.messages)")
     }
 
@@ -122,6 +130,7 @@ final class FilePluginTests: XCTestCase {
         for index in 0..<21 {
             try write("src/file\(index).c", "\(index)")
         }
+        try replyHoldingNothing()
         connection.reply(.ok)
         connection.reply(.ok)
         for index in 0..<21 {

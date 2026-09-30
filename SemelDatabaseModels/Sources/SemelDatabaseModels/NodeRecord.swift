@@ -143,6 +143,14 @@ public struct NodeRecord: Identifiable, FetchableRecord, PersistableRecord {
             try db.create(indexOn: "Node",
                           columns: ["parentNodeID", "name"],
                           options: .ifNotExists)
+
+            // A folder's subfolders without its files: what a push reads to compare a tree
+            // with the disk (`selectSubtree`, B-132). Without it each step of that walk reads
+            // every child's row to learn its kind — the IceCubes app tree's 8,039 files to
+            // find its 1,670 folders, 0.4 s — where with it the walk is 2 ms.
+            try db.create(indexOn: "Node",
+                          columns: ["parentNodeID", "kind"],
+                          options: .ifNotExists)
         }
     }
 }
@@ -172,6 +180,25 @@ public struct NodePathStep {
         self.depth = depth
         self.node  = node
         self.ports = ports
+    }
+}
+
+/// One node of a subtree walked by `selectSubtree`: its id, its parent's, its name, how far
+/// below the starting node it stands, and its rows for the ports the walk was asked to
+/// bring, by port symbol.
+public struct NodeSubtreeRow {
+    public let id:           ObjectID
+    public let parentNodeID: ObjectID?
+    public let name:         String?
+    public let depth:        Int
+    public var ports:        [ObjectID: OutputPort]
+
+    public init(id: ObjectID, parentNodeID: ObjectID?, name: String?, depth: Int, ports: [ObjectID: OutputPort]) {
+        self.id           = id
+        self.parentNodeID = parentNodeID
+        self.name         = name
+        self.depth        = depth
+        self.ports        = ports
     }
 }
 
@@ -392,6 +419,69 @@ public struct NodeDataAccess: DataAccessType {
                                                                     dataObjectHash: row["portDataObjectHash"])
         }
         return steps
+    }
+
+    /// `ancestorNodeID` and every node of `kind` below it reached through nodes of that
+    /// kind — a folder and its subfolders at every depth — each with its parent, its name
+    /// and its rows for the ports in `portSymbolIDs`, in one query. Ordered by depth, so a
+    /// parent always comes before its children; the ancestor is at depth 0 whatever its kind.
+    ///
+    /// One query rather than a walk, because a push compares a whole tree's folders with
+    /// the disk before it sends anything (B-132): a select per folder is a round trip per
+    /// folder, and what a push of an unchanged tree costs is exactly that walk.
+    public func selectSubtree(below ancestorNodeID: ObjectID,
+                              kind: UInt,
+                              portSymbolIDs: [ObjectID]) throws -> [NodeSubtreeRow] {
+        var arguments: [DatabaseValueConvertible] = [ancestorNodeID, kind]
+        var portFilter = "0"
+        if !portSymbolIDs.isEmpty {
+            portFilter = "p.nameSymbolID IN (\(portSymbolIDs.map { _ in "?" }.joined(separator: ", ")))"
+            arguments.append(contentsOf: portSymbolIDs)
+        }
+
+        // `CROSS JOIN` fixes the order, the subtree outermost: left to itself, the planner
+        // walked each step by the index on `kind` — every folder in the graph per folder in
+        // the subtree — and read the rest by scanning `Node`, which cost more than the push
+        // it was saving.
+        let rows = try selecting { db in
+            try Row.fetchAll(db, sql: """
+                WITH RECURSIVE
+                    subtree(depth, nodeID) AS (
+                        SELECT 0, ?
+                        UNION ALL
+                        SELECT subtree.depth + 1, child.id
+                        FROM subtree
+                        CROSS JOIN Node child ON child.parentNodeID = subtree.nodeID AND child.kind = ?
+                    )
+                SELECT subtree.depth AS subtreeDepth, n.id AS id, n.parentNodeID AS parentNodeID, n.name AS name,
+                       p.nameSymbolID AS portSymbolID, p.valueKind AS portValueKind,
+                       p.dataObjectHash AS portDataObjectHash
+                FROM subtree
+                CROSS JOIN Node n ON n.id = subtree.nodeID
+                LEFT JOIN OutputPort p ON p.nodeID = n.id AND \(portFilter)
+                ORDER BY subtree.depth, n.id
+                """, arguments: StatementArguments(arguments))
+        }
+
+        // A node comes back once per port it has a row for, consecutively by the ordering.
+        var result: [NodeSubtreeRow] = []
+        for row in rows {
+            let nodeID: ObjectID = row["id"]
+            if result.last?.id != nodeID {
+                result.append(NodeSubtreeRow(id: nodeID, parentNodeID: row["parentNodeID"], name: row["name"],
+                                             depth: row["subtreeDepth"], ports: [:]))
+            }
+            guard let portSymbolID: ObjectID = row["portSymbolID"],
+                  let rawValueKind: UInt8 = row["portValueKind"],
+                  let valueKind = OutputPort.ValueKind(rawValue: rawValueKind) else {
+                continue
+            }
+            result[result.count - 1].ports[portSymbolID] = OutputPort(nodeID: nodeID,
+                                                                      nameSymbolID: portSymbolID,
+                                                                      valueKind: valueKind,
+                                                                      dataObjectHash: row["portDataObjectHash"])
+        }
+        return result
     }
 
     public func select(identity: String) throws -> [NodeRecord] {

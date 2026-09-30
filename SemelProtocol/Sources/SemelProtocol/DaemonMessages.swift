@@ -277,6 +277,63 @@ public struct ExplainedCause: Codable, Equatable, Sendable {
     }
 }
 
+/// One folder the input file system holds below a folder a push asked about, and its
+/// content root (B-132): what a client compares with the root it folds from the disk, to
+/// skip every subtree whose roots agree.
+public struct HeldFolderRoot: Codable, Equatable, Sendable {
+    /// Relative to the input file system's root, as `push` names it.
+    public let path: String
+    /// Nil when the server cannot vouch for the root — a fold is still owed below the
+    /// folder — so the client looks at the folder's children rather than skip it.
+    public let contentRoot: String?
+    /// Whether the folder is pinned, as a push leaves it. A client compares no root on a
+    /// folder that is not, and pushes the folder to pin it.
+    public let isPinned: Bool
+
+    public init(path: String, contentRoot: String?, isPinned: Bool) {
+        self.path        = path
+        self.contentRoot = contentRoot
+        self.isPinned    = isPinned
+    }
+}
+
+/// One folder's children as the input file system holds them, for a client comparing a
+/// folder whose root differs from the disk's, file by file (B-132).
+public struct HeldFolder: Codable, Equatable, Sendable {
+    public let path:     String
+    public let children: [HeldChild]
+
+    public init(path: String, children: [HeldChild]) {
+        self.path     = path
+        self.children = children
+    }
+}
+
+public struct HeldChild: Codable, Equatable, Sendable {
+    public let name: String
+    public let kind: EntryKind
+    /// For a file holding a value, the hash of its bytes, by the rule the object store names
+    /// them with — an object of 32 bytes or less is named by its own bytes. Nil for a file
+    /// nobody pushed or one that was removed, and for a folder.
+    public let contentHash: String?
+    /// For a file holding a value, the mode it was pushed with.
+    public let mode: UInt16?
+    /// What the child holds as a symbolic link pushed as one (B-77), file or folder.
+    public let symbolicLinkTarget: String?
+    /// A file holding a value, or a folder that is pinned: what a push leaves behind it.
+    public let isPinned: Bool
+
+    public init(name: String, kind: EntryKind, contentHash: String?, mode: UInt16?, symbolicLinkTarget: String?,
+                isPinned: Bool) {
+        self.name               = name
+        self.kind               = kind
+        self.contentHash        = contentHash
+        self.mode               = mode
+        self.symbolicLinkTarget = symbolicLinkTarget
+        self.isPinned           = isPinned
+    }
+}
+
 // MARK: - Requests
 
 /// What a pushed symbolic link names, which decides what travels with it.
@@ -301,6 +358,17 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
     /// through the link reads what it did. Answered by `pushFile(didChange:)`.
     case pushSymbolicLink(path: String, target: String, referent: SymbolicLinkReferent)
     case pushFolder(path: String)
+    /// The content roots of the folder at `path` in the input file system and of every
+    /// folder below it (B-132): what a push of a folder asks before it sends anything, so
+    /// that it sends only where the disk differs. Answered by `contentRoots`, the roots in
+    /// the reply's body as a JSON array of `HeldFolderRoot`, parents before children;
+    /// empty when there is no folder at the path.
+    case contentRoots(path: String)
+    /// The children of each folder at `paths`, with their hashes, modes and link targets:
+    /// what a push asks of the folders whose roots differ from the disk's, to send only the
+    /// files that do (B-132). Answered by `folderChildren`, a JSON array of `HeldFolder` in
+    /// the body; a path holding no folder is left out.
+    case folderChildren(paths: [String])
     case remove(pattern: String)
     case fetch(fileSystem: FileSystemKind, path: String)
     case errors
@@ -348,6 +416,12 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     case ok
     case list(entries: [ListEntry])
     case pushFile(didChange: Bool)
+    /// The answer to `contentRoots`: a JSON array of `HeldFolderRoot` in the frame body. In
+    /// the body for the reason `check`'s findings are: the answer grows with the tree, one
+    /// record per folder, and a large tree's would pass the megabyte the JSON section takes.
+    case contentRoots
+    /// The answer to `folderChildren`: a JSON array of `HeldFolder` in the frame body.
+    case folderChildren
     /// What the removal took, split by kind: a client reports the two differently, and a
     /// pattern that took every file of a folder and left the folder standing is a correct
     /// outcome that reads as a no-op unless it is said.

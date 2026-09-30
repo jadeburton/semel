@@ -68,6 +68,14 @@ final class FilePlugin: CommandPlugin {
             return
         }
 
+        // Where a build exported its products is not a source, however the tree above it
+        // is pushed. Named only when it was all the push asked for: a push of the tree
+        // leaves it out without comment.
+        let exclusions = context.pushExclusions
+        let isExcluded = { (path: Path) in
+            exclusions.contains { path.string == $0 || path.string.hasPrefix($0 + "/") }
+        }
+
         // Decide the whole work list before pushing any of it, so a file that is matched
         // twice is still pushed once. A wildcard reaching into subdirectories matches a
         // directory *and* the files inside it, and pushing a directory means pushing its
@@ -75,24 +83,29 @@ final class FilePlugin: CommandPlugin {
         // report the second arrival as "[no change]" against a file nothing had changed,
         // which makes the report describe the matching rather than what happened.
         var alreadyQueued = Set<String>()
-        var work: [FileWildcardEntry] = []
+        var work: [PushWork] = []
+        var notOnDisk: [String] = []
+        var comparedFolders: [Path] = []
         for entry in entries {
-            for expanded in try expand(entry, baseDirectory: context.baseDirectory) {
-                if alreadyQueued.insert(expanded.path.string).inserted {
-                    work.append(expanded)
-                }
+            // A folder inside one already compared was queued with it: comparing it again
+            // would only ask the server the same question about part of the same tree.
+            let covered = comparedFolders.contains { entry.path.segments.starts(with: $0.segments) }
+            guard !covered else {
+                continue
+            }
+            let plan = try expand(entry, excluding: isExcluded, context: context)
+            if case .folder = entry.kind {
+                comparedFolders.append(entry.path)
+            }
+            notOnDisk.append(contentsOf: plan.notOnDisk)
+            for item in plan.work where alreadyQueued.insert(item.entry.path.string).inserted {
+                work.append(item)
             }
         }
 
-        // Where a build exported its products is not a source, however the tree above it
-        // is pushed. Named only when it was all the push asked for: a push of the tree
-        // leaves it out without comment.
-        let exclusions = context.pushExclusions
-        let excluded = work.filter { entry in
-            exclusions.contains { entry.path.string == $0 || entry.path.string.hasPrefix($0 + "/") }
-        }
+        let excluded = work.filter { isExcluded($0.entry.path) }
         if !excluded.isEmpty {
-            work.removeAll { entry in excluded.contains { $0.path == entry.path } }
+            work.removeAll { isExcluded($0.entry.path) }
             if work.isEmpty {
                 context.outputError("push: \(externalPathOrWildcard): a build's export folder is never pushed")
                 return
@@ -110,9 +123,19 @@ final class FilePlugin: CommandPlugin {
         var folders   = 0
         var unchanged = 0
 
-        for entry in work {
-            guard let outcome = try pushOne(entry, baseDirectory: context.baseDirectory, context: context) else {
-                continue
+        defer { reportNotOnDisk(notOnDisk, namedIndividually: nameEachPath, context: context) }
+
+        for item in work {
+            let entry = item.entry
+            let outcome: PushOutcome
+            switch item {
+            case .held:
+                outcome = Self.heldOutcome(of: entry)
+            case .send:
+                guard let sent = try pushOne(entry, baseDirectory: context.baseDirectory, context: context) else {
+                    continue
+                }
+                outcome = sent
             }
             switch outcome {
 
@@ -157,31 +180,224 @@ final class FilePlugin: CommandPlugin {
         case folder
     }
 
-    /// A matched entry, plus everything pushing it implies.
+    /// One entry of a push's work list: one to send, or one the server already holds as the
+    /// disk has it, which is reported as a push that changed nothing and costs no request.
+    private enum PushWork {
+        case send(FileWildcardEntry)
+        case held(FileWildcardEntry)
+
+        var entry: FileWildcardEntry {
+            switch self {
+            case .send(let entry), .held(let entry): return entry
+            }
+        }
+    }
+
+    /// What a push reports for an entry it did not send: what it would have reported had
+    /// the server answered that nothing changed.
+    private static func heldOutcome(of entry: FileWildcardEntry) -> PushOutcome {
+        if let target = entry.symbolicLinkTarget {
+            return .symbolicLink(target: target, didChange: false)
+        }
+        switch entry.kind {
+        case .file:   return .file(didChange: false)
+        case .folder: return .folder
+        }
+    }
+
+    /// A matched entry, plus everything pushing it implies, and what the server holds below
+    /// it that the disk does not.
     ///
     /// A directory stands for itself and every file beneath it: a bare `push src` has no
     /// wildcard enumerating its contents, so without this it would create an empty folder.
     /// And for every folder beneath it that is a symbolic link pushed as one, since a push
     /// makes the other folders only on the way to a file, and a link is more than that
     /// (B-77).
-    private func expand(_ entry: FileWildcardEntry,
-                        baseDirectory: String) throws -> [FileWildcardEntry] {
+    ///
+    /// Only what differs is sent (B-132). The disk is folded as the engine folds what it
+    /// holds (`FolderOnDisk`), and the server is asked for the roots of the folder and every
+    /// folder below it — one request, whatever the tree's size. A subtree whose root agrees
+    /// is held already, file for file, and nothing in it is sent; a folder whose root does
+    /// not is asked for its children — one request for all such folders — and only a file
+    /// whose hash, mode or link target differs, or that the server lacks, is sent. Where
+    /// the server holds no folder at all, everything below is sent, as a push always did.
+    private func expand(_ entry: FileWildcardEntry, excluding isExcluded: (Path) -> Bool,
+                        context: any CommandContext) throws -> (work: [PushWork], notOnDisk: [String]) {
 
         guard case .folder = entry.kind else {
-            return [entry]
+            return ([.send(entry)], [])
         }
 
-        let matcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: baseDirectory))
+        let onDisk = FolderOnDisk.read(entry.path, under: context.baseDirectory,
+                                       symbolicLinkTarget: entry.symbolicLinkTarget, excluding: isExcluded)
+        let heldRoots = try Self.heldRoots(below: entry.path, context: context)
 
-        let contents = try matcher.findAllMatching(pathOrWildcard: entry.path.string + "/**/*")
-            .filter {
-                switch $0.kind {
-                case .file:   return true
-                case .folder: return $0.symbolicLinkTarget != nil
+        // The folder itself: a link is always sent, since what it holds is compared in the
+        // folder above it, which this push was not asked about; any other folder only when
+        // the server does not hold it pinned.
+        var work: [PushWork] = []
+        if entry.symbolicLinkTarget == nil, heldRoots[entry.path.string]?.isPinned == true {
+            work.append(.held(entry))
+        } else {
+            work.append(.send(entry))
+        }
+
+        var decisions: [String: FolderComparison] = [:]
+        Self.compare(onDisk, with: heldRoots, into: &decisions)
+
+        let compared = decisions.filter { $0.value == .compareChildren }.keys.sorted()
+        let heldChildren = compared.isEmpty ? [:] : try Self.heldChildren(of: compared, context: context)
+
+        var notOnDisk: [String] = []
+        Self.plan(onDisk, decisions: decisions, heldChildren: heldChildren, into: &work, notOnDisk: &notOnDisk)
+        return (work, notOnDisk)
+    }
+
+    /// What a push does with one folder on disk, decided from its root before any child of
+    /// it is looked at.
+    private enum FolderComparison: Equatable {
+        /// The server holds no folder here: everything below is sent.
+        case absent
+        /// The server holds it pinned under the same root: nothing below is sent.
+        case held
+        /// The roots differ, or the server cannot vouch for its own: the children are
+        /// compared one by one, and the subfolders by their own roots.
+        case compareChildren
+        /// As `compareChildren`, for a folder the server holds unpinned: pushed first, to
+        /// pin it as a push always leaves a folder.
+        case compareChildrenAndPin
+    }
+
+    /// Decides every folder from the top down, stopping at a root that agrees or a folder
+    /// the server lacks: what is below either is decided by it.
+    private static func compare(_ folder: FolderOnDisk, with heldRoots: [String: HeldFolderRoot],
+                                into decisions: inout [String: FolderComparison]) {
+        guard let held = heldRoots[folder.path.string] else {
+            decisions[folder.path.string] = .absent
+            return
+        }
+        if held.isPinned, let root = held.contentRoot, root == folder.contentRoot {
+            decisions[folder.path.string] = .held
+            return
+        }
+        decisions[folder.path.string] = held.isPinned ? .compareChildren : .compareChildrenAndPin
+        for case .folder(let subfolder) in folder.children {
+            compare(subfolder, with: heldRoots, into: &decisions)
+        }
+    }
+
+    /// The work below `folder`, in the order a push has always sent it — what is directly
+    /// in a folder by name, then each subfolder's — so that a push that sends everything
+    /// sends it exactly as before (`FolderOnDisk.entriesToPush`).
+    private static func plan(_ folder: FolderOnDisk, decisions: [String: FolderComparison],
+                             heldChildren: [String: [String: HeldChild]],
+                             into work: inout [PushWork], notOnDisk: inout [String]) {
+        let decision = decisions[folder.path.string] ?? .absent
+        switch decision {
+        case .absent:
+            work.append(contentsOf: folder.entriesToPush.map(PushWork.send))
+            return
+        case .held:
+            work.append(contentsOf: folder.entriesToPush.map(PushWork.held))
+            return
+        case .compareChildren, .compareChildrenAndPin:
+            break
+        }
+
+        // A folder the server has taken away since it answered is one it lacks.
+        let held = heldChildren[folder.path.string] ?? [:]
+        var onDiskNames = Set<String>()
+
+        for child in folder.children {
+            switch child {
+            case .file(let file):
+                let name = file.path.lastComponent ?? ""
+                onDiskNames.insert(name)
+                work.append(isHeld(file, as: held[name]) ? .held(file.entry) : .send(file.entry))
+
+            case .folder(let subfolder):
+                let name = subfolder.path.lastComponent ?? ""
+                onDiskNames.insert(name)
+                guard let linkEntry = subfolder.linkEntry else {
+                    continue
                 }
+                let heldLink = held[name]
+                let isHeldLink = heldLink?.kind == .folder && heldLink?.isPinned == true
+                              && heldLink?.symbolicLinkTarget == linkEntry.symbolicLinkTarget
+                work.append(isHeldLink ? .held(linkEntry) : .send(linkEntry))
             }
+        }
 
-        return [entry] + contents
+        // What a push leaves and the disk no longer has: a file holding a value, a folder
+        // pinned. A push only adds, so these stay; a name the graph merely asks for is not
+        // the user's to be told about.
+        for (name, child) in held.sorted(by: { $0.key < $1.key }) where child.isPinned && !onDiskNames.contains(name) {
+            let path = (folder.path / name).string
+            notOnDisk.append(child.kind == .folder ? path + "/" : path)
+        }
+
+        for case .folder(let subfolder) in folder.children {
+            if subfolder.symbolicLinkTarget == nil, decisions[subfolder.path.string] == .compareChildrenAndPin {
+                work.append(.send(FileWildcardEntry(path: subfolder.path, kind: .folder, state: nil, isUnreferenced: false)))
+            }
+            plan(subfolder, decisions: decisions, heldChildren: heldChildren, into: &work, notOnDisk: &notOnDisk)
+        }
+    }
+
+    /// Whether the server holds `file` as the disk has it: the same bytes, mode and link.
+    private static func isHeld(_ file: FileOnDisk, as held: HeldChild?) -> Bool {
+        guard let held, held.kind == .file, let heldHash = held.contentHash,
+              held.mode == file.mode, held.symbolicLinkTarget == file.symbolicLinkTarget else {
+            return false
+        }
+        // A link's bytes are what it names, which the fold does not read: read them only
+        // here, where its folder's root has already said something below it differs.
+        let hash = file.symbolicLinkTarget == nil ? file.contentHash : file.contentHashFollowingLinks()
+        return hash == heldHash
+    }
+
+    /// The roots the server holds for `path` and every folder below it, by path. None when
+    /// the server does not answer with roots, which is read as a server holding nothing:
+    /// everything is then sent, as a push always did.
+    private static func heldRoots(below path: Path, context: any CommandContext) throws -> [String: HeldFolderRoot] {
+        let (response, body) = try context.request(.contentRoots(path: path.string))
+        guard case .contentRoots = response, let body else {
+            return [:]
+        }
+        let roots = try MessageCoder.decode([HeldFolderRoot].self, from: body)
+        return Dictionary(roots.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// The children the server holds in each folder at `paths`, by folder path and then by
+    /// name.
+    private static func heldChildren(of paths: [String], context: any CommandContext) throws -> [String: [String: HeldChild]] {
+        let (response, body) = try context.request(.folderChildren(paths: paths))
+        guard case .folderChildren = response, let body else {
+            return [:]
+        }
+        var result: [String: [String: HeldChild]] = [:]
+        for folder in try MessageCoder.decode([HeldFolder].self, from: body) {
+            result[folder.path] = Dictionary(folder.children.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        }
+        return result
+    }
+
+    /// Says what the server holds that the disk does not. Not an error: `push` only adds,
+    /// and a file deleted on disk stays in the graph until `rm` takes it — which is worth
+    /// saying, since a build goes on reading it.
+    private func reportNotOnDisk(_ paths: [String], namedIndividually: Bool, context: any CommandContext) {
+        guard !paths.isEmpty else {
+            return
+        }
+        guard !namedIndividually || paths.count > PathList.namedIndividually else {
+            paths.forEach { context.outputMessage("Not on disk, kept: \($0) (push only adds; rm removes it)") }
+            return
+        }
+        let folders = paths.filter { $0.hasSuffix("/") }.count
+        guard let counts = Self.countedTogether(files: paths.count - folders, folders: folders) else {
+            return
+        }
+        context.outputMessage("Not on disk, kept: \(counts) (push only adds; rm removes them): \(Self.named(paths))")
     }
 
     /// Pushes one entry and says what it was; `nil` when it was reported and skipped.

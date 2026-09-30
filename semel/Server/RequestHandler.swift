@@ -106,6 +106,10 @@ public final class RequestHandler {
                 return (.daemon(try pushSymbolicLink(path: path, target: target, referent: referent, body: body ?? Data())), nil)
             case .pushFolder(let path):
                 return (.daemon(try pushFolder(path: path)), nil)
+            case .contentRoots(let path):
+                return (.daemon(.contentRoots), try contentRoots(path: path))
+            case .folderChildren(let paths):
+                return (.daemon(.folderChildren), try folderChildren(paths: paths))
             case .remove(let pattern):
                 return (.daemon(try remove(pattern: pattern)), nil)
             case .fetch(let fileSystem, let path):

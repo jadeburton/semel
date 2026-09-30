@@ -181,12 +181,12 @@ final class FolderMerkleRootTests: SemelCoreTestCase {
 
     // MARK: - What a line carries
 
-    func test_aFilesLineCarriesItsContentHash() throws {
+    func test_aFilesLineCarriesItsContentHashAndMode() throws {
         let hash = try "int a;".intern()
         try push("entry/a.c", contents: "int a;")
 
         let text = try document(of: "entry")
-        XCTAssertTrue(text.contains("file\thash \(hash)\t3\ta.c\n"), text)
+        XCTAssertTrue(text.contains("file\thash \(hash) mode 644\t3\ta.c\n"), text)
     }
 
     func test_aSubfoldersLineCarriesItsOwnRoot() throws {

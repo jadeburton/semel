@@ -238,9 +238,12 @@ public final class ExternalFileSystemLister: FileWildcardMatcherInput {
         }.sorted { $0.path.string < $1.path.string }
     }
 
-    /// What the link at `path` holds, or nil when `path` is not a link.
+    /// What the link at `path` holds, or nil when `path` is not a link. `lstat` rather than
+    /// `attributesOfItem`, which reads every attribute of every entry a push lists to
+    /// answer this one question.
     private static func symbolicLinkTarget(at path: String) -> String? {
-        guard (try? FileManager.default.attributesOfItem(atPath: path))?[.type] as? FileAttributeType == .typeSymbolicLink else {
+        var status = stat()
+        guard lstat(path, &status) == 0, status.st_mode & S_IFMT == S_IFLNK else {
             return nil
         }
         return try? FileManager.default.destinationOfSymbolicLink(atPath: path)
@@ -303,10 +306,16 @@ public struct PushedContent {
     }
 
     /// The file's permission bits, links followed, or the default when they cannot be read.
-    private static func mode(ofFileAt absolutePath: String) -> UInt16 {
-        let resolved    = (absolutePath as NSString).resolvingSymlinksInPath
-        let attributes  = try? FileManager.default.attributesOfItem(atPath: resolved)
-        let permissions = attributes?[.posixPermissions] as? NSNumber
-        return permissions.map { UInt16(truncatingIfNeeded: $0.intValue) } ?? FileMetadata.defaultMode
+    /// Public for the fold on disk, whose file lines carry the mode a push sends (B-132).
+    ///
+    /// `stat` rather than `FileManager`: it follows links itself, where resolving the path
+    /// first cost an `lstat` per component, and a push of a tree asks this of every file.
+    /// The bits are the ones `FileManager` reports as `posixPermissions`.
+    public static func mode(ofFileAt absolutePath: String) -> UInt16 {
+        var status = stat()
+        guard stat(absolutePath, &status) == 0 else {
+            return FileMetadata.defaultMode
+        }
+        return UInt16(truncatingIfNeeded: status.st_mode & 0o7777)
     }
 }

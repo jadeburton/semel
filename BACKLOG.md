@@ -96,6 +96,28 @@ and relink behind it. The push is B-132's; the cold build's gap is the converter
 and the per-node cost B-124 left, and the signed bundle re-publishing every entry after
 an executable changes (427 nodes for one edit).
 
+Measured 2026-09-30 on the IceCubes app tree (`icecubes-app`, 8,041 files, release binaries,
+a fresh home each, the cached checkout less `.git`, `prepare --platform ios-simulator`),
+after a push that compares roots with the disk and sends only what differs (B-132), against
+`main` before it, built and run the same way in the same hour. The machine was shared —
+load average 13 to 16, another agent building — so the cold builds took 204 s where the
+rows above took 142 s; the two columns were run back to back and compare with each other.
+
+| IceCubes app tree | before (B-131) | after (B-132) |
+|---|---|---|
+| `push icecubes-app`, nothing changed (three runs) | 4.43 s, 4.25 s, 4.21 s | 0.86 s, 0.70 s, 0.67 s |
+| `build icecubes-app`, nothing changed | 4.83 s | 1.36 s |
+| `push icecubes-app` after a one-file edit (`Tabs/ToolbarTab.swift`) | 4.25 s | 0.51 s |
+| `build icecubes-app` with a one-file edit (5 nodes, 3 computed) | 20.14 s | 13.60 s |
+
+An unchanged push is now one request for the roots and the batch around nothing; a one-file
+edit adds one request for the children of the folders on its path and the file itself. The
+server's part is two queries — 2 ms for the tree's 1,670 folders, once an index on
+`Node(parentNodeID, kind)` let the subtree walk step to subfolders without reading every
+file's row (0.4 s without it). What remains of the 0.7 s is the client opening and hashing
+8,041 files, on every core; a cache of hashes by size and modification time would take most
+of it, at the price of trusting a timestamp.
+
 
 ## Design, correctness and code quality
 

@@ -319,11 +319,10 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
             // After the manifests, so that a folder its last child took with it is gone by
             // the time its root would have been recomputed.
             for key in contentRootKeys {
-                guard let nodeID = ObjectID(key.dropFirst(contentRootDirtyKeyPrefix.count)),
-                      let folder = try markedFolder(nodeID: nodeID, clearing: key) else {
+                guard let nodeID = ObjectID(key.dropFirst(contentRootDirtyKeyPrefix.count)) else {
                     continue
                 }
-                try folder.refreshContentRoot()
+                try refreshMarkedContentRoot(nodeID: nodeID, clearing: key)
             }
         }
     }
@@ -367,16 +366,25 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// of that port. The folder's own children, not the tree below it: a read that walked
     /// down would be O(tree), which is the cost the marks exist to avoid.
     static func flushContentRootIfDirty(nodeID: ObjectID) throws {
-        let database = DatabaseLayer.shared!
         let key = contentRootDirtyKey(nodeID)
-        guard try database.metadata.select(key: key) != nil else {
+        guard try DatabaseLayer.shared!.metadata.select(key: key) != nil else {
             return
         }
-        try database.metadata.delete(key: key)
-        guard let folder = try database.node.select(nodeID: nodeID).makeNode() as? Folder else {
-            return
+        try refreshMarkedContentRoot(nodeID: nodeID, clearing: key)
+    }
+
+    /// Clears one folder's root mark, folds its root again, and marks the folder above
+    /// when the root moved — in one transaction, so that no reader sees the mark gone
+    /// before the mark above it is written. Between the two, the folder above would hold a
+    /// stale root with nothing saying so, and a push comparing roots (B-132) would take it
+    /// for current and send nothing for a change the graph has not folded in yet.
+    private static func refreshMarkedContentRoot(nodeID: ObjectID, clearing key: String) throws {
+        try DatabaseLayer.shared!.withTransaction {
+            guard let folder = try markedFolder(nodeID: nodeID, clearing: key) else {
+                return
+            }
+            try folder.refreshContentRoot()
         }
-        try folder.refreshContentRoot()
     }
 
     public func onChildAdded(nodeID: ObjectID) throws {
@@ -456,7 +464,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         let pinned   = try pinnedStates(of: children)
         // A subfolder's link, for a walk to know before it descends; a file's is on its
         // metadata, where what reads files looks.
-        let links    = try symbolicLinkTargets(of: children.filter { $0.kind == Folder.kind })
+        let links    = try symbolicLinkTargets(of: children.filter { $0.kind == Folder.kind }).targets
 
         var folderManifestEntries = [FolderManifestEntry]()
         for child in children {
@@ -477,7 +485,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         Self.contentRootRebuildCount.increment()
         let children = try database.node.selectChildSummaries(parentNodeID: try thisNode.requireID())
         let content  = try contentStates(of: children)
-        let links    = try symbolicLinkTargets(of: children)
+        let (links, modes) = try symbolicLinkTargets(of: children)
 
         var lines = [(name: String, kind: FolderChildKind, content: FolderChildContent)]()
         for child in children {
@@ -487,7 +495,12 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
             case StaticFile.kind:
                 let fileContent = content[child.id] ?? .notProduced
                 guard let target = links[child.id] else {
-                    lines.append((child.name!, .file, fileContent))
+                    // A file's bytes carry its mode on the line; a state has no mode to carry.
+                    guard case .hash(let hash) = fileContent else {
+                        lines.append((child.name!, .file, fileContent))
+                        continue
+                    }
+                    lines.append((child.name!, .file, .file(hash: hash, mode: modes[child.id] ?? FileMetadata.defaultMode)))
                     continue
                 }
                 // A link is its target while it stands; removed, it says so as a file does,
@@ -546,28 +559,42 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// document is read once — a folder of thousands of files holds a handful of metadata
     /// documents, one per mode and one per link — and a folder that is not a link holds
     /// the empty value, which is read as none.
-    private func symbolicLinkTargets(of children: [NodeChildSummary]) throws -> [ObjectID: String] {
+    ///
+    /// A file's mode comes out of the same documents, for the fold, whose file lines carry
+    /// it (B-132): the default for a file whose metadata cannot be read, as every reader of
+    /// a mode takes it.
+    private func symbolicLinkTargets(of children: [NodeChildSummary]) throws -> (targets: [ObjectID: String],
+                                                                                 modes:   [ObjectID: UInt16]) {
         let parentNodeID = try thisNode.requireID()
-        var result: [ObjectID: String] = [:]
+        var targets: [ObjectID: String] = [:]
+        var modes:   [ObjectID: UInt16] = [:]
         for (kind, portName) in [(Folder.kind,     Folder.symbolicLinkOutputPort),
                                  (StaticFile.kind, StaticFile.fileMetadataOutputPort)] {
             let ports = try database.node.selectChildPorts(parentNodeID: parentNodeID, nameSymbolID: portName.asSymbolID())
-            var targetByDocument: [DataObjectHash: String?] = [:]
+            var metadataByDocument: [DataObjectHash: (target: String?, mode: UInt16?)] = [:]
             for child in children where child.kind == kind {
                 guard case .value(let hash)? = try ports[child.id]?.asNodeValue(), !hash.isEmpty else {
                     continue
                 }
-                if targetByDocument[hash] == nil {
+                if metadataByDocument[hash] == nil {
                     let document = try hash.resolveAsString()
-                    targetByDocument[hash] = .some(kind == Folder.kind ? document
-                                                                       : FileMetadata.decode(from: document)?.symbolicLinkTarget)
+                    if kind == Folder.kind {
+                        metadataByDocument[hash] = (document, nil)
+                    } else {
+                        let metadata = FileMetadata.decode(from: document)
+                        metadataByDocument[hash] = (metadata?.symbolicLinkTarget, metadata?.mode)
+                    }
                 }
-                if let target = targetByDocument[hash] ?? nil, !target.isEmpty {
-                    result[child.id] = target
+                let metadata = metadataByDocument[hash]
+                if let target = metadata?.target, !target.isEmpty {
+                    targets[child.id] = target
+                }
+                if let mode = metadata?.mode {
+                    modes[child.id] = mode
                 }
             }
         }
-        return result
+        return (targets, modes)
     }
 
     /// Pinned state for every child, in one query per kind that has one.

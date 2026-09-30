@@ -229,14 +229,19 @@ extension BuildEngine {
     }
 
     /// The children a content-root document names by hash: the second field of each line
-    /// after the tag, `hash <h>` for a file's bytes or a subfolder's own document.
+    /// after the tag, `hash <h> mode <m>` for a file's bytes or `hash <h>` for a subfolder's
+    /// own document.
     static func objects(inContentRootDocument text: String) -> [DataObjectHash] {
         text.split(separator: "\n").dropFirst().compactMap { line in
             let fields = line.split(separator: "\t", maxSplits: 3, omittingEmptySubsequences: false)
-            guard fields.count >= 2, fields[1].hasPrefix("hash ") else {
+            guard fields.count >= 2 else {
                 return nil
             }
-            return String(fields[1].dropFirst("hash ".count))
+            let words = fields[1].split(separator: " ")
+            guard words.count >= 2, words[0] == "hash" else {
+                return nil
+            }
+            return String(words[1])
         }
     }
 }

@@ -108,7 +108,7 @@ final class ObjectCollectionTests: SemelCoreTestCase {
     /// the walk follows the chain to the end.
     func test_theChildrenAContentRootDocumentNamesAreKeptThroughSubfolders() throws {
         let file = try agedOrphan("a file two folders down, named by the inner document")
-        let inner = try FolderContentRoot.document(of: [(name: "deep.c", kind: .file, content: .hash(file))]).intern()
+        let inner = try FolderContentRoot.document(of: [(name: "deep.c", kind: .file, content: .file(hash: file, mode: 0o644))]).intern()
         let outer = try FolderContentRoot.document(of: [(name: "sub", kind: .folder, content: .hash(inner)),
                                                         (name: "gone.c", kind: .file, content: .deleted)]).intern()
         try age(inner)
@@ -180,7 +180,8 @@ final class ObjectCollectionTests: SemelCoreTestCase {
 
         XCTAssertEqual(BuildEngine.objects(namedByDocument: file, in: store), [])
         XCTAssertEqual(BuildEngine.objects(namedByDocument: plain, in: store), [])
-        XCTAssertEqual(BuildEngine.objects(inContentRootDocument: FolderContentRoot.formatTag + "\nfile\thash 0a0b\t3\ta.c\nfolder\tnot-produced\t1\ts\n"),
-                       ["0a0b"])
+        XCTAssertEqual(BuildEngine.objects(inContentRootDocument: FolderContentRoot.formatTag
+                                           + "\nfile\thash 0a0b mode 644\t3\ta.c\nfolder\thash 0c0d\t3\tsub\nfolder\tnot-produced\t1\ts\n"),
+                       ["0a0b", "0c0d"])
     }
 }
