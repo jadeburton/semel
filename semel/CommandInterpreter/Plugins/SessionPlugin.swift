@@ -3,6 +3,9 @@
 //
 // Handles: base, begin, commit, q / quit / exit
 //
+// `base` is the one piece of session state that outlives the session: `base <path>`
+// remembers it in the Semel home, where the next launch starts from it (`RememberedBase`).
+//
 // `begin` and `commit` are for a script that pushes in several steps. Every push already
 // opens a batch around its own files, so the engine settles once per command; a script
 // whose tree arrives over several commands would settle after each, building and
@@ -66,18 +69,54 @@ final class SessionPlugin: CommandPlugin {
 
     // MARK: - base
 
+    /// Sets the session's base and remembers it for the next launch (B-136): a person sets
+    /// the base because the tree is somewhere other than where the terminal opens, and the
+    /// next launch's terminal opens there too.
     private func handleBase(externalPath: String?, context: any CommandContext) {
         guard let externalPath else {
             context.outputMessage(context.baseDirectory)
             return
         }
+        guard externalPath != Self.forgetFlag else {
+            forgetBase(context: context)
+            return
+        }
 
         let expandedPath = ExternalPathSanitizer.expandPartialPath(externalPath)
-        guard FileManager.default.fileExists(atPath: expandedPath) else {
-            context.outputError("Path refers to nonexistent directory: \(externalPath)")
+        // A directory, not merely something there: a file remembered as the base would be
+        // passed over as gone at every launch.
+        guard LaunchBase.isFolder(expandedPath) else {
+            context.outputError("Path is not an existing directory: \(externalPath)")
             return
         }
         context.baseDirectory = expandedPath
-        context.outputMessage("Base directory set to \(expandedPath)")
+        do {
+            try RememberedBase(directory: expandedPath).write(to: RememberedBase.file)
+        } catch {
+            // The session has its base either way; only the next launch is affected.
+            context.outputError("Base directory set to \(expandedPath), but not remembered: \(error)")
+            return
+        }
+        context.outputMessage("Base directory set to \(expandedPath) and remembered")
+    }
+
+    static let forgetFlag = "--forget"
+
+    /// Removes the remembered base. The session keeps the base it has: forgetting is about
+    /// where the next launch starts, and a session whose base moved under it would push
+    /// from somewhere it was not told.
+    private func forgetBase(context: any CommandContext) {
+        let forgotten: Bool
+        do {
+            forgotten = try RememberedBase.forget(at: RememberedBase.file)
+        } catch {
+            context.outputError("base \(Self.forgetFlag): \(error)")
+            return
+        }
+        guard forgotten else {
+            context.outputMessage("No base directory was remembered; this session's is \(context.baseDirectory)")
+            return
+        }
+        context.outputMessage("Base directory no longer remembered; this session's is still \(context.baseDirectory)")
     }
 }

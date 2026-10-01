@@ -37,10 +37,15 @@ func main() throws {
         FileHandle.standardError.write(Data("semel: \(error)\n".utf8))
         exit(1)
     }
+    // The base the last `base <path>` remembered, when it is still there (B-136); a
+    // scripted run starts from it too, and its own `base` overrides it.
+    let launchBase  = LaunchBase.atLaunch()
     // The progress indicator is the terminal's: drawn while a command waits for a settle
     // when standard output is one, never into a pipe; the dashboard at `SEMEL_PROGRESS=full`
     // (B-95).
-    let interpreter = CommandInterpreter(connection: connection, progress: ProgressPolicy.modeInThisProcess())
+    let interpreter = CommandInterpreter(connection:    connection,
+                                         baseDirectory: launchBase.directory,
+                                         progress:      ProgressPolicy.modeInThisProcess())
 
     let server: (serverVersion: String, databasePath: String)
     do {
@@ -51,10 +56,13 @@ func main() throws {
     }
     print("Semel \(server.serverVersion)")
     print("Graph: \(server.databasePath)")
+    launchBase.bannerLines.forEach { print($0) }
 
     // Non-interactive: each argument is one command line, run in order, then exit —
     // non-zero if any command reported an error. `semel 'build Packages'` is a build step;
-    // `semel 'base /repo' 'push src' wait errors` is the same thing spelled out.
+    // `semel 'base /repo' 'push src' wait errors` is the same thing spelled out, and
+    // `base .` is how a script says it wants the directory it runs in rather than the
+    // remembered one.
     if !scripted.isEmpty {
         for command in scripted where interpreter.handleCommand(command) == .quit {
             break
