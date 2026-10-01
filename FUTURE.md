@@ -2601,8 +2601,21 @@ application target, simulator only, all library code in packages. In suggested o
    swift-snapshot-testing, vendored for a test target; the 375 MB static framework, pushed
    and stored. On a fresh home a cold build (push included) is about two minutes; the
    tree-sitter C compiled with nothing new. Nothing stops it short of a signed export that
-   verifies; not in the roster yet — an entry would compare four builds over 808 MB of
-   vendored packages.
+   verifies.
+
+   *In the roster* (2026-10-01) as `codeedit` (`Projects.codeEdit`,
+   `ExternalProjectTests.test_codeEditBuildsTwiceForTheMac`): the pinned commit with no
+   overlay, `--platform macos`, the products this entry names — the executable, the plist
+   and `PkgInfo`, `Assets.car`, `.all-contributorsrc`, the grammars' bundle's
+   `Contents/Info.plist` and its Swift query under `Contents/Resources`, Sparkle, the
+   extension's executable and plist — everything under `CodeEdit.app`, and on each export
+   the bundle verified deep and strict, each of the three executables signed as part of
+   it, Sparkle loaded by its install name through the runpath, `CFBundleShortVersionString`
+   0.3.6 (17), and no `CodeLanguages_Container.framework` under `Contents/Frameworks` (12).
+   Two builds, byte for byte with no exemption; not at a second mount nor perturbed, as for
+   IceCubes: a cold build is 217 s and `prepare` 74 s over a warm SwiftPM cache, so the
+   timeout is fifteen minutes a step. The whole test, clone and `prepare` included, passed
+   in 571 s beside a nightly run on the same machine.
 
    *Left from the comparison with Xcode's bundle* (2026-10-01): Xcode embeds
    `ZIPFoundation_ZIPFoundation.bundle` holding only `PrivacyInfo.xcprivacy`, from a
