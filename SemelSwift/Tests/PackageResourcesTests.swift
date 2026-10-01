@@ -161,7 +161,9 @@ final class PackageResourcesTests: SemelSwiftTestCase {
         let formula = try formula(manifests: foodTruckKit)
 
         XCTAssertTrue(formula.contains("resourceBundleName: 'pkg_Lib'"), formula)
-        XCTAssertTrue(formula.contains("func bundle_Lib() =\n    TreeMerger(under: 'pkg_Lib.bundle', input: ["), formula)
+        XCTAssertTrue(formula.contains("func bundleContents_Lib() =\n    TreeMerger(input: ["), formula)
+        XCTAssertTrue(formula.contains("func bundle_Lib() =\n    TreeMerger(under: 'pkg_Lib.bundle', input: ['contents': bundleContents_Lib().files]).files"),
+                      formula)
         XCTAssertTrue(formula.contains("AssetCatalogCompiler(configuration: ['config': ConfigFilter(prefix: 'apple.assetCatalogCompiler'"), formula)
         XCTAssertTrue(formula.contains("catalogs: ['Assets.xcassets': Folder(path: 'input:/pkg/Sources/Lib/Assets.xcassets').manifest]).files"), formula)
         XCTAssertTrue(formula.contains("FolderTreeBuilder(under: 'en.lproj', folder: ['folder': Folder(path: 'input:/pkg/Sources/Lib/Resources/en.lproj').manifest]).files"), formula)
@@ -176,7 +178,7 @@ final class PackageResourcesTests: SemelSwiftTestCase {
                                "\(targetFolder)/Windows": manifest("\(targetFolder)/Windows", files: ["WebViewWindow.xib"])]
         let formula = try formula(manifests: rsCoreResources)
 
-        XCTAssertTrue(formula.contains("func bundle_Lib() =\n    TreeMerger(under: 'pkg_Lib.bundle', input: ["), formula)
+        XCTAssertTrue(formula.contains("func bundleContents_Lib() =\n    TreeMerger(input: ["), formula)
         XCTAssertTrue(formula.contains("IBToolCompiler(configuration: ['config': ConfigMerger(base: ['settings': ConfigFilter(prefix: 'apple.ibToolCompiler'"),
                       formula)
         XCTAssertTrue(formula.contains("SettingsLiteral(module: 'Lib').output"), formula)
@@ -207,6 +209,7 @@ final class PackageResourcesTests: SemelSwiftTestCase {
         XCTAssertFalse(formula.contains("resourceBundleName"), formula)
         XCTAssertFalse(formula.contains("func bundle_Lib()"), formula)
         XCTAssertTrue(formula.contains("func bundles_pkg() =\n    TreeMerger(input: []).files"), formula)
+        XCTAssertTrue(formula.contains("func macBundles_pkg() =\n    TreeMerger(input: []).files"), formula)
     }
 
     /// The tree is read into every subfolder that is not a resource whole, and not into a

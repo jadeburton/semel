@@ -57,8 +57,10 @@ public struct XcodeProjectConverter: Node {
     /// naming a folder of the bundle, `$(EXTENSIONS_FOLDER_PATH)`, is a copy into it, and a
     /// bundle is signed with the entitlements its sandbox and hardened-runtime settings
     /// stand for, and the `INFOPLIST_KEY_*` settings reach a plist only when it is
-    /// generated (B-77).
-    public static let implementationVersion = 15
+    /// generated (B-77); at 16, a project's own plist that is not generated keeps the
+    /// identity and version it states, as Xcode's does, and a Mac bundle embeds its
+    /// packages' resource bundles laid out as Mac bundles (B-77).
+    public static let implementationVersion = 16
 
     // MARK: Ports
 

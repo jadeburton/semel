@@ -48,9 +48,30 @@ public enum FormulaIdentifier {
         "frameworks_\(sanitized(product))"
     }
 
+    /// The same bundles as `bundlesFunc` names, each laid out as a Mac bundle is:
+    /// `<Package>_<Target>.bundle/Contents/Resources/…` with an `Info.plist` in `Contents/`
+    /// (B-77). Foundation reads a bundle with no `Contents/` by what is at its top, and one
+    /// holding a folder named `Resources` — CodeEditLanguages copies its grammars' queries
+    /// as one — as the old layout whose resources are that folder, so `Bundle.module`'s
+    /// `resourceURL` is one level too deep. What a Mac app embeds.
+    public static func macBundlesFunc(forProduct product: String) -> String {
+        "macBundles_\(sanitized(product))"
+    }
+
     /// The func carrying one target's resource bundle as a tree.
     public static func bundleFunc(forTarget target: String) -> String {
         "bundle_\(sanitized(target))"
+    }
+
+    /// The func carrying one target's resource bundle as a tree laid out for the Mac.
+    public static func macBundleFunc(forTarget target: String) -> String {
+        "macBundle_\(sanitized(target))"
+    }
+
+    /// The func carrying what one target's resource bundle holds, under no folder: the
+    /// resources both layouts place.
+    public static func bundleContentsFunc(forTarget target: String) -> String {
+        "bundleContents_\(sanitized(target))"
     }
 
     /// The bundle a target's resources are built into, as SwiftPM names it:

@@ -2424,12 +2424,38 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     func test_aCTargetsProcessedResourceIsItsBundle() throws {
         let result = try formula(json: crashReporterManifest, folderContents: crashReporterTree)
 
-        let bundle = try funcDefinition("bundle_CrashReporter", in: result)
-        XCTAssertTrue(bundle.contains("TreeMerger(under: 'PLCrashReporter_CrashReporter.bundle'"), "got:\n\(bundle)")
-        XCTAssertTrue(bundle.contains("'PrivacyInfo.xcprivacy': StaticFile(path: 'input:/pkg/Resources/PrivacyInfo.xcprivacy').output"),
-                      "got:\n\(bundle)")
-        XCTAssertFalse(bundle.contains("Info.plist"), "only what the manifest names, got:\n\(bundle)")
+        let contents = try funcDefinition("bundleContents_CrashReporter", in: result)
+        XCTAssertTrue(contents.contains("'PrivacyInfo.xcprivacy': StaticFile(path: 'input:/pkg/Resources/PrivacyInfo.xcprivacy').output"),
+                      "got:\n\(contents)")
+        XCTAssertFalse(contents.contains("Info.plist"), "only what the manifest names, got:\n\(contents)")
+        XCTAssertEqual(try funcDefinition("bundle_CrashReporter", in: result),
+                       "func bundle_CrashReporter() =\n    TreeMerger(under: 'PLCrashReporter_CrashReporter.bundle', "
+                     + "input: ['contents': bundleContents_CrashReporter().files]).files")
         XCTAssertTrue(try funcDefinition("bundles_CrashReporter", in: result).contains("'CrashReporter': bundle_CrashReporter().files"),
+                      "got:\n\(result)")
+    }
+
+    /// On the Mac a resource bundle is laid out as Xcode lays it out: its resources under
+    /// `Contents/Resources/` and an Info.plist in `Contents/` naming it by the package's
+    /// identity. A flat bundle holding a folder named `Resources` — CodeEditLanguages'
+    /// grammars' queries — is read by Foundation as the old layout with that folder for its
+    /// resources, and `Bundle.module.resourceURL` is a level too deep (B-77).
+    func test_aTargetsBundleIsAlsoLaidOutForTheMac() throws {
+        let result = try formula(json: crashReporterManifest, folderContents: crashReporterTree)
+
+        let macBundle = try funcDefinition("macBundle_CrashReporter", in: result)
+        XCTAssertTrue(macBundle.contains("TreeMerger(under: 'PLCrashReporter_CrashReporter.bundle/Contents', input: ["), "got:\n\(macBundle)")
+        XCTAssertTrue(macBundle.contains("'resources': TreeMerger(under: 'Resources', input: ['contents': bundleContents_CrashReporter().files]).files"),
+                      "got:\n\(macBundle)")
+        XCTAssertTrue(macBundle.contains("'plist': TreeBuilder(input: ['Info.plist': InfoPlistBuilder(keys: '{"
+                                       + "\"CFBundleDevelopmentRegion\":\"en\","
+                                       + "\"CFBundleIdentifier\":\"pkg.CrashReporter.resources\","
+                                       + "\"CFBundleInfoDictionaryVersion\":\"6.0\","
+                                       + "\"CFBundleName\":\"PLCrashReporter_CrashReporter\","
+                                       + "\"CFBundlePackageType\":\"BNDL\","
+                                       + "\"CFBundleSupportedPlatforms\":[\"MacOSX\"]}').plist]).files"),
+                      "got:\n\(macBundle)")
+        XCTAssertTrue(try funcDefinition("macBundles_CrashReporter", in: result).contains("'CrashReporter': macBundle_CrashReporter().files"),
                       "got:\n\(result)")
     }
 

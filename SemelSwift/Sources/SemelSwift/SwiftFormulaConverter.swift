@@ -115,8 +115,10 @@ struct SwiftFormulaConverter: Node {
     /// the package of that name, not for every dependency the manifest declares, every
     /// target compiles with `SWIFT_PACKAGE` defined and its package named, and a `.docc`
     /// catalog is not walked (B-77); at 17, a target dependency or a setting behind a trait
-    /// the package does not enable by default is neither waited for nor linked.
-    public static let implementationVersion = 17
+    /// the package does not enable by default is neither waited for nor linked; at 18, each
+    /// product's bundles are also defined laid out for the Mac, `macBundles_<Product>()`
+    /// (B-77).
+    public static let implementationVersion = 18
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -1838,16 +1840,21 @@ struct SwiftFormulaConverter: Node {
             // knowing which targets carry resources. A C target's bundle is built as a Swift
             // one's is, as SwiftPM builds it (PLCrashReporter's privacy manifest).
             var bundleWires: [String] = []
+            var macBundleWires: [String] = []
             for target in allTargets + clangTargets where !target.resources.isEmpty {
                 let fn = FormulaIdentifier.bundleFunc(forTarget: target.name)
                 if emittedFuncs.insert(fn).inserted {
-                    blocks.append(resourceBundleFuncDef(target: target, rootPackageFolder: rootPackageFolder))
+                    blocks += resourceBundleFuncDefs(target: target, rootPackageFolder: rootPackageFolder)
                 }
                 bundleWires.append("        '\(target.name)': \(fn)().files")
+                macBundleWires.append("        '\(target.name)': \(FormulaIdentifier.macBundleFunc(forTarget: target.name))().files")
             }
             blocks.append(
                 "func \(FormulaIdentifier.bundlesFunc(forProduct: product.name))() =\n" +
                 "    TreeMerger(input: [" + (bundleWires.isEmpty ? "" : "\n" + bundleWires.joined(separator: ",\n") + "\n    ") + "]).files")
+            blocks.append(
+                "func \(FormulaIdentifier.macBundlesFunc(forProduct: product.name))() =\n" +
+                "    TreeMerger(input: [" + (macBundleWires.isEmpty ? "" : "\n" + macBundleWires.joined(separator: ",\n") + "\n    ") + "]).files")
             for target in clangTargets {
                 let fn = preprocessorFuncName(for: target.name)
                 guard !emittedFuncs.contains(fn) else { continue }
@@ -2533,8 +2540,11 @@ struct SwiftFormulaConverter: Node {
     /// catalog through its compiler, a xib or a storyboard through ibtool, an `.lproj` or
     /// a copied folder as the folder it is,
     /// and every copied file in one tree. The Apple compilers select their settings from
-    /// the root's config, as the Swift tools do.
-    private func resourceBundleFuncDef(target: SPMTarget, rootPackageFolder: String) -> String {
+    /// the root's config, as the Swift tools do. Three funcs: what the bundle holds, the
+    /// bundle as SwiftPM lays it out — flat — and as Xcode lays it out on the Mac, its
+    /// resources in `Contents/Resources/` beside `Contents/Info.plist`; a consumer names the
+    /// one its platform wants and the other is never made.
+    private func resourceBundleFuncDefs(target: SPMTarget, rootPackageFolder: String) -> [String] {
         let pkgRoot      = target.overridePackageFolder ?? rootPackageFolder
         let targetFolder = target.folder(in: pkgRoot)
         let configRoot   = buildRoot(defaultingTo: rootPackageFolder)
@@ -2574,10 +2584,38 @@ struct SwiftFormulaConverter: Node {
         if !copiedFiles.isEmpty {
             wires.append("        'files': TreeBuilder(input: [\n" + copiedFiles.joined(separator: ",\n") + "\n        ]).files")
         }
-        return "func \(FormulaIdentifier.bundleFunc(forTarget: target.name))() =\n" +
-               "    TreeMerger(under: '\(target.resourceBundleName).bundle', input: [\n" +
-               wires.joined(separator: ",\n") + "\n" +
-               "    ]).files"
+        let bundleName = target.resourceBundleName
+        let contents   = "\(FormulaIdentifier.bundleContentsFunc(forTarget: target.name))().files"
+        return ["func \(FormulaIdentifier.bundleContentsFunc(forTarget: target.name))() =\n" +
+                "    TreeMerger(input: [\n" +
+                wires.joined(separator: ",\n") + "\n" +
+                "    ]).files",
+                "func \(FormulaIdentifier.bundleFunc(forTarget: target.name))() =\n" +
+                "    TreeMerger(under: '\(bundleName).bundle', input: ['contents': \(contents)]).files",
+                "func \(FormulaIdentifier.macBundleFunc(forTarget: target.name))() =\n" +
+                "    TreeMerger(under: '\(bundleName).bundle/Contents', input: [\n" +
+                "        'resources': TreeMerger(under: 'Resources', input: ['contents': \(contents)]).files,\n" +
+                "        'plist': TreeBuilder(input: ['Info.plist': InfoPlistBuilder(keys: '\(Self.macBundleInfoPlistKeys(target: target, packageFolder: pkgRoot))').plist]).files\n" +
+                "    ]).files"]
+    }
+
+    /// The Info.plist Xcode writes into a package's resource bundle on the Mac, less the
+    /// build machine's and SDK's `DT…` keys: its identifier is the package's identity — its
+    /// folder's name in lower case, as SwiftPM's identity of a git or local package is —
+    /// then the target and `resources` (`grdb.swift.GRDB.resources`). A JSON dictionary,
+    /// sorted, with no apostrophe to end the formula literal it is written in.
+    private static func macBundleInfoPlistKeys(target: SPMTarget, packageFolder: String) -> String {
+        let identity = (Path(packageFolder).lastComponent ?? packageFolder).lowercased()
+        let keys: [String: Any] = [
+            "CFBundleDevelopmentRegion":     "en",
+            "CFBundleIdentifier":            "\(identity).\(target.name).resources",
+            "CFBundleInfoDictionaryVersion": "6.0",
+            "CFBundleName":                  target.resourceBundleName,
+            "CFBundlePackageType":           "BNDL",
+            "CFBundleSupportedPlatforms":    ["MacOSX"],
+        ]
+        let data = (try? JSONSerialization.data(withJSONObject: keys, options: [.sortedKeys])) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self).replacingOccurrences(of: "'", with: "\\u0027")
     }
 
     // Resolves a relative path (which may contain "..") against a base path.

@@ -2294,7 +2294,8 @@ application target, simulator only, all library code in packages. In suggested o
    travel in trees.)
 3. *CodeEdit* — `open`; the first slice landed (2026-10-01): the Mac app compiles, links,
    is signed, exports and stays up when launched, once three things are stepped around by
-   hand (5, 10 and 12 below, each open), though it shows no window (16). Pinned at `fa2aebd86373211c78626074b53ab75010767575` (main,
+   hand (5, 10 and 12 below, each open), and it opens its welcome window as Xcode's build
+   of the same commit does (16). Pinned at `fa2aebd86373211c78626074b53ab75010767575` (main,
    2026-08-18, "macOS Tahoe Navigator, Inspector, and Utility Area"). The clone is not what
    this entry said from memory: the tree-sitter grammars are not C targets at all.
 
@@ -2489,21 +2490,83 @@ application target, simulator only, all library code in packages. In suggested o
       ignores because `GENERATE_INFOPLIST_FILE = NO`; the emitter wrote it into the plist.
       It reads `INFOPLIST_KEY_*` only for a generated plist now (every roster project that
       sets one also sets `GENERATE_INFOPLIST_FILE = YES`). `XcodeFormulaEmitterTests`.
-   16. **No window.** With 5, 10 and 12 stepped around, the export verifies with `codesign
-      --verify --deep --strict` (the app with the sandbox, JIT and library-validation keys,
-      the extension with its app group), and launched, by `open` or run directly, the app
-      starts and stays up, idle in its run loop, its extension's container made — but it
-      puts no window on screen, where CodeEdit opens its welcome window. Not diagnosed:
-      the next step is Xcode's build of the same commit in the same session, which was not
-      made, and then CodeEdit's `handleOpen`.
+   16. ~~**No window.**~~ Diagnosed (2026-10-01): not Semel's. With 5, 10 and 12 stepped
+      around, the export verifies with `codesign --verify --deep --strict` and, launched,
+      stays up idle in its run loop with nothing to see. Xcode 26.6's build of the same
+      commit, made in the same session (`xcodebuild build -scheme CodeEdit -configuration
+      Debug -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO
+      -skipPackagePluginValidation`; without the last flag Xcode stops at "Validate plug-in
+      SwiftLint"), does exactly the same, and both open their welcome window. Asked from
+      inside each process with lldb (Semel's export re-signed, for this alone, with
+      `com.apple.security.get-task-allow` added to its own entitlements), `NSApp.windows`
+      is one `SwiftUI.AppKitWindow`, identifier `welcome`, title "Welcome To CodeEdit",
+      visible, frame 740×464 at (485, 333), occlusion state visible, on the active space —
+      by `open`, run directly, with the saved state restored and with
+      `-ApplePersistenceIgnoreState YES`, which takes `handleOpen`'s path. What made it look
+      like no window is the session: `CGWindowListCopyWindowInfo` lists the window on screen
+      at layer 0 with 0×0 bounds for both builds (and real bounds for a probe SwiftUI app's
+      window, and for other apps'), `loginwindow` holds two on-screen windows over
+      everything at layers 2001 and 2004, `screencapture` cannot make an image of the
+      display, and `NSWindow.windowNumber(at:belowWindowWithWindowNumber:)` answers 0
+      everywhere. So whether the welcome window is drawn on a display was not seen for
+      either build; the two are indistinguishable at every level that could be asked.
+      There is no `NSPrincipalClass` in Xcode's plist either (item 15), no sandbox denial,
+      keychain or Sparkle prompt in the log (Sparkle's automatic checks are off in the
+      container's defaults), and no crash report. Comparing the bundles file by file found
+      what follows (17, 18, and below).
+   17. ~~**The version of a plist not generated.**~~ Done. Xcode's app and extension say
+      `CFBundleShortVersionString` 0.3.6, which their files state; Semel's said "Change in
+      Info.plist" and 1.0, the targets' `MARKETING_VERSION`s, because the emitter laid the
+      generated plist's identity keys over the project's file whatever
+      `GENERATE_INFOPLIST_FILE` said. Over a file that is not generated Xcode adds the
+      platform's keys (`CFBundleSupportedPlatforms`, `LSMinimumSystemVersion`,
+      `DTPlatformName`, and the `DT…`/`BuildMachineOSBuild` keys Semel never writes) and
+      leaves the identity and version to the file; the emitter does the same now, and a
+      target with no file at all still gets the identity keys. Pinned by
+      `CodeEditFixtureTests` over `SemelApple/Tests/Fixtures/CodeEdit` (the project file, the
+      five `Configs` xcconfigs, the app's and the extension's plists and entitlements), the
+      plists built by `InfoPlistBuilder` from what the emitter hands it. Xcode converter v16.
+   18. ~~**A package's resource bundle laid out flat on the Mac.**~~ Done. Xcode embeds a
+      package's bundle as a Mac bundle, `<Package>_<Target>.bundle/Contents/Info.plist`
+      and `Contents/Resources/…`; Semel embedded the flat layout SwiftPM writes. Foundation
+      reads a bundle with no `Contents/` by what is at its top, and CodeEditLanguages'
+      bundle has a folder named `Resources` there — its `.copy("Resources")`, the grammars'
+      queries — so it took the old layout whose resources are that folder:
+      `Bundle.module.resourceURL` was `….bundle/Resources`, and `CodeLanguage`'s
+      `resourceURL/Resources/tree-sitter-swift/highlights.scm` was not there, which is every
+      language's highlighting gone. The Swift converter (v18) now also defines each
+      product's bundles laid out for the Mac, `macBundles_<Product>()` — the same contents
+      under `Contents/Resources/` beside an Info.plist with Xcode's keys less the `DT…`
+      ones, the identifier the package's identity, `.<Target>.resources`
+      (`grdb.swift.GRDB.resources`, as Xcode's) — and the emitter names those for a Mac
+      bundle; a package's own products and an iOS bundle keep the flat layout.
+      `SwiftFormulaConverterTests`, `PackageResourcesTests`, `XcodeFormulaEmitterTests`. On
+      the rebuilt export, Foundation reads the grammars' bundle with
+      `resourceURL` `Contents/Resources` and identifier
+      `codeeditlanguages.CodeEditLanguages.resources`, and finds the Swift query.
 
    *Not in the way*, or not yet: the two script phases (greps whose output is warnings);
    the `(null) in Sources` build files; the SwiftLint `.artifactbundle`, which `prepare`
    vendors (117 MB) and the build pushes though no node reads it, and swift-syntax and
    swift-snapshot-testing, vendored for a test target; the 375 MB static framework, pushed
-   and stored. On a fresh home a cold build (push included) is about two minutes, 887
+   and stored. On a fresh home a cold build (push included) is about two minutes, 906
    nodes; the tree-sitter C compiled with nothing new. Not in the roster: it does not build
    without 5, 10 and 12.
+
+   *Left from the comparison with Xcode's bundle* (2026-10-01): Xcode embeds
+   `ZIPFoundation_ZIPFoundation.bundle` holding only `PrivacyInfo.xcprivacy`, from a
+   package whose manifest (tools version 5.0) declares no resources — Semel makes none,
+   since its rules follow the manifest; nothing reads the bundle at run time. Xcode links
+   `CodeEditKit`, a `.dynamic` product, as a framework under `Contents/Frameworks` where
+   Semel links every package product statically, as decided. For item 12: Xcode does embed
+   `CodeLanguages_Container.framework`, but as a 33 KB arm64 dynamic library in place of
+   the archive, with its `Info.plist`, and no executable of the app loads it. Xcode's own
+   Debug build splits the executable into `CodeEdit` and `CodeEdit.debug.dylib` (and a
+   `__preview.dylib`), its previews' layout, which Semel does not copy. Xcode signs a Debug
+   build it is allowed to sign with `com.apple.security.get-task-allow`, which Semel does
+   not add, so its export cannot be attached to by a debugger; the app group
+   `$(TeamIdentifierPrefix)` in both entitlements files is an empty string in Semel's
+   signature, as it is when Xcode does not sign.
 4. *Mastodon iOS (official)* — IceCubes's domain with different structure: a Core Data
    `.xcdatamodeld` (wants a `momc` node), several extensions, generated-code build phases,
    a big local SDK package.

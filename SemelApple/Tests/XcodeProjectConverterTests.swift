@@ -897,11 +897,11 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
             return
         }
         let absentFormula = try XCTUnwrap(absent.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
-        XCTAssertTrue(absentFormula.contains("\"CFBundleIdentifier\":\"com.ranchero.NetNewsWire-Evergreen-DEBUG\""), absentFormula)
+        XCTAssertTrue(absentFormula.contains("\"PRODUCT_BUNDLE_IDENTIFIER\":\"com.ranchero.NetNewsWire-Evergreen-DEBUG\""), absentFormula)
 
         let (present, _, _) = try convertNetNewsWire(modules: NetNewsWireModules.products.keys.sorted(), folders: netNewsWireMacFolder,
                                                      xcconfigs: [developerSettings: "ORGANIZATION_IDENTIFIER = org.example"])
         let presentFormula = try XCTUnwrap(present.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
-        XCTAssertTrue(presentFormula.contains("\"CFBundleIdentifier\":\"org.example.NetNewsWire-Evergreen-DEBUG\""), presentFormula)
+        XCTAssertTrue(presentFormula.contains("\"PRODUCT_BUNDLE_IDENTIFIER\":\"org.example.NetNewsWire-Evergreen-DEBUG\""), presentFormula)
     }
 }

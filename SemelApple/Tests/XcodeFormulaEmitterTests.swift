@@ -296,6 +296,17 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(formula.contains("product 'Ice Cubes.app/' = TreeMerger(input: ["), formula)
     }
 
+    /// A Mac bundle takes them laid out as Mac bundles, `Contents/Resources/` with an
+    /// Info.plist beside it, under its own `Contents/Resources` (B-77).
+    func test_aMacBundleMergesThePackagesResourceBundlesLaidOutForTheMac() throws {
+        let formula = try macFormula()
+
+        let bundle = try block("func bundle_IceCubesApp()", in: formula)
+        XCTAssertTrue(bundle.contains("'macBundles_KeychainSwift': macBundles_KeychainSwift().files"), bundle)
+        XCTAssertTrue(bundle.contains("'macBundles_Timeline': macBundles_Timeline().files"), bundle)
+        XCTAssertFalse(formula.contains("bundles_KeychainSwift()") && formula.contains("'bundles_KeychainSwift'"), formula)
+    }
+
     func test_aLocalizedFileKeepsItsLanguageFolderAndNothingAbove() {
         XCTAssertEqual(XcodeFormulaEmitter.localizedBundlePath("App/ar.lproj/Localizable.strings"), "ar.lproj/Localizable.strings")
         XCTAssertEqual(XcodeFormulaEmitter.localizedBundlePath("Base.lproj/Main.storyboard"), "Base.lproj/Main.storyboard")
