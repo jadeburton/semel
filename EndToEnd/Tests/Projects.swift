@@ -434,7 +434,75 @@ enum Projects {
             }
         })
 
+    /// CodeEdit's Mac app (B-77 item 3), from a fresh clone with nothing stepped around: the
+    /// project's synchronized folders and five configurations, thirty-four packages vendored
+    /// by `prepare` (808 MB) — tree-sitter's C, three Objective-C targets, GRDB's system
+    /// library — and the grammars' static framework linked into the executable and embedded
+    /// nowhere (item 12). The hidden `.all-contributorsrc` its resources phase lists, which
+    /// the build follows by its path (item 5); the grammars' bundle laid out as a Mac bundle,
+    /// its queries under `Contents/Resources` (item 18); Sparkle embedded and loaded through
+    /// the runpath; the Finder Sync extension under `PlugIns`. Signed ad-hoc, verified deep
+    /// and strict, and inspected rather than run. A cold build takes about four minutes and
+    /// `prepare` one more, so the run builds twice and leaves the second mount and the
+    /// perturbed build to the fixtures, which cover every tool this project uses.
+    static let codeEdit = Project(
+        name: "codeedit",
+        source: .git(url: "https://github.com/CodeEditApp/CodeEdit.git",
+                     commit: "fa2aebd86373211c78626074b53ab75010767575",
+                     subfolder: "."),
+        buildFolder: "codeedit",
+        platform: "macos",
+        expectedProducts: [
+            "CodeEdit.app/Contents/MacOS/CodeEdit",
+            "CodeEdit.app/Contents/Info.plist",
+            "CodeEdit.app/Contents/PkgInfo",
+            "CodeEdit.app/Contents/Resources/Assets.car",
+            "CodeEdit.app/Contents/Resources/.all-contributorsrc",
+            "CodeEdit.app/Contents/Resources/CodeEditLanguages_CodeEditLanguages.bundle/Contents/Info.plist",
+            "CodeEdit.app/Contents/Resources/CodeEditLanguages_CodeEditLanguages.bundle/Contents/Resources/Resources/tree-sitter-swift/highlights.scm",
+            "CodeEdit.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle",
+            "CodeEdit.app/Contents/PlugIns/OpenWithCodeEdit.appex/Contents/MacOS/OpenWithCodeEdit",
+            "CodeEdit.app/Contents/PlugIns/OpenWithCodeEdit.appex/Contents/Info.plist",
+        ],
+        // A cold build here is 217 s and `prepare` 74 s over a warm SwiftPM cache; each has
+        // this budget, which leaves room for a cold cache's 808 MB of fetching and for a
+        // machine busy with other work, as the nightly's runner is also a workstation.
+        buildTimeout: 15 * 60,
+        twoMounts: false,
+        perturbed: false,
+        onlyUnder: "CodeEdit.app",
+        executables: [
+            "CodeEdit.app/Contents/MacOS/CodeEdit",
+            "CodeEdit.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle",
+            "CodeEdit.app/Contents/PlugIns/OpenWithCodeEdit.appex/Contents/MacOS/OpenWithCodeEdit",
+        ],
+        exported: { out in
+            try AppInspection.checkLoadsEmbeddedFramework(
+                executable:  out.appendingPathComponent("CodeEdit.app/Contents/MacOS/CodeEdit"),
+                installName: "@rpath/Sparkle.framework/Versions/B/Sparkle")
+            try SignedBundleCheck.verified(out.appendingPathComponent("CodeEdit.app"))
+            for executable in ["CodeEdit.app/Contents/MacOS/CodeEdit",
+                               "CodeEdit.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle",
+                               "CodeEdit.app/Contents/PlugIns/OpenWithCodeEdit.appex/Contents/MacOS/OpenWithCodeEdit"] {
+                try SignedBundleCheck.signedAsPartOfTheBundle(out.appendingPathComponent(executable))
+            }
+            // The version the project's own plist states, which is not generated (item 17).
+            let plist = out.appendingPathComponent("CodeEdit.app/Contents/Info.plist")
+            let version = try AppInspection.run(["/usr/bin/plutil", "-extract", "CFBundleShortVersionString", "raw", "-o", "-", plist.path],
+                                                viaXcrun: false).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard version == "0.3.6" else {
+                throw EndToEndFailure(step: "the app's plist", message: "CFBundleShortVersionString is '\(version)', not '0.3.6'")
+            }
+            // The grammars' static framework is linked into the executable and embedded
+            // nowhere (item 12).
+            let staticFramework = out.appendingPathComponent("CodeEdit.app/Contents/Frameworks/CodeLanguages_Container.framework")
+            guard !FileManager.default.fileExists(atPath: staticFramework.path) else {
+                throw EndToEndFailure(step: "the app's frameworks", message: "the static CodeLanguages_Container.framework is embedded")
+            }
+        })
+
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftCPackage, swiftHelloApp, swiftBinaryTargetApp]
-    static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, simdjson, foodTruck, foodTruckMac, netNewsWireMac, netNewsWireIOS]
+    static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, simdjson, foodTruck, foodTruckMac, netNewsWireMac, netNewsWireIOS,
+                                      codeEdit]
     static let all: [Project] = fixtures + external
 }

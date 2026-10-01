@@ -63,8 +63,11 @@ public struct XcodeProjectConverter: Node {
     /// catalogs write its Swift asset symbols, which its compiler takes as
     /// `GeneratedAssetSymbols.swift`, and a bundle embeds each package product's
     /// `embedded_<Product>()` — its dynamic frameworks — where it embedded every framework
-    /// (B-77 item 3, 10 and 12).
-    public static let implementationVersion = 17
+    /// (B-77 item 3, 10 and 12); at 18, a target that runs build-tool plugins and has no
+    /// source of its own is the conversion's error, naming the target and its plugins, and
+    /// every error the emitter names is the formula's, with the pass's demands, as the
+    /// project's other errors are (B-77 item 3).
+    public static let implementationVersion = 18
 
     // MARK: Ports
 
@@ -371,7 +374,12 @@ public struct XcodeProjectConverter: Node {
         let build = XcodeFormulaEmitter.Build(root: try buildRoot, projectFolder: projectFolder,
                                               configuration: configurationName, sdk: sdk)
         let emitter = XcodeFormulaEmitter(project: project, build: build, localPackagePaths: packageSearch.packagePaths)
-        let formula = try emitter.formula(for: application, settings: evaluatedSettings, listing: { listings[$0] })
+        let formula: String
+        do {
+            formula = try emitter.formula(for: application, settings: evaluatedSettings, listing: { listings[$0] })
+        } catch let failure as XcodeProjectError {
+            return failed(failure.description, specs: specs)
+        }
         if let notice = Self.pluginNotice(targets: bundleTargets) {
             NodeNotice.post(notice)
         }

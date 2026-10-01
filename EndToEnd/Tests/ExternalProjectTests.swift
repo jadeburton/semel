@@ -141,9 +141,24 @@ final class ExternalProjectTests: XCTestCase {
         }
     }
 
+    /// B-77: CodeEdit's Mac app from a fresh clone — thirty-four vendored packages, a static
+    /// framework linked in and embedded nowhere, a hidden resource followed by its path, a
+    /// package's bundle laid out for the Mac, Sparkle, a Finder Sync extension. Signed,
+    /// verified deep and strict, and inspected, not run.
+    func test_codeEditBuildsTwiceForTheMac() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.codeEdit)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("codeedit\n\(error)")
+        }
+    }
+
     func test_everyExternalProjectInTheRosterHasATestHere() {
         XCTAssertEqual(Set(Projects.external.map(\.name)),
                        ["icecubes", "icecubes-app", "semel", "lua", "sqlite", "simdjson", "food-truck", "food-truck-mac",
-                        "netnewswire-mac", "netnewswire-ios"])
+                        "netnewswire-mac", "netnewswire-ios", "codeedit"])
     }
 }

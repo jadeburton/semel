@@ -844,6 +844,9 @@ enum XcodeProjectError: Error, CustomStringConvertible {
     /// Listed sources the converter does not compile: Objective-C, C, Metal, a Core Data
     /// model in the sources phase. Named, so the reader knows what the build would need.
     case unsupportedSources(target: String, files: [String])
+    /// A target that runs build-tool plugins and has no source of its own: what it would
+    /// compile is what the plugins generate, and none is run (B-77).
+    case sourcesOnlyFromPlugins(target: String, plugins: [String])
     /// No application builds for the SDK; each is named with the platform it does build for.
     case noApplicationForSDK(sdk: String, applications: [String])
     /// More than one application builds for the SDK, and nothing says which.
@@ -869,6 +872,9 @@ enum XcodeProjectError: Error, CustomStringConvertible {
             return "the project has no target named '\(name)'"
         case .unsupportedSources(let target, let files):
             return "\(target): sources that are not Swift are not compiled yet: \(files.joined(separator: ", "))"
+        case .sourcesOnlyFromPlugins(let target, let plugins):
+            return "\(target) has no source of its own, only what its build-tool plugins would generate — "
+                 + "\(plugins.joined(separator: ", ")) — and build-tool plugins are not run (B-77), so it cannot be compiled"
         case .noSuchConfiguration(let name, let available):
             return "the project has no configuration named '\(name)'; it has: \(available.joined(separator: ", "))"
         }
