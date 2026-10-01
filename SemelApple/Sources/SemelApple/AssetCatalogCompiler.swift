@@ -101,7 +101,7 @@ public struct AssetCatalogCompiler: Node {
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        let configurationText = try input.inputValues[Self.configuration]!.values.first!.expectValue().resolveAsString()
+        let configurationText = try input.firstWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
         let configuration = try AssetCatalogCompilerConfiguration(properties: [String: String](plainText: configurationText))
 
         // Every folder under a catalog is read from the catalog's tree (B-135), every file

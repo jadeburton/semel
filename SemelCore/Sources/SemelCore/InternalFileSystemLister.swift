@@ -42,7 +42,7 @@ public final class InternalFileSystemLister: FileWildcardMatcherInput {
                 let isOutputFileSystem = try folder.thisNode
                     .buildFullPathName(baseNodeID: nil)
                     .firstComponent == Folder.outputFileSystemName
-                return FileWildcardEntry(path: Path(nodeRecord.name!),
+                return FileWildcardEntry(path: Path(try nodeRecord.requireName()),
                                          kind: .folder,
                                          state: isOutputFileSystem ? .present : try folder.listedState,
                                          isUnreferenced: try folder.hasNoOutputWires() && nodeRecord.allChildren.isEmpty)
@@ -53,7 +53,7 @@ public final class InternalFileSystemLister: FileWildcardMatcherInput {
                     assert(false)
                     throw NodeError.other(message: "Unexpected object kind")
                 }
-                return FileWildcardEntry(path: Path(nodeRecord.name!),
+                return FileWildcardEntry(path: Path(try nodeRecord.requireName()),
                                          kind: .file,
                                          state: try pinnable.listedState,
                                          isUnreferenced: try node.hasNoOutputWires())

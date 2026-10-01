@@ -98,7 +98,7 @@ public struct IBToolCompiler: Node {
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        let configurationText = try input.inputValues[Self.configuration]!.values.first!.expectValue().resolveAsString()
+        let configurationText = try input.firstWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
         let configuration = try IBToolCompilerConfiguration(properties: [String: String](plainText: configurationText))
 
         guard let documentWire = input.inputValues[Self.document]?.first else {

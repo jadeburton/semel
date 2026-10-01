@@ -117,7 +117,7 @@ public struct CodeSigner: Node {
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        let configurationText = try input.inputValues[Self.configuration]!.values.first!.expectValue().resolveAsString()
+        let configurationText = try input.firstWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
         let configuration = try CodeSignerConfiguration(properties: [String: String](plainText: configurationText))
 
         guard let bundleWire = input.inputValues[Self.bundle]?.first else {
