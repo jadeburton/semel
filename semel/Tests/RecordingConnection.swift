@@ -87,6 +87,40 @@ final class TestCommandContext: CommandContext {
     var settleInProgress: ProgressRecord?
     var settlesFinished = 0
     var keyReader: any KeyReader = ScriptedKeyReader()
+    var watcherLauncher: any WatcherLauncher = RecordingWatcherLauncher()
+    var runningWatcher: RunningWatcher?
+}
+
+/// A launcher that starts nothing: it records each launch's arguments and hands back a
+/// watcher that only notes whether it was stopped (B-126).
+final class RecordingWatcherLauncher: WatcherLauncher {
+    private(set) var launches: [[String]] = []
+    private(set) var launched: [RecordedWatcher] = []
+
+    func launch(arguments: [String]) throws -> any LaunchedWatcher {
+        launches.append(arguments)
+        let watcher = RecordedWatcher(processIdentifier: Int32(4200 + launched.count))
+        launched.append(watcher)
+        return watcher
+    }
+}
+
+final class RecordedWatcher: LaunchedWatcher {
+    let processIdentifier: Int32
+    private(set) var isRunning = true
+
+    init(processIdentifier: Int32) {
+        self.processIdentifier = processIdentifier
+    }
+
+    func stop() {
+        isRunning = false
+    }
+
+    /// As a watcher that ended by itself — its engine unreachable, its folder gone.
+    func exitOnItsOwn() {
+        isRunning = false
+    }
 }
 
 /// A key reader that plays a script instead of reading a terminal: whether there is one,

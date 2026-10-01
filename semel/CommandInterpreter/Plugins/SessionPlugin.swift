@@ -30,6 +30,8 @@ final class SessionPlugin: CommandPlugin {
             try handleCommit(context: context)
 
         case "q", "quit", "exit":
+            // A watcher is a child of the prompt that started it (B-126).
+            context.stopRunningWatcher()
             throw CommandInterpreterError.quit
 
         default:

@@ -351,8 +351,12 @@ final class EnginePluginTests: XCTestCase {
         XCTAssertEqual(keyReader.waits, 0)
     }
 
-    func test_watchTakesNoArguments() {
-        XCTAssertThrowsError(try run("watch", ["hello"]))
+    /// An argument makes it the other `watch`, which starts a watcher rather than drawing
+    /// the line (B-126) — here of a folder that is not there, which it says.
+    func test_watchWithAnArgumentDrawsNoLine() throws {
+        try run("watch", ["no-such-folder"])
+
+        XCTAssertEqual(context.errors.count, 1)
         XCTAssertEqual(keyReader.waits, 0)
     }
 

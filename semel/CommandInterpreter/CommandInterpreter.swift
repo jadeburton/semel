@@ -62,6 +62,20 @@ public final class CommandInterpreter: CommandContext {
     /// Reads the key that ends a `watch`. Standard input unless a test puts a script here.
     var keyReader: any KeyReader = TerminalKeyReader()
 
+    /// Starts the `semel-watch` that `watch <folder>` asks for: the executable beside this
+    /// one, unless a test records the launch instead.
+    public var watcherLauncher: any WatcherLauncher = ProcessWatcherLauncher()
+
+    /// The watcher this session started. Read and written on the command thread only.
+    var runningWatcher: RunningWatcher?
+
+    /// Stops the watcher `watch <folder>` started, if one runs. What the client calls when
+    /// its session ends without a `quit` — the end of a script, or of standard input — so
+    /// a watcher does not outlive the prompt that started it.
+    public func stopWatcher() {
+        stopRunningWatcher()
+    }
+
     /// The last progress event of the settle under way, and the count of settles finished,
     /// as the events have told them. Under `settleLock`: events arrive on the connection's
     /// thread, and `watch` reads both from the command thread while it waits for a key.
@@ -510,6 +524,10 @@ public final class CommandInterpreter: CommandContext {
             HelpEntry(verbs: ["watch"], usage: "watch",
                       description: "show where the settle stands until a key is pressed or the settle ends; "
                                  + "a key leaves it running and says where it stood"),
+            HelpEntry(verbs: ["watch"], usage: "watch <folder> [--into <dir>] [--only <pattern>] [--except <pattern>]",
+                      description: "start a semel-watch that pushes the folder as you save, after two quiet seconds; "
+                                 + "--into exports after each settle without errors; one per session"),
+            HelpEntry(verbs: ["unwatch"], usage: "unwatch", description: "stop the semel-watch `watch <folder>` started"),
             HelpEntry(verbs: ["errors", "e"], usage: "errors", description: "the current build errors, one entry per cause"),
             HelpEntry(verbs: ["explain", "why"], usage: "explain <path>",
                       description: "why the last settle rebuilt a product: what ran, what came from the cache, "
@@ -544,7 +562,7 @@ public final class CommandInterpreter: CommandContext {
                       description: "show or set the tree pushes are read from; the current directory unless set"),
             HelpEntry(verbs: ["begin", "commit"], usage: "begin … commit",
                       description: "hold the engine across several pushes, so it settles once"),
-            HelpEntry(verbs: ["quit", "q", "exit"], usage: "quit", description: "leave the prompt"),
+            HelpEntry(verbs: ["quit", "q", "exit"], usage: "quit", description: "leave the prompt, stopping its watcher"),
             HelpEntry(verbs: ["stop"], usage: "semel stop",
                       description: "end the engine semel started; the next semel starts one"),
         ]),

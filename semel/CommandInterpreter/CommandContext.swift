@@ -56,6 +56,14 @@ protocol CommandContext: AnyObject {
 
     /// The key that ends a `watch`: the terminal in the client, a script in a test.
     var keyReader: any KeyReader { get }
+
+    /// What `watch <folder>` starts a `semel-watch` with: a process beside this one in the
+    /// client, a recorder in a test (B-126).
+    var watcherLauncher: any WatcherLauncher { get }
+
+    /// The watcher `watch <folder>` started, until `unwatch`, `quit` or the next `watch
+    /// <folder>` stops it. One per session.
+    var runningWatcher: RunningWatcher? { get set }
 }
 
 /// A failure the server reported. Thrown by `request` so the interpreter prints it the way
@@ -129,6 +137,20 @@ extension CommandContext {
     /// Returns the portion of `path` after `base`, falling back to the full path string.
     func relativeName(_ path: Path, to base: Path) -> String {
         path.relative(to: base)?.string ?? path.string
+    }
+
+    /// Stops the session's watcher, when there is one, and says so.
+    func stopRunningWatcher() {
+        guard let running = runningWatcher else {
+            return
+        }
+        runningWatcher = nil
+        guard running.process.isRunning else {
+            outputMessage("The watcher of \(running.folder) had already stopped.")
+            return
+        }
+        running.process.stop()
+        outputMessage("Stopped watching \(running.folder).")
     }
 }
 

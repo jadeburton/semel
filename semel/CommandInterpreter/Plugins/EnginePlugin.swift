@@ -1,7 +1,7 @@
 // EnginePlugin.swift
 // semel
 //
-// Handles: d / debug, n / nudge, e / errors, check, collect, explain / why, reset, t / tools, wait, watch
+// Handles: d / debug, n / nudge, e / errors, check, collect, explain / why, reset, t / tools, wait, watch, unwatch
 
 import Foundation
 import SemelNodeKit
@@ -12,7 +12,7 @@ final class EnginePlugin: CommandPlugin {
     /// `watch` has no one-letter alias: `w` is free, but it is as much `wait` as `watch`,
     /// and the one of the two that waits for a key is the wrong one to reach by accident.
     let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors", "check", "collect", "explain", "why",
-                              "reset", "t", "tools", "wait", "watch"]
+                              "reset", "t", "tools", "wait", "watch", "unwatch"]
 
     func handle(verb: String, tokens: [String], context: any CommandContext) throws {
         switch verb {
@@ -26,6 +26,7 @@ final class EnginePlugin: CommandPlugin {
         case "t", "tools":      try handleTools(tokens: tokens, context: context)
         case "wait":            try handleWait(context: context)
         case "watch":           try handleWatch(tokens: tokens, context: context)
+        case "unwatch":         try handleUnwatch(tokens: tokens, context: context)
         default:                break
         }
     }
@@ -145,7 +146,8 @@ final class EnginePlugin: CommandPlugin {
     /// first letter to the key that ends it.
     private func handleWatch(tokens: [String], context: any CommandContext) throws {
         guard tokens.isEmpty else {
-            throw CommandParserError.tooManyArguments(command: "watch")
+            try startWatcher(tokens: tokens, context: context)
+            return
         }
         // A settle that ends the watch is followed by a wait for the reply's ordering,
         // below, and a batch holds back the signal that wait would wait on (B-61).
@@ -185,6 +187,84 @@ final class EnginePlugin: CommandPlugin {
         case .keyPressed: context.outputMessage(ProgressLineRenderer.standing(standing))
         case .stopped:    context.outputMessage("Settled.")
         }
+    }
+
+    // MARK: - watch <folder>, unwatch (B-126)
+
+    /// The flags `watch <folder>` passes on to `semel-watch`: `build`'s `--into`, and the
+    /// filter's two.
+    private static let watcherFlags: Set<String> = ["--into", "--only", "--except"]
+
+    /// `watch <folder> [--into <dir>] [--only <pattern>]... [--except <pattern>]...`: a
+    /// `semel-watch` for the session's base and that folder, started beside this
+    /// executable as a child of the prompt. One per session, so a second replaces the
+    /// first. The same verb as the progress line because the subject is the same — what
+    /// the engine is doing to this tree, now — and a folder argument cannot be mistaken.
+    ///
+    /// Started with `--no-reports`: the prompt is subscribed already, and prints every
+    /// settle's summary, artifact diff and error report as they arrive; the watcher
+    /// printing them too would print each twice into the one terminal. What the watcher
+    /// says of its own — what it pushed and removed, what it exported — interleaves with
+    /// those lines as the events already interleave with the prompt's.
+    private func startWatcher(tokens: [String], context: any CommandContext) throws {
+        var folderToken: String?
+        var flags: [String] = []
+        var index = 0
+        while index < tokens.count {
+            let token = tokens[index]
+            guard !Self.watcherFlags.contains(token) else {
+                guard index + 1 < tokens.count else {
+                    throw CommandParserError.missingArgument(command: "watch", expected: "\(token) <value>")
+                }
+                let value = tokens[index + 1]
+                // A destination is a path on disk, read as `export` reads one: from where
+                // the prompt was started, `~` expanded.
+                flags += [token, token == "--into" ? ExternalPathSanitizer.expandPartialPath(value) : value]
+                index += 2
+                continue
+            }
+            guard !token.hasPrefix("--") else {
+                throw CommandParserError.unknownOption(command: "watch", option: token)
+            }
+            guard folderToken == nil else {
+                throw CommandParserError.tooManyArguments(command: "watch")
+            }
+            folderToken = token
+            index += 1
+        }
+        guard let folderToken else {
+            throw CommandParserError.missingArgument(command: "watch", expected: "<folder>")
+        }
+
+        // Read as `push` reads its argument: from the session's current directory, under
+        // the base.
+        let resolved = context.resolve(folderToken, relativeTo: context.currentDirectoryPath)
+        let folder = resolved.isEmpty ? "." : resolved.string
+        var isDirectory: ObjCBool = false
+        let onDisk = (context.baseDirectory as NSString).appendingPathComponent(resolved.string)
+        guard FileManager.default.fileExists(atPath: onDisk, isDirectory: &isDirectory), isDirectory.boolValue else {
+            context.outputError("watch: \(folderToken): no such folder under \(context.baseDirectory)")
+            return
+        }
+
+        context.stopRunningWatcher()
+        let launched = try context.watcherLauncher.launch(arguments: [context.baseDirectory, folder] + flags + ["--no-reports"])
+        context.runningWatcher = RunningWatcher(folder: folder, process: launched)
+        context.outputMessage("Watching \(folder) under \(context.baseDirectory): semel-watch is process "
+                            + "\(launched.processIdentifier); `unwatch` stops it.")
+    }
+
+    /// `unwatch`: the watcher `watch <folder>` started is stopped; none running is not an
+    /// error, since the state asked for is the state there is.
+    private func handleUnwatch(tokens: [String], context: any CommandContext) throws {
+        guard tokens.isEmpty else {
+            throw CommandParserError.tooManyArguments(command: "unwatch")
+        }
+        guard context.runningWatcher != nil else {
+            context.outputMessage("No watcher is running.")
+            return
+        }
+        context.stopRunningWatcher()
     }
 
     // MARK: - tools
