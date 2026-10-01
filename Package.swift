@@ -248,9 +248,10 @@ let package = Package(
             ],
             path: "semel/Tests"
         ),
-        // Real projects through the three binaries together: the fixtures under
+        // Real projects through the binaries together: the fixtures under
         // EndToEnd/Fixtures on every run, pinned external projects on opt-in
-        // (SEMEL_E2E_EXTERNAL=1). Depending on the executable targets is what makes
+        // (SEMEL_E2E_EXTERNAL=1), and one fixture watched by semel-watch over a real
+        // FSEvents stream. Depending on the executable targets is what makes
         // `swift test` build them beside the test bundle, where the harness finds them.
         .testTarget(
             name: "SemelEndToEndTests",
@@ -260,6 +261,7 @@ let package = Package(
                 "semel-server",
                 "semel-swift",
                 "semel-clang",
+                "semel-watch",
             ],
             path: "EndToEnd/Tests"
         ),

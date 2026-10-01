@@ -34,7 +34,7 @@ cd semel
 swift build -c release
 ```
 
-The build places four executables under `.build/release`: `semelserv`, the engine; `semel`, the CLI; `semel-swift`, a tool to prepare a Swift project/package for Semel, including placing SPM dependendencies; and `semel-clang`, which adds a Semel configuration file to the C/C++ source directory.
+The build places five executables under `.build/release`: `semelserv`, the engine; `semel`, the CLI; `semel-swift`, a tool to prepare a Swift project/package for Semel, including placing SPM dependendencies; `semel-clang`, which adds a Semel configuration file to the C/C++ source directory; and `semel-watch`, which pushes a tree into the engine as you save.
 
 ## Usage
 
@@ -128,6 +128,20 @@ against a graph already broken the same way prints nothing) — which makes it a
 ```sh
 .build/release/semel 'base /path/to/repo' 'build Packages --into ./out'
 ```
+
+To build as you save, watch the tree instead. `semel-watch` takes the base and the folders
+`build` would take, pushes them once, and from then on waits for two quiet seconds after
+each burst of saves — an editor's save, a `git checkout`, a generator's output — and runs
+one `begin`, a `push` of what changed and an `rm` of what went, `commit`: one settle, and
+its summary, per burst. It follows the formula's inputs as `build` does, and with `--into`
+exports after each settle without errors. What it watches is what `push` would push;
+`--only` and `--except` narrow that with the wildcards a for-each takes, and the export
+folder and `semel-out` are never pushed. At the prompt, `watch Packages --into ./out` starts
+one for the session's base; `unwatch` or `quit` stops it.
+
+```sh
+.build/release/semel-watch /path/to/repo Packages --into ./out --except 'Packages/**/Tests/**'
+```
 ### Formulae
 
 A .fmla, or formula file, declaratively describes one or more products and what each product comprises. Formula files describe build graph structure and identity but should avoid containing too much configuration; compiler arguments for example. Such configuration is kept in separate configuration files and referenced from formula files.
@@ -220,6 +234,9 @@ semel-swift/     semel-swift — `prepare`: finds a tree's roots, vendors git de
                  writes semel.fmla and the two config files (SemelSwiftTool)
 semel-clang/     semel-clang — writes semel.machine.config for the clang tools
                  (SemelClangTool)
+semel-watch/     semel-watch — watches a tree with FSEvents and, after two quiet seconds,
+                 runs the push and rm a person would type, through SemelCLI; one per tree
+  Sources/SemelWatch/  SemelWatch: the filter, the coalescer, the batch planner, the loop
 machine-file/    SemelMachineFile: the one writer of semel.machine.config, for both tools
 ```
 

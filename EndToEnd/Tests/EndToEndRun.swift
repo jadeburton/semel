@@ -35,7 +35,7 @@ final class EndToEndRun {
     }
 
     static var binariesAreBuilt: Bool {
-        ["semel", "semelserv", "semel-swift", "semel-clang"].allSatisfy { FileManager.default.isExecutableFile(atPath: binary($0).path) }
+        ["semel", "semelserv", "semel-swift", "semel-clang", "semel-watch"].allSatisfy { FileManager.default.isExecutableFile(atPath: binary($0).path) }
     }
 
     /// Runs one of the executables to completion. A non-zero status or the
