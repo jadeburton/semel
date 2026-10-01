@@ -78,6 +78,15 @@ public struct FileWildcardEntry {
 public protocol FileWildcardMatcherInput {
     var rootDirectoryPath: String { get }   // real filesystem path (String for Foundation APIs)
     func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry]
+    /// A dot-named file a path names exactly, which `allFiles` leaves out: nil from a lister
+    /// that lists dot-names like any other, or where there is no such file.
+    func hiddenFile(named name: String, inDirectoryPath: String) -> FileWildcardEntry?
+}
+
+extension FileWildcardMatcherInput {
+    public func hiddenFile(named name: String, inDirectoryPath: String) -> FileWildcardEntry? {
+        nil
+    }
 }
 
 // MARK: - FileWildcardMatcher
@@ -162,7 +171,16 @@ public final class FileWildcardMatcher {
         }
 
         // ── Normal or single-star segment ─────────────────────────
-        let children = try input.allFiles(inDirectoryPath: currentDirectory)
+        var children = try input.allFiles(inDirectoryPath: currentDirectory)
+
+        // A last segment naming a dot-named file exactly is that file, which a listing
+        // leaves out (B-77 item 5): `push app/.all-contributorsrc` pushes what a formula
+        // names, while `*`, `**` and a folder still pass over every dot-name.
+        if isLastSegment, segment.hasPrefix("."), !segment.contains(where: { $0 == "*" || $0 == "?" }),
+           !children.contains(where: { $0.path.string == segment }),
+           let hidden = input.hiddenFile(named: segment, inDirectoryPath: currentDirectory) {
+            children.append(hidden)
+        }
 
         for child in children {
             guard WildcardSegment.matches(pattern: segment, name: child.path.string) else {
@@ -196,8 +214,7 @@ public final class ExternalFileSystemLister: FileWildcardMatcherInput {
     }
 
     public func allFiles(inDirectoryPath path: String) -> [FileWildcardEntry] {
-        let fileManager = FileManager.default
-        guard let children = try? fileManager.contentsOfDirectory(atPath: path) else {
+        guard let children = try? FileManager.default.contentsOfDirectory(atPath: path) else {
             return []
         }
         let realDirectory = (path as NSString).resolvingSymlinksInPath
@@ -205,37 +222,64 @@ public final class ExternalFileSystemLister: FileWildcardMatcherInput {
             guard !name.hasPrefix(".") else {
                 return nil
             }
-            let fullPath = (path as NSString).appendingPathComponent(name)
-            var isDirectory: ObjCBool = false
-            // Followed: a link to nothing, or a loop of links, is left out as a missing
-            // file is.
-            guard fileManager.fileExists(atPath: fullPath, isDirectory: &isDirectory) else {
+            return Self.entry(named: name, inDirectoryPath: path, realDirectory: realDirectory)
+        }.sorted { $0.path.string < $1.path.string }
+    }
+
+    /// The dot-named file `name` in the folder at `path`, as `allFiles` would list it were
+    /// it not dot-named; nil when it is not there or is a folder.
+    ///
+    /// The rule (B-77 item 5): a dot-name is pushed only when it is asked for by its path —
+    /// a formula's `StaticFile(path:)`, which `build` follows when the file is missing, or
+    /// `push` naming it — and only as a file. A walk never takes one, so a checkout's
+    /// `.git`, `.github` and `.swiftpm` stay where they are, and a vendored folder's fold
+    /// and its lock are what they were. A file once pushed is in its folder's root, which
+    /// is why a push folding the disk is told which ones the server holds
+    /// (`FolderOnDisk.read`'s `hiddenFiles`).
+    public func hiddenFile(named name: String, inDirectoryPath path: String) -> FileWildcardEntry? {
+        guard name.hasPrefix("."), name != ".", name != "..", !name.contains("/") else {
+            return nil
+        }
+        let realDirectory = (path as NSString).resolvingSymlinksInPath
+        guard let entry = Self.entry(named: name, inDirectoryPath: path, realDirectory: realDirectory),
+              entry.kind == .file else {
+            return nil
+        }
+        return entry
+    }
+
+    /// One child of a folder on disk as a push sees it, whatever its name.
+    private static func entry(named name: String, inDirectoryPath path: String, realDirectory: String) -> FileWildcardEntry? {
+        let fullPath = (path as NSString).appendingPathComponent(name)
+        var isDirectory: ObjCBool = false
+        // Followed: a link to nothing, or a loop of links, is left out as a missing
+        // file is.
+        guard FileManager.default.fileExists(atPath: fullPath, isDirectory: &isDirectory) else {
+            return nil
+        }
+        // A directory entry on disk is the whole story: there is no port behind it to
+        // ask, so this lister has no state to report and says so.
+        let kind: FileWildcardEntryKind = isDirectory.boolValue ? .folder : .file
+        guard let linkTarget = symbolicLinkTarget(at: fullPath) else {
+            return FileWildcardEntry(path: Path(name), kind: kind, state: nil, isUnreferenced: false)
+        }
+        // A link that stays inside its own folder is pushed as the link it is, as well
+        // as walked: what a bundle holds, `Versions/Current -> A` (B-77). It names
+        // something below its own folder, so it is never a cycle.
+        if isContained(symbolicLinkTarget: linkTarget) {
+            return FileWildcardEntry(path: Path(name), kind: kind, state: nil, isUnreferenced: false,
+                                     symbolicLinkTarget: linkTarget)
+        }
+        // A symbolic link into a folder above this one is a cycle: following it
+        // would walk the same tree without end, growing until memory ran out. A link
+        // elsewhere is followed, since a package may keep sources behind one.
+        if isDirectory.boolValue {
+            let realChild = (fullPath as NSString).resolvingSymlinksInPath
+            if realDirectory == realChild || realDirectory.hasPrefix(realChild + "/") {
                 return nil
             }
-            // A directory entry on disk is the whole story: there is no port behind it to
-            // ask, so this lister has no state to report and says so.
-            let kind: FileWildcardEntryKind = isDirectory.boolValue ? .folder : .file
-            guard let linkTarget = Self.symbolicLinkTarget(at: fullPath) else {
-                return FileWildcardEntry(path: Path(name), kind: kind, state: nil, isUnreferenced: false)
-            }
-            // A link that stays inside its own folder is pushed as the link it is, as well
-            // as walked: what a bundle holds, `Versions/Current -> A` (B-77). It names
-            // something below its own folder, so it is never a cycle.
-            if Self.isContained(symbolicLinkTarget: linkTarget) {
-                return FileWildcardEntry(path: Path(name), kind: kind, state: nil, isUnreferenced: false,
-                                         symbolicLinkTarget: linkTarget)
-            }
-            // A symbolic link into a folder above this one is a cycle: following it
-            // would walk the same tree without end, growing until memory ran out. A link
-            // elsewhere is followed, since a package may keep sources behind one.
-            if isDirectory.boolValue {
-                let realChild = (fullPath as NSString).resolvingSymlinksInPath
-                if realDirectory == realChild || realDirectory.hasPrefix(realChild + "/") {
-                    return nil
-                }
-            }
-            return FileWildcardEntry(path: Path(name), kind: kind, state: nil, isUnreferenced: false)
-        }.sorted { $0.path.string < $1.path.string }
+        }
+        return FileWildcardEntry(path: Path(name), kind: kind, state: nil, isUnreferenced: false)
     }
 
     /// What the link at `path` holds, or nil when `path` is not a link. `lstat` rather than

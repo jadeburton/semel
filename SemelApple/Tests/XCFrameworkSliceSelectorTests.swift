@@ -43,15 +43,44 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
                                                           properties: [XCFrameworkSliceSelector.pathProperty: xcframework]))
     }
 
+    /// The first bytes of a thin Mach-O file of `fileType`, little-endian as a Mac writes it:
+    /// 6 a dynamic library, 2 an executable.
+    private static func machO(fileType: UInt8 = 6) -> Data {
+        var header = Data([0xCF, 0xFA, 0xED, 0xFE, 0x0C, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00])
+        header += Data([fileType, 0x00, 0x00, 0x00])
+        return header + Data(repeating: 0, count: 48)
+    }
+
+    /// A fat file of two thin files, its header big-endian as `lipo` writes it.
+    private static func fat(_ first: Data, _ second: Data) -> Data {
+        func bigEndian(_ value: UInt32) -> Data {
+            Data([UInt8(value >> 24), UInt8((value >> 16) & 0xFF), UInt8((value >> 8) & 0xFF), UInt8(value & 0xFF)])
+        }
+        let headerSize = UInt32(8 + 2 * 20)
+        let firstOffset  = headerSize
+        let secondOffset = headerSize + UInt32(first.count)
+        var data = bigEndian(0xCAFE_BABE) + bigEndian(2)
+        data += bigEndian(0x0100_000C) + bigEndian(0) + bigEndian(firstOffset) + bigEndian(UInt32(first.count)) + bigEndian(0)
+        data += bigEndian(0x0100_0007) + bigEndian(3) + bigEndian(secondOffset) + bigEndian(UInt32(second.count)) + bigEndian(0)
+        return data + first + second
+    }
+
+    /// An `ar` archive's first bytes, as CodeEditLanguages' framework binary begins.
+    private static let archive = Data("!<arch>\n#1/20           0           0     0     644     4         `\n".utf8)
+
     /// Runs the node until it asks for nothing new: every folder it asks for answered as its
-    /// tree from `folders` (files, subfolders), every file with its path as its bytes, every mode from
-    /// `modes` or the default. A path in `links` is a symbolic link pushed as one, holding
-    /// what it maps to: a subfolder listed so in its folder's manifest, a file with the
-    /// target on its metadata. Returns the last pass's output.
+    /// tree from `folders` (files, subfolders), every file with its path as its bytes unless
+    /// `contents` says otherwise — a framework's binary is read for what it is, and a Mac
+    /// framework's is a dynamic library unless a test says — every mode from `modes` or the
+    /// default. A path in `links` is a symbolic link pushed as one, holding what it maps to:
+    /// a subfolder listed so in its folder's manifest, a file with the target on its
+    /// metadata. Returns the last pass's output.
     private func select(settings: String, plist: Data,
                         folders: [String: (files: [String], folders: [String])] = [:],
                         modes: [String: UInt16] = [:],
-                        links: [String: String] = [:]) throws -> ProcessOutput {
+                        links: [String: String] = [:],
+                        contents: [String: Data]? = nil) throws -> ProcessOutput {
+        let contents = contents ?? ["\(xcframework)/macos-arm64_x86_64/Tiny.framework/Tiny": Self.machO()]
         let node = try makeNode()
         var inputValues: [String: [String: NodeValue]] = [
             XCFrameworkSliceSelector.configuration: ["config": .value(try settings.intern())],
@@ -78,7 +107,8 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
             }
             for (file, _) in output.inputWireSpecs[XCFrameworkSliceSelector.sliceFiles] ?? [:]
             where inputValues[XCFrameworkSliceSelector.sliceFiles]?[file] == nil {
-                inputValues[XCFrameworkSliceSelector.sliceFiles, default: [:]][file] = .value(try file.intern())
+                inputValues[XCFrameworkSliceSelector.sliceFiles, default: [:]][file] =
+                    .value(try contents[file].map { try [UInt8]($0).intern() } ?? file.intern())
                 inputValues[XCFrameworkSliceSelector.sliceFileMetadata, default: [:]][file] =
                     .value(try FileMetadata(mode: modes[file] ?? FileMetadata.defaultMode, symbolicLinkTarget: links[file]).jsonString().intern())
                 askedForMore = true
@@ -117,7 +147,10 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
                        ["Tiny.framework/Resources/Info.plist", "Tiny.framework/Tiny", "Tiny.framework/Versions/A/Tiny"])
         XCTAssertEqual(frameworks.entry(at: "Tiny.framework/Versions/A/Tiny")?.mode, 0o755)
         XCTAssertEqual(frameworks.entry(at: "Tiny.framework/Resources/Info.plist")?.mode, 0o644)
-        XCTAssertEqual(try frameworks.entry(at: "Tiny.framework/Tiny").map { try XCTUnwrap($0.hash).resolveAsString() }, "\(slice)/Tiny")
+        XCTAssertEqual(try frameworks.entry(at: "Tiny.framework/Versions/A/Tiny").map { try XCTUnwrap($0.hash).resolveAsString() },
+                       "\(slice)/Versions/A/Tiny")
+        XCTAssertEqual(try treeManifest(from: output.outputValues[XCFrameworkSliceSelector.embeddedFrameworks]), frameworks,
+                       "a dynamic framework is embedded")
         XCTAssertEqual(try treeManifest(from: output.outputValues[XCFrameworkSliceSelector.libraries]).entries, [])
         XCTAssertEqual(try treeManifest(from: output.outputValues[XCFrameworkSliceSelector.headers]).entries, [])
         XCTAssertEqual(output.inputWireSpecs[XCFrameworkSliceSelector.sliceFolders]?.keys.allSatisfy { $0.hasPrefix(slice) }, true,
@@ -193,6 +226,117 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
         XCTAssertTrue(try errorMessage(output).contains("its Info.plist is not an xcframework's"))
     }
 
+    // MARK: - A static framework (B-77 item 3, 12)
+
+    /// CodeEditLanguages' slice: a framework whose binary is a fat file of two archives. It
+    /// is compiled and linked against as any framework — the whole slice on `frameworks` —
+    /// and embedded nowhere: `embeddedFrameworks` is empty, so neither the bundle nor its
+    /// signer sees it.
+    func test_aStaticFrameworkIsLinkedAgainstAndNotEmbedded() throws {
+        let slice = "\(xcframework)/macos-arm64_x86_64/Tiny.framework"
+        let output = try select(settings: "sdk=macosx\ntarget=arm64-apple-macosx15.0", plist: try infoPlist(), folders: [
+            slice:              (files: ["Tiny"], folders: ["Headers", "Modules"]),
+            "\(slice)/Headers": (files: ["Tiny.h"], folders: []),
+            "\(slice)/Modules": (files: ["module.modulemap"], folders: []),
+        ], contents: ["\(slice)/Tiny": Self.fat(Self.archive, Self.archive)])
+
+        let frameworks = try treeManifest(from: output.outputValues[XCFrameworkSliceSelector.frameworks])
+        XCTAssertEqual(frameworks.entries.map(\.path),
+                       ["Tiny.framework/Headers/Tiny.h", "Tiny.framework/Modules/module.modulemap", "Tiny.framework/Tiny"])
+        XCTAssertEqual(try treeManifest(from: output.outputValues[XCFrameworkSliceSelector.embeddedFrameworks]).entries, [])
+        XCTAssertEqual(try treeManifest(from: output.outputValues[XCFrameworkSliceSelector.libraries]).entries, [])
+    }
+
+    /// The plist's `BinaryPath` says where the binary is, as `xcodebuild` records it.
+    func test_theBinaryIsWhereThePlistSays() throws {
+        var plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: try infoPlist(), format: nil) as? [String: Any])
+        var libraries = try XCTUnwrap(plist["AvailableLibraries"] as? [[String: Any]])
+        libraries[1]["BinaryPath"] = "Tiny.framework/Versions/A/Tiny"
+        plist["AvailableLibraries"] = libraries
+        let slice = "\(xcframework)/macos-arm64_x86_64/Tiny.framework"
+        let output = try select(settings: "sdk=macosx", plist: try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0),
+                                folders: [
+                                    slice:                 (files: [], folders: ["Versions"]),
+                                    "\(slice)/Versions":   (files: [], folders: ["A"]),
+                                    "\(slice)/Versions/A": (files: ["Tiny"], folders: []),
+                                ], contents: ["\(slice)/Versions/A/Tiny": Self.archive])
+
+        XCTAssertEqual(try treeManifest(from: output.outputValues[XCFrameworkSliceSelector.embeddedFrameworks]).entries, [])
+        XCTAssertEqual(try treeManifest(from: output.outputValues[XCFrameworkSliceSelector.frameworks]).entries.map(\.path),
+                       ["Tiny.framework/Versions/A/Tiny"])
+    }
+
+    /// A framework whose binary is no library is an error naming the binary, as is one with
+    /// no binary at all; either way the slice's wires stay, so a fixed slice runs it again.
+    func test_aFrameworkBinaryThatIsNoLibraryIsAnError() throws {
+        let slice = "\(xcframework)/macos-arm64_x86_64/Tiny.framework"
+        let executable = try select(settings: "sdk=macosx", plist: try infoPlist(),
+                                    folders: [slice: (files: ["Tiny"], folders: [])],
+                                    contents: ["\(slice)/Tiny": Self.machO(fileType: 2)])
+        XCTAssertEqual(try errorMessage(executable),
+                       "XCFrameworkSliceSelector: \(xcframework): its slice's framework binary Tiny.framework/Tiny: "
+                     + "its binary is a Mach-O file of type 2, neither a dynamic library nor an object")
+        XCTAssertEqual(executable.inputWireSpecs[XCFrameworkSliceSelector.sliceFiles]?.keys.sorted(), ["\(slice)/Tiny"])
+
+        let missing = try select(settings: "sdk=macosx", plist: try infoPlist(),
+                                 folders: [slice: (files: ["Info.plist"], folders: [])])
+        XCTAssertEqual(try errorMessage(missing),
+                       "XCFrameworkSliceSelector: \(xcframework): its slice's framework has no binary at Tiny.framework/Tiny")
+    }
+
+    /// The kind is read from the first bytes and, in a fat file, from each architecture's.
+    func test_aBinarysKindIsReadFromItsMagic() throws {
+        func kind(_ data: Data) throws -> FrameworkBinary {
+            try FrameworkBinary.kind { offset, count in
+                guard offset <= UInt64(data.count) else {
+                    return Data()
+                }
+                return data.dropFirst(Int(offset)).prefix(count)
+            }
+        }
+        XCTAssertEqual(try kind(Self.machO()), .dynamicLibrary)
+        XCTAssertEqual(try kind(Self.machO(fileType: 1)), .staticArchive, "a relocatable object is linked in")
+        XCTAssertEqual(try kind(Self.archive), .staticArchive)
+        XCTAssertEqual(try kind(Self.fat(Self.machO(), Self.machO())), .dynamicLibrary)
+        XCTAssertEqual(try kind(Self.fat(Self.archive, Self.archive)), .staticArchive)
+        XCTAssertThrowsError(try kind(Self.fat(Self.archive, Self.machO()))) {
+            XCTAssertEqual($0 as? FrameworkBinary.Unrecognised, .mixedSlices)
+        }
+        XCTAssertThrowsError(try kind(Data("#!/bin/sh\necho\n".utf8))) {
+            XCTAssertEqual($0 as? FrameworkBinary.Unrecognised, .unknownMagic("23 21 2f 62 69 6e 2f 73"))
+        }
+        XCTAssertThrowsError(try kind(Data([0xCF]))) {
+            XCTAssertEqual($0 as? FrameworkBinary.Unrecognised, .unreadable)
+        }
+    }
+
+    /// What the real tools write reads as what it is: `libtool -static` an archive and
+    /// `clang -dynamiclib` a dynamic library, and `lipo` a fat file of either.
+    func test_theToolsOutputReadsAsWhatItIs() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("semel-binary-kind-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try "int tiny(void) { return 1; }\n".write(to: folder.appendingPathComponent("tiny.c"), atomically: true, encoding: .utf8)
+        func run(_ arguments: [String]) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+            process.arguments = arguments
+            process.currentDirectoryURL = folder
+            try process.run()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, arguments.joined(separator: " "))
+        }
+        try run(["clang", "-c", "-arch", "arm64", "-arch", "x86_64", "tiny.c", "-o", "tiny.o"])
+        try run(["libtool", "-static", "tiny.o", "-o", "libtiny.a"])
+        try run(["clang", "-dynamiclib", "-arch", "arm64", "-arch", "x86_64", "tiny.c", "-o", "libtiny.dylib"])
+        func kind(_ name: String) throws -> FrameworkBinary {
+            let data = try Data(contentsOf: folder.appendingPathComponent(name))
+            return try FrameworkBinary.kind { offset, count in data.dropFirst(Int(offset)).prefix(count) }
+        }
+        XCTAssertEqual(try kind("libtiny.a"), .staticArchive)
+        XCTAssertEqual(try kind("libtiny.dylib"), .dynamicLibrary)
+    }
+
     // MARK: - A static library slice
 
     /// A static library slice is its archive on `libraries` and its headers on `headers`,
@@ -207,6 +351,7 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
         XCTAssertEqual(try treeManifest(from: output.outputValues[XCFrameworkSliceSelector.headers]).entries.map(\.path),
                        ["Tiny.h", "module.modulemap"])
         XCTAssertEqual(try treeManifest(from: output.outputValues[XCFrameworkSliceSelector.frameworks]).entries, [])
+        XCTAssertEqual(try treeManifest(from: output.outputValues[XCFrameworkSliceSelector.embeddedFrameworks]).entries, [])
     }
 
     /// A dynamic library outside a framework would need an install name nothing sets.

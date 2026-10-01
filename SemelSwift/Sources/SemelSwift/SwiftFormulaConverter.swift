@@ -117,8 +117,10 @@ struct SwiftFormulaConverter: Node {
     /// catalog is not walked (B-77); at 17, a target dependency or a setting behind a trait
     /// the package does not enable by default is neither waited for nor linked; at 18, each
     /// product's bundles are also defined laid out for the Mac, `macBundles_<Product>()`
-    /// (B-77).
-    public static let implementationVersion = 18
+    /// (B-77); at 19, every product has an `embedded_<Product>()` func, its binary targets'
+    /// dynamic frameworks, which an app embeds where it embedded `frameworks_<Product>()`
+    /// (B-77 item 12).
+    public static let implementationVersion = 19
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -1945,15 +1947,21 @@ struct SwiftFormulaConverter: Node {
                 linkerArgs += ",\n        linkRequirements: ['\(product.name)': \(requirementsFunc)().output]"
             }
 
-            // Every binary target's slice the product reaches, as a tree an app embeds and
-            // links (B-77): defined for every product, empty or not, as `bundles_P()` is, so
-            // an app names it without knowing. A static library slice is not in it — its
-            // archive goes with the product's objects, and nothing embeds it.
+            // Every binary target's slice the product reaches, as a tree an app compiles and
+            // links against (B-77), and the dynamic frameworks among them as the tree it
+            // embeds: defined for every product, empty or not, as `bundles_P()` is, so an app
+            // names them without knowing. A static library slice is in neither — its archive
+            // goes with the product's objects — and a static framework only in the first, as
+            // its archive is linked in and loaded from nowhere (B-77 item 3, 12).
             let frameworksFunc = FormulaIdentifier.frameworksFunc(forProduct: product.name)
-            let frameworkWires = binaryTargets.map { "        '\($0.name)': \(sliceFuncName(for: $0.name))().frameworks" }
-            blocks.append(
-                "func \(frameworksFunc)() =\n" +
-                "    TreeMerger(input: [" + (frameworkWires.isEmpty ? "" : "\n" + frameworkWires.joined(separator: ",\n") + "\n    ") + "]).files")
+            func sliceTreeFunc(named function: String, port: String) -> String {
+                let wires = binaryTargets.map { "        '\($0.name)': \(sliceFuncName(for: $0.name))().\(port)" }
+                return "func \(function)() =\n" +
+                       "    TreeMerger(input: [" + (wires.isEmpty ? "" : "\n" + wires.joined(separator: ",\n") + "\n    ") + "]).files"
+            }
+            blocks.append(sliceTreeFunc(named: frameworksFunc, port: "frameworks"))
+            blocks.append(sliceTreeFunc(named: FormulaIdentifier.embeddedFrameworksFunc(forProduct: product.name),
+                                        port: "embeddedFrameworks"))
             let libraryWires = binaryTargets.map { "'\($0.name)': \(sliceFuncName(for: $0.name))().libraries" }
             if linksBinaryTargets {
                 linkerArgs += ",\n        objectTrees: [\n" + libraryWires.map { "            " + $0 }.joined(separator: ",\n") + "\n        ]"

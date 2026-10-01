@@ -228,9 +228,15 @@ final class FilePlugin: CommandPlugin {
             return ([.send(entry)], [])
         }
 
-        let onDisk = FolderOnDisk.read(entry.path, under: context.baseDirectory,
-                                       symbolicLinkTarget: entry.symbolicLinkTarget, excluding: isExcluded)
+        // The roots first, for the dot-named files each folder holds: a walk of the disk
+        // leaves them out, and the server's roots fold them in (B-77 item 5).
         let heldRoots = try Self.heldRoots(below: entry.path, context: context)
+        var hiddenFiles: [String: [String]] = [:]
+        for held in heldRoots.values.sorted(by: { $0.path < $1.path }) where !held.hiddenFiles.isEmpty {
+            hiddenFiles[held.path] = held.hiddenFiles
+        }
+        let onDisk = FolderOnDisk.read(entry.path, under: context.baseDirectory, symbolicLinkTarget: entry.symbolicLinkTarget,
+                                       hiddenFiles: hiddenFiles, excluding: isExcluded)
 
         // The folder itself: a link is always sent, since what it holds is compared in the
         // folder above it, which this push was not asked about; any other folder only when

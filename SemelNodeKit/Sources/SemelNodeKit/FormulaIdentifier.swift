@@ -42,10 +42,18 @@ public enum FormulaIdentifier {
 
     /// The func carrying the framework slice of every binary target behind a package
     /// product, each under its own name (`Sparkle.framework/…`), as one tree (B-77): what
-    /// an app compiles and links against and embeds. Empty when the product reaches no
-    /// binary framework, so a consumer can name it without knowing.
+    /// an app compiles and links against. Empty when the product reaches no binary
+    /// framework, so a consumer can name it without knowing.
     public static func frameworksFunc(forProduct product: String) -> String {
         "frameworks_\(sanitized(product))"
+    }
+
+    /// The func carrying the frameworks of `frameworksFunc` an app embeds: the dynamic ones
+    /// alone, since a static framework is linked into the executable and loaded from
+    /// nowhere (B-77 item 3, 12). Empty when there are none, so a consumer can name it
+    /// without knowing.
+    public static func embeddedFrameworksFunc(forProduct product: String) -> String {
+        "embedded_\(sanitized(product))"
     }
 
     /// The same bundles as `bundlesFunc` names, each laid out as a Mac bundle is:

@@ -117,7 +117,7 @@ extension RequestHandler {
     /// `HeldFolderRoot` for the reply's body.
     func contentRoots(path: String) throws -> Data {
         let roots = try HeldTree.folderRoots(below: Path(path)).map {
-            HeldFolderRoot(path: $0.path.string, contentRoot: $0.contentRoot, isPinned: $0.isPinned)
+            HeldFolderRoot(path: $0.path.string, contentRoot: $0.contentRoot, isPinned: $0.isPinned, hiddenFiles: $0.hiddenFiles)
         }
         return try MessageCoder.encode(roots)
     }

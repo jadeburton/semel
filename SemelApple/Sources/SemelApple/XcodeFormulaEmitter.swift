@@ -504,9 +504,14 @@ struct XcodeFormulaEmitter {
             "        '\($0)': \(FormulaIdentifier.linkRequirementsFunc(forProduct: $0))().output"
         }
         // Each product's binary targets' frameworks, which the target compiles and links
-        // against and the bundle embeds (B-77); empty for a product that reaches none.
+        // against (B-77), and the dynamic ones among them, which the bundle embeds — a static
+        // framework is linked in and loaded from nowhere (B-77 item 12); both empty for a
+        // product that reaches none.
         let frameworkTrees = target.packageProducts.map(\.product).sorted().map {
             "        '\($0)': \(FormulaIdentifier.frameworksFunc(forProduct: $0))().files"
+        }
+        let embeddedFrameworkTrees = target.packageProducts.map(\.product).sorted().map {
+            "        '\($0)': \(FormulaIdentifier.embeddedFrameworksFunc(forProduct: $0))().files"
         }
         var compilerLiterals = ["moduleName": identity.moduleName,
                                 "target": identity.target]
@@ -541,7 +546,7 @@ struct XcodeFormulaEmitter {
         // compiler, resources with the target's own. A listed file goes the same way,
         // keyed by its whole path: two groups may each hold a `View.swift`, and the key
         // is where the compiler puts the file.
-        let borrowedSources = target.borrowedFiles.filter { $0.hasSuffix(".swift") }.map {
+        var borrowedSources = target.borrowedFiles.filter { $0.hasSuffix(".swift") }.map {
             "        \(Self.quoted(($0 as NSString).lastPathComponent)): StaticFile(path: \(Self.quoted("\(build.projectFolder)/\($0)"))).output"
         } + listedSources.map {
             "        \(Self.quoted($0)): StaticFile(path: \(Self.quoted("\(build.projectFolder)/\($0)"))).output"
@@ -561,93 +566,6 @@ struct XcodeFormulaEmitter {
                     "\n    ]).files")
                 bridgingWires += ",\n        headerTrees: [\(Self.quoted(target.name)): headers_\(name)().files]"
             }
-        }
-        blocks.append(
-            "func compiler_\(name)() =\n" +
-            "    SwiftCompiler(\n" +
-            "        configuration: ['config': \(configuration(namespace: Self.swiftCompilerNamespace, literals: compilerLiterals))]" +
-            (folderWires.isEmpty ? "" : ",\n        inputFolder: [\n" + folderWires.joined(separator: ",\n") + "\n        ]") +
-            (borrowedSources.isEmpty ? "" : ",\n        extraSourceFiles: [\n" + borrowedSources.joined(separator: ",\n") + "\n        ]") +
-            (moduleTrees.isEmpty ? "" : ",\n        moduleTrees: [\n" + moduleTrees.joined(separator: ",\n") + "\n        ]") +
-            (frameworkTrees.isEmpty ? "" : ",\n        frameworkTrees: [\n" + frameworkTrees.joined(separator: ",\n") + "\n        ]") +
-            bridgingWires +
-            "\n    )")
-
-        // The target's C-family sources, each preprocessed and compiled by itself as a
-        // package's C target's are, over the target's folders as header folders — what
-        // Xcode's header map lets a quoted import find — and linked into the executable.
-        var objectEntries = ["'\(identity.moduleName).o': compiler_\(name)().object"]
-        if !objectiveC.sources.isEmpty {
-            let headerFolderWires = objectiveC.headerFolders.map {
-                "            \(Self.quoted($0)): Folder(path: \(Self.quoted($0))).manifest"
-            }
-            func preprocessor(named function: String, literals: [String: String]) -> String {
-                "func \(function)(path) =\n" +
-                "    ClangPreprocessor(\n" +
-                "        configuration: ['config': \(configuration(namespace: Self.clangPreprocessorNamespace, literals: literals))],\n" +
-                "        input: [path: StaticFile(path: path)],\n" +
-                "        headerFolders: [\n" + headerFolderWires.joined(separator: ",\n") + "\n        ]\n" +
-                "    )"
-            }
-            blocks.append(preprocessor(named: "preprocess_\(name)", literals: objectiveC.preprocessorLiterals))
-            let compilerConfiguration = configuration(namespace: Self.clangCompilerNamespace, literals: objectiveC.compilerLiterals)
-            // A source with flags of its own (`additionalCompilerFlagsByRelativePath`) is
-            // preprocessed and compiled by nodes of its own, the flags after the target's,
-            // as Xcode passes them after `OTHER_CFLAGS`.
-            var flaggedIndex = 0
-            for source in objectiveC.sources {
-                var preprocessorFunction = "preprocess_\(name)"
-                var sourceCompilerConfiguration = compilerConfiguration
-                if let fileFlags = objectiveC.fileFlags[source] {
-                    preprocessorFunction = "preprocess_\(name)_\(flaggedIndex)"
-                    flaggedIndex += 1
-                    blocks.append(preprocessor(named: preprocessorFunction,
-                                               literals: objectiveC.preprocessorLiterals(adding: fileFlags)))
-                    sourceCompilerConfiguration = configuration(namespace: Self.clangCompilerNamespace,
-                                                                literals: objectiveC.compilerLiterals(adding: fileFlags))
-                }
-                objectEntries.append("\(Self.quoted(source + ".o")): ClangCompiler(configuration: ['config': \(sourceCompilerConfiguration)], "
-                                     + "input: [\(Self.quoted(source + ".p")): \(preprocessorFunction)(path: \(Self.quoted(source)))]).output")
-            }
-        }
-
-        // ── the executable ───────────────────────────────────────────────────
-        var linkerArguments: [String] = target.frameworks.sorted().flatMap { ["-framework", $0] }
-        if target.isExtension {
-            // What ld needs for an app extension, through the swiftc driver: its entry
-            // point, and the flag that marks it safe for one.
-            linkerArguments += ["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", "-Xlinker", "-application_extension"]
-        }
-        var linkerLiterals = ["linkage": "executable", "outputName": identity.productName, "target": identity.target]
-        if !linkerArguments.isEmpty {
-            linkerLiterals["arguments"] = linkerArguments.joined(separator: ",")
-        }
-        // Passed as an `-rpath` only when the frameworks trees hold a framework.
-        if !frameworkTrees.isEmpty {
-            linkerLiterals["frameworksRunpath"] = layout.frameworksRunpath
-        }
-        // C++ or Objective-C++ among the target's own sources brings the C++ runtime, as a
-        // package's C++ target does (B-55).
-        if objectiveC.compilesCxx {
-            linkRequirements.append("        \(Self.quoted("\(target.name) C++")): SettingsLiteral(\(LinkRequirements.cxxRuntimeKey): 'true').output")
-        }
-        let linkerInput = objectEntries.count == 1
-            ? "[\(objectEntries[0])]"
-            : "[\n" + objectEntries.map { "            \($0)" }.joined(separator: ",\n") + "\n        ]"
-        products.append(.file(
-            path: layout.executablePath(named: identity.productName),
-            expression: "\n" +
-            "    SwiftLinker(\n" +
-            "        configuration: ['config': \(configuration(namespace: Self.swiftLinkerNamespace, literals: linkerLiterals))],\n" +
-            "        input: \(linkerInput)" +
-            (objectTrees.isEmpty ? "" : ",\n        objectTrees: [\n" + objectTrees.joined(separator: ",\n") + "\n        ]") +
-            (linkRequirements.isEmpty ? "" : ",\n        linkRequirements: [\n" + linkRequirements.joined(separator: ",\n") + "\n        ]") +
-            (frameworkTrees.isEmpty ? "" : ",\n        frameworkTrees: [\n" + frameworkTrees.joined(separator: ",\n") + "\n        ]") +
-            "\n    ).output"))
-        // The same frameworks embedded where the executable's runpath finds them, and
-        // signed with the bundle on the Mac.
-        if !frameworkTrees.isEmpty {
-            products.append(.tree(folder: layout.frameworksFolder, inputs: "\n" + frameworkTrees.joined(separator: ",\n") + "\n    "))
         }
 
         // ── resources ────────────────────────────────────────────────────────
@@ -753,6 +671,10 @@ struct XcodeFormulaEmitter {
             if let appIcon = settings["ASSETCATALOG_COMPILER_APPICON_NAME"] {
                 assetLiterals["appIcon"] = appIcon
             }
+            let symbols = AssetSymbolSettings(settings: settings, bundleIdentifier: identity.bundleIdentifier)
+            if let symbols {
+                assetLiterals.merge(symbols.literals) { _, symbol in symbol }
+            }
             let catalogWires = Array(Set(catalogs)).sorted().map { "        '\(($0 as NSString).lastPathComponent)': Folder(path: '\($0)').manifest" }
             blocks.append(
                 "func assets_\(name)() =\n" +
@@ -762,6 +684,101 @@ struct XcodeFormulaEmitter {
                 "    )")
             bundleTrees.append("'assets': assets_\(name)().files")
             partials.append("'assets': assets_\(name)().partialInfoPlist")
+            // The Swift actool writes for the catalogs' colors and images, compiled with the
+            // target's sources as Xcode compiles its `GeneratedAssetSymbols.swift` (B-77
+            // item 10): `Color.amber`, `ImageResource.gitHubIcon`.
+            if symbols != nil {
+                borrowedSources.append("        \(Self.quoted(AssetCatalogCompiler.swiftAssetSymbolsFile)): "
+                                       + "assets_\(name)().\(AssetCatalogCompiler.swiftAssetSymbols)")
+            }
+        }
+
+        blocks.append(
+            "func compiler_\(name)() =\n" +
+            "    SwiftCompiler(\n" +
+            "        configuration: ['config': \(configuration(namespace: Self.swiftCompilerNamespace, literals: compilerLiterals))]" +
+            (folderWires.isEmpty ? "" : ",\n        inputFolder: [\n" + folderWires.joined(separator: ",\n") + "\n        ]") +
+            (borrowedSources.isEmpty ? "" : ",\n        extraSourceFiles: [\n" + borrowedSources.joined(separator: ",\n") + "\n        ]") +
+            (moduleTrees.isEmpty ? "" : ",\n        moduleTrees: [\n" + moduleTrees.joined(separator: ",\n") + "\n        ]") +
+            (frameworkTrees.isEmpty ? "" : ",\n        frameworkTrees: [\n" + frameworkTrees.joined(separator: ",\n") + "\n        ]") +
+            bridgingWires +
+            "\n    )")
+
+        // The target's C-family sources, each preprocessed and compiled by itself as a
+        // package's C target's are, over the target's folders as header folders — what
+        // Xcode's header map lets a quoted import find — and linked into the executable.
+        var objectEntries = ["'\(identity.moduleName).o': compiler_\(name)().object"]
+        if !objectiveC.sources.isEmpty {
+            let headerFolderWires = objectiveC.headerFolders.map {
+                "            \(Self.quoted($0)): Folder(path: \(Self.quoted($0))).manifest"
+            }
+            func preprocessor(named function: String, literals: [String: String]) -> String {
+                "func \(function)(path) =\n" +
+                "    ClangPreprocessor(\n" +
+                "        configuration: ['config': \(configuration(namespace: Self.clangPreprocessorNamespace, literals: literals))],\n" +
+                "        input: [path: StaticFile(path: path)],\n" +
+                "        headerFolders: [\n" + headerFolderWires.joined(separator: ",\n") + "\n        ]\n" +
+                "    )"
+            }
+            blocks.append(preprocessor(named: "preprocess_\(name)", literals: objectiveC.preprocessorLiterals))
+            let compilerConfiguration = configuration(namespace: Self.clangCompilerNamespace, literals: objectiveC.compilerLiterals)
+            // A source with flags of its own (`additionalCompilerFlagsByRelativePath`) is
+            // preprocessed and compiled by nodes of its own, the flags after the target's,
+            // as Xcode passes them after `OTHER_CFLAGS`.
+            var flaggedIndex = 0
+            for source in objectiveC.sources {
+                var preprocessorFunction = "preprocess_\(name)"
+                var sourceCompilerConfiguration = compilerConfiguration
+                if let fileFlags = objectiveC.fileFlags[source] {
+                    preprocessorFunction = "preprocess_\(name)_\(flaggedIndex)"
+                    flaggedIndex += 1
+                    blocks.append(preprocessor(named: preprocessorFunction,
+                                               literals: objectiveC.preprocessorLiterals(adding: fileFlags)))
+                    sourceCompilerConfiguration = configuration(namespace: Self.clangCompilerNamespace,
+                                                                literals: objectiveC.compilerLiterals(adding: fileFlags))
+                }
+                objectEntries.append("\(Self.quoted(source + ".o")): ClangCompiler(configuration: ['config': \(sourceCompilerConfiguration)], "
+                                     + "input: [\(Self.quoted(source + ".p")): \(preprocessorFunction)(path: \(Self.quoted(source)))]).output")
+            }
+        }
+
+        // ── the executable ───────────────────────────────────────────────────
+        var linkerArguments: [String] = target.frameworks.sorted().flatMap { ["-framework", $0] }
+        if target.isExtension {
+            // What ld needs for an app extension, through the swiftc driver: its entry
+            // point, and the flag that marks it safe for one.
+            linkerArguments += ["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", "-Xlinker", "-application_extension"]
+        }
+        var linkerLiterals = ["linkage": "executable", "outputName": identity.productName, "target": identity.target]
+        if !linkerArguments.isEmpty {
+            linkerLiterals["arguments"] = linkerArguments.joined(separator: ",")
+        }
+        // Passed as an `-rpath` only when the frameworks trees hold a framework.
+        if !frameworkTrees.isEmpty {
+            linkerLiterals["frameworksRunpath"] = layout.frameworksRunpath
+        }
+        // C++ or Objective-C++ among the target's own sources brings the C++ runtime, as a
+        // package's C++ target does (B-55).
+        if objectiveC.compilesCxx {
+            linkRequirements.append("        \(Self.quoted("\(target.name) C++")): SettingsLiteral(\(LinkRequirements.cxxRuntimeKey): 'true').output")
+        }
+        let linkerInput = objectEntries.count == 1
+            ? "[\(objectEntries[0])]"
+            : "[\n" + objectEntries.map { "            \($0)" }.joined(separator: ",\n") + "\n        ]"
+        products.append(.file(
+            path: layout.executablePath(named: identity.productName),
+            expression: "\n" +
+            "    SwiftLinker(\n" +
+            "        configuration: ['config': \(configuration(namespace: Self.swiftLinkerNamespace, literals: linkerLiterals))],\n" +
+            "        input: \(linkerInput)" +
+            (objectTrees.isEmpty ? "" : ",\n        objectTrees: [\n" + objectTrees.joined(separator: ",\n") + "\n        ]") +
+            (linkRequirements.isEmpty ? "" : ",\n        linkRequirements: [\n" + linkRequirements.joined(separator: ",\n") + "\n        ]") +
+            (frameworkTrees.isEmpty ? "" : ",\n        frameworkTrees: [\n" + frameworkTrees.joined(separator: ",\n") + "\n        ]") +
+            "\n    ).output"))
+        // The dynamic ones embedded where the executable's runpath finds them, and signed
+        // with the bundle on the Mac.
+        if !embeddedFrameworkTrees.isEmpty {
+            products.append(.tree(folder: layout.frameworksFolder, inputs: "\n" + embeddedFrameworkTrees.joined(separator: ",\n") + "\n    "))
         }
 
         for (index, catalog) in stringCatalogs.enumerated() {

@@ -2293,9 +2293,16 @@ application target, simulator only, all library code in packages. In suggested o
    unsigned bundle lacks. (1's residual, a framework's links as copies, is done: links
    travel in trees.)
 3. *CodeEdit* — `open`; the first slice landed (2026-10-01): the Mac app compiles, links,
-   is signed, exports and stays up when launched, once three things are stepped around by
-   hand (5, 10 and 12 below, each open), and it opens its welcome window as Xcode's build
-   of the same commit does (16). Pinned at `fa2aebd86373211c78626074b53ab75010767575` (main,
+   is signed, exports and stays up when launched, and it opens its welcome window as Xcode's
+   build of the same commit does (16). Since the second slice the same day (5, 10 and 12
+   below) it does so from a fresh clone with nothing stepped around: `prepare --platform
+   macos`, then `build`, 914 nodes and no errors, the build following `.all-contributorsrc`
+   by its path — and the export verifies with `codesign --verify --deep --strict`, holds
+   `Sparkle.framework` alone under `Contents/Frameworks` (the grammars linked into the
+   executable, 290 `tree_sitter_` symbols, no load command for them), and
+   `.all-contributorsrc` and `Assets.car` under `Contents/Resources`; launched by `open`, it
+   stays up. A second `build` of the unchanged clone pushes all 8,635 files as unchanged,
+   the dot-file among them, and settles with no work. Pinned at `fa2aebd86373211c78626074b53ab75010767575` (main,
    2026-08-18, "macOS Tahoe Navigator, Inspector, and Utility Area"). The clone is not what
    this entry said from memory: the tree-sitter grammars are not C targets at all.
 
@@ -2400,19 +2407,32 @@ application target, simulator only, all library code in packages. In suggested o
       `ClangPreprocessor` now hands the target's own module on as the text it is, taking
       out the two pragmas and nothing else (another module's are kept). Pinned by
       `ClangPreprocessorTests`, and end to end by `swift-c-package`'s new `Smoothing`.
-   5. **A hidden file in the resources phase.** `.all-contributorsrc`, which the About
-      window's contributors list reads from the bundle: a push takes no dot-name, and
-      `push codeedit/.all-contributorsrc` says `no such file or directory`, since the
-      lister leaves dot-names out whatever it is asked. So the `StaticFile` is never
-      pushed and the bundle, the signer and the product wait on it. *Design sketch:* a file
-      a formula names is pushed when named, hidden or not — `push` of an explicit path
-      takes a dot-name, and `build` pushes one the settle reports missing as it pushes a
-      missing source outside the folder (B-110) — while a walk still leaves dot-names out.
-      What has to be decided is the fold: a hidden file pushed inside a vendored package
-      would move its content root away from `prepare`'s fold of the disk, so the rule has
-      to be either "never under a locked package" or "the disk fold takes what a push
-      took" (the lock would then have to know what was pushed). Stepped around for the map
-      by taking the build file out of the scratch clone's resources phase.
+   5. ~~**A hidden file in the resources phase.**~~ Done (2026-10-01). `.all-contributorsrc`,
+      which the About window's contributors list reads from the bundle, was never pushed:
+      the lister left dot-names out whatever it was asked, so `push
+      codeedit/.all-contributorsrc` said `no such file or directory` and the bundle, the
+      signer and the product waited on it. *The rule:* a dot-named **file** is pushed when
+      a path names it exactly — `push codeedit/.all-contributorsrc`, and so `build`'s follow
+      of a missing source (B-110), which pushes the path the settle names — while `*`,
+      `**`, a folder walk and a dot-named folder still take no dot-name
+      (`ExternalFileSystemLister.hiddenFile(named:inDirectoryPath:)`, asked by the matcher
+      only for a literal last segment). A checkout's `.git`, `.github` and `.swiftpm` stay
+      where they are, and a vendored folder's fold and its lock are what they were: the
+      lock is only over `Dependencies`, and `prepare`'s fold is told of no dot-name. *The
+      fold:* a dot-file once pushed is in its folder's content root on the engine's side
+      (a dot-file in the graph is in the root), so the push's fold of the disk
+      (`FolderOnDisk`, B-132) is told which ones the server holds —
+      `HeldFolderRoot.hiddenFiles`, read in the same snapshot as the roots by one more
+      query, a range over the index on `(parentNodeID, name)` (`ProtocolVersion` 21) — and
+      folds each it finds on disk. The roots agree, so an unchanged push of the folder
+      sends nothing; an edited dot-file is sent again by a push of its folder; one gone from
+      disk is reported and kept as any pushed file is; one nobody pushed (a ghost, or a
+      file only on disk) is named by no root. Pinned by `ExternalFileSystemListerTests`,
+      `FolderOnDiskTests`, `HeldTreeTests`, `ManifestPushScaleTests`, `BuildCommandTests`
+      and `XcodeFormulaEmitterTests` (a listed dot-file is a `StaticFile` copied under its
+      name), and end to end by `swift-binary-target-app`, whose resources phase lists
+      `.greeterrc`: the build says `semel.fmla needs .greeterrc`, pushes it, and the
+      exported app prints it, through all four builds.
    6. ~~**`package` declarations.**~~ Done. CodeEditTextView's `package(set) public var
       textStorage` needs `-package-name`, which SwiftPM passes to every target of a
       package: `SwiftCompiler` takes a `packageName` literal, which the Swift converter
@@ -2434,22 +2454,33 @@ application target, simulator only, all library code in packages. In suggested o
       `LanguageClient` are in the app's *Frameworks* phase and not among its
       `packageProductDependencies`, and Xcode links from the phase: `no such module
       'LanguageServerProtocol'`. A target's products are both lists now.
-   10. **Generated asset symbols.** `Color.amber`, `NSColor.folderBlue`,
-      `ImageResource.gitHubIcon`: `ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS` is `YES`
-      by Xcode's default and `…_SWIFT_ASSET_SYMBOL_EXTENSIONS` is `YES` here, and actool
-      writes `GeneratedAssetSymbols.swift`, which the app's compile takes as a source.
-      Semel generates none, so any app on Xcode 15's defaults that names an asset by
-      symbol fails here. Checked by hand: `actool … --generate-swift-asset-symbols <file>
-      --generate-swift-asset-symbol-extensions YES` writes the file and compiles nothing,
-      Xcode's separate step, and the text is a function of the catalog. *Design sketch:*
-      `AssetCatalogCompiler` gains a `swiftAssetSymbols` output from a second actool run
-      over the same catalogs (or a sibling node over the same inputs, since the compile
-      must not wait for the catalog's compile), with `bundleIdentifier`, the frameworks
-      and the extensions flag as literals from the settings; the emitter wires it into the
-      target's compiler as `GeneratedAssetSymbols.swift` among `extraSourceFiles` when the
-      setting holds; a package target's catalog gets the same (SwiftPM generates them too,
-      under `#if SWIFT_PACKAGE`, with `Bundle.module`). Stepped around for the map by
-      putting actool's file in the scratch clone's synchronized folder.
+   10. ~~**Generated asset symbols.**~~ Done (2026-10-01). `Color.amber`,
+      `NSColor.folderBlue`, `ImageResource.gitHubIcon`: `ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS`
+      is `YES` by Xcode's default (`AssetCatalogCompiler.xcspec`) and
+      `…_SWIFT_ASSET_SYMBOL_EXTENSIONS` is `YES` here, and actool writes
+      `GeneratedAssetSymbols.swift`, which the app's compile takes as a source.
+      `AssetCatalogCompiler` (v4) publishes it on a new port, `swiftAssetSymbols`. Not from
+      the compile's own run, as first planned: on Xcode 26.6 actool given `--bundle-identifier`
+      with `--generate-swift-asset-symbols` writes the Swift and compiles nothing — no
+      `Assets.car`, no partial plist — and without it compiles and writes no Swift, so the
+      node makes a second run over the same sandboxed catalogs once the compile succeeds,
+      as Xcode's own `GenerateAssetSymbols` step is separate. The text is a function of the
+      catalogs (B-89's invariant, checked over two runs with the colors made in opposite
+      orders: symbols in name order, no path in it), so it is published as written; when
+      the `Assets.car` of the compile cannot be made canonical, or either run fails, the port
+      carries the error. The emitter (v17) writes the symbol literals from the settings —
+      `ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS`, `…_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS`
+      (default `NO`), `…_GENERATE_ASSET_SYMBOL_FRAMEWORKS` (default `SwiftUI UIKit AppKit`;
+      actool honours one framework alone and reads any longer list as all three) and
+      `…_BUNDLE_IDENTIFIER` (default the product's) — and wires the port into the target's
+      compiler as `'GeneratedAssetSymbols.swift'` among `extraSourceFiles`, so every Xcode
+      target with a catalog compiles one, as Xcode does. Pinned by
+      `AssetCatalogCompilerTests` (the second run's arguments, the port, an error when the
+      catalog is not published, and the real actool over two orders), `XcodeFormulaEmitterTests`,
+      and end to end by `swift-binary-target-app`, whose app prints its catalog's `Amber`
+      through `NSColor.amber`. *Not built:* a package target's catalog (Xcode generates
+      symbols for one too, under `#if SWIFT_PACKAGE` with `Bundle.module`); the Swift
+      converter compiles none.
    11. ~~**A dependency conditional on the platform.**~~ Done. LanguageClient depends on
       ProcessEnv `.when(platforms: [.macOS])`; the condition, an object among the strings
       of `dump-package`'s array, failed the decoding of the whole entry, so the dependency
@@ -2458,17 +2489,28 @@ application target, simulator only, all library code in packages. In suggested o
       hold — the conversion asks for the platform when a dependency is conditional, as for
       a setting; one conditional on a configuration alone is kept. `SwiftFormulaConverterTests`,
       and `swift-c-package`'s `Zipper`, which depends on `Squeeze` on macOS alone.
-   12. **A static framework is embedded.** The app then compiled and linked (887 nodes), and
-      the signer failed on `Contents/Frameworks/CodeLanguages_Container.framework: Is a
-      directory`: the slice is a framework whose binary is an archive, linked into the
-      executable by `-framework` as it should be, and embedded as well, which Xcode does not
-      do for a static framework. *Design sketch:* `XCFrameworkSliceSelector` reads the
-      slice's binary (an `!<arch>` archive, or a fat file of them) and publishes a fourth
-      tree, `embeddedFrameworks`, the dynamic ones alone; the Swift converter defines
-      `embedded_<Product>()` over them beside `frameworks_<Product>()`, which compiles and
-      links against both; the emitter lays `embedded_P()` under `Contents/Frameworks`.
-      Stepped around for the map by leaving CodeEditSourceEditor's frameworks out of the
-      bundle in a build of Semel that was not committed.
+   12. ~~**A static framework is embedded.**~~ Done (2026-10-01). The app compiled and
+      linked (887 nodes), and the signer failed on
+      `Contents/Frameworks/CodeLanguages_Container.framework: Is a directory`: the slice is
+      a framework whose binary is an archive, linked into the executable by `-framework` as
+      it should be, and embedded as well, which Xcode does not do for a static framework.
+      `XCFrameworkSliceSelector` (v4) now reads the framework's binary — the plist's
+      `BinaryPath`, else `<Name>.framework/<Name>` — by its first bytes, and for a fat file
+      each architecture's where the header puts them (`DataObjectStore.bytes(ofHash:at:count:)`,
+      a few reads rather than the 375 MB), and decides the slice's kind, typed
+      (`XCFrameworkLibraryKind`: dynamic framework, static framework, static library;
+      `FrameworkBinary`: an `!<arch>` archive or relocatable object is static, a Mach-O
+      dylib dynamic, a fat file of mixed kinds or anything else an error naming the
+      binary). It publishes a fourth tree, `embeddedFrameworks`, the slice when it is a
+      dynamic framework and empty otherwise; the Swift converter (v19) defines
+      `embedded_<Product>()` over them beside `frameworks_<Product>()`, which still
+      compiles and links against every framework (`-F`, `-framework`); the emitter lays
+      `embedded_P()` under `Contents/Frameworks`, so a static framework is linked in and
+      neither embedded nor signed. Pinned by `XCFrameworkSliceSelectorTests` (a hand-made
+      fat-of-archives framework slice, `BinaryPath`, an executable and a missing binary as
+      errors, the magic of `libtool -static` and `clang -dynamiclib` output),
+      `SwiftFormulaConverterTests` and `XcodeFormulaEmitterTests` (the placement, Mac and
+      iOS).
    13. ~~**A copy into the products folder.**~~ Done, before it could bite. The extension
       point goes to `dstSubfolderSpec = 16` (the products folder) at
       `$(EXTENSIONS_FOLDER_PATH)`, which the emitter took for a place outside the bundle
@@ -2549,9 +2591,10 @@ application target, simulator only, all library code in packages. In suggested o
    the `(null) in Sources` build files; the SwiftLint `.artifactbundle`, which `prepare`
    vendors (117 MB) and the build pushes though no node reads it, and swift-syntax and
    swift-snapshot-testing, vendored for a test target; the 375 MB static framework, pushed
-   and stored. On a fresh home a cold build (push included) is about two minutes, 906
-   nodes; the tree-sitter C compiled with nothing new. Not in the roster: it does not build
-   without 5, 10 and 12.
+   and stored. On a fresh home a cold build (push included) is about two minutes; the
+   tree-sitter C compiled with nothing new. Nothing stops it short of a signed export that
+   verifies; not in the roster yet — an entry would compare four builds over 808 MB of
+   vendored packages.
 
    *Left from the comparison with Xcode's bundle* (2026-10-01): Xcode embeds
    `ZIPFoundation_ZIPFoundation.bundle` holding only `PrivacyInfo.xcprivacy`, from a
@@ -2560,7 +2603,8 @@ application target, simulator only, all library code in packages. In suggested o
    `CodeEditKit`, a `.dynamic` product, as a framework under `Contents/Frameworks` where
    Semel links every package product statically, as decided. For item 12: Xcode does embed
    `CodeLanguages_Container.framework`, but as a 33 KB arm64 dynamic library in place of
-   the archive, with its `Info.plist`, and no executable of the app loads it. Xcode's own
+   the archive, with its `Info.plist`, and no executable of the app loads it; Semel embeds
+   nothing for a static framework, which loses nothing that runs. Xcode's own
    Debug build splits the executable into `CodeEdit` and `CodeEdit.debug.dylib` (and a
    `__preview.dylib`), its previews' layout, which Semel does not copy. Xcode signs a Debug
    build it is allowed to sign with `com.apple.security.get-task-allow`, which Semel does

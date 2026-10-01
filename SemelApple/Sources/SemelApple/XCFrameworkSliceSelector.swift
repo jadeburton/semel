@@ -72,10 +72,26 @@ struct XCFrameworkSlice: Equatable {
     /// A static library's headers, relative to the slice's folder; nil for a framework,
     /// which carries its own.
     let headersPath: String?
+    /// The binary, relative to the slice's folder, as `xcodebuild -create-xcframework`
+    /// records it: `Sparkle.framework/Versions/B/Sparkle`. Nil in a plist that does not say.
+    let binaryPath: String?
 
     /// A framework is a folder with its binary, its headers and its module map inside; a
     /// library slice is the one file, with its headers beside it.
     var isFramework: Bool { libraryPath.hasSuffix(".framework") }
+
+    /// Where a framework slice's binary may be, relative to the slice's folder, in the order
+    /// to look: the plist's `BinaryPath`, then the framework's name inside it, which every
+    /// layout has — the binary itself in a shallow framework, a link to it in a versioned
+    /// one, and the one place left when `BinaryPath` names it through `Versions/Current`,
+    /// a folder link the walk does not read through.
+    var frameworkBinaryPaths: [String] {
+        let byName = "\(libraryPath)/\((libraryPath as NSString).deletingPathExtension)"
+        guard let binaryPath, binaryPath != byName else {
+            return [byName]
+        }
+        return [binaryPath, byName]
+    }
 
     /// Every slice the plist lists, in its order.
     static func slices(inInfoPlist data: Data) throws -> [XCFrameworkSlice] {
@@ -94,7 +110,8 @@ struct XCFrameworkSlice: Equatable {
                                     platform:      XCFrameworkPlatform(platform: platform,
                                                                        variant: library["SupportedPlatformVariant"] as? String),
                                     architectures: library["SupportedArchitectures"] as? [String] ?? [],
-                                    headersPath:   library["HeadersPath"] as? String)
+                                    headersPath:   library["HeadersPath"] as? String,
+                                    binaryPath:    library["BinaryPath"] as? String)
         }
     }
 
@@ -124,6 +141,10 @@ enum XCFrameworkSliceError: Error, Equatable, CustomStringConvertible {
     /// A library slice that is not a static archive: a dynamic library outside a framework
     /// would have to be embedded and found by an install name nothing here sets.
     case unsupportedLibrary(String)
+    /// A framework slice with no file where its binary should be.
+    case noFrameworkBinary(String)
+    /// A framework slice whose binary is neither a dynamic library nor an archive.
+    case unrecognisedFrameworkBinary(String, FrameworkBinary.Unrecognised)
 
     var description: String {
         switch self {
@@ -138,6 +159,30 @@ enum XCFrameworkSliceError: Error, Equatable, CustomStringConvertible {
             return "its slice \(slice) has no \(architecture), only \(architectures.joined(separator: ", "))"
         case .unsupportedLibrary(let path):
             return "its slice's library \(path) is neither a framework nor a static archive, which is all that is linked here"
+        case .noFrameworkBinary(let path):
+            return "its slice's framework has no binary at \(path)"
+        case .unrecognisedFrameworkBinary(let path, let reason):
+            return "its slice's framework binary \(path): \(reason)"
+        }
+    }
+}
+
+/// What a chosen slice is, which decides the trees it fills (B-77 item 3, 12).
+enum XCFrameworkLibraryKind: Equatable {
+    /// A framework whose binary is a dynamic library: compiled and linked against, and
+    /// embedded in the bundle, where the executable's runpath finds it.
+    case dynamicFramework
+    /// A framework whose binary is an archive: compiled and linked against — `-F` finds its
+    /// headers and module map, `-framework` links the archive in — and embedded nowhere,
+    /// as Xcode embeds no static framework.
+    case staticFramework
+    /// A static library and its headers: linked as an archive, and embedded nowhere.
+    case staticLibrary
+
+    init(framework binary: FrameworkBinary) {
+        switch binary {
+        case .dynamicLibrary: self = .dynamicFramework
+        case .staticArchive:  self = .staticFramework
         }
     }
 }
@@ -168,10 +213,13 @@ struct XCFrameworkSliceSelectorConfiguration {
 
 /// Picks the slice of one `.xcframework` for the platform being built and publishes it as
 /// trees: a framework slice on `frameworks`, under its own name (`Sparkle.framework/…`),
-/// which is what a compiler's `-F` and a linker's `-framework` find and what a bundle
-/// embeds; a static library slice's archive on `libraries` and its headers on `headers`,
-/// which a link and an import take instead, and nothing embeds. The ports a slice does not
-/// fill carry the empty tree, so a formula wires all three without knowing which it is.
+/// which is what a compiler's `-F` and a linker's `-framework` find; the same tree on
+/// `embeddedFrameworks` when the framework's binary is a dynamic library, which is what a
+/// bundle embeds — a static framework's archive is linked into the executable and loaded
+/// from nowhere, so it is not (`XCFrameworkLibraryKind`, read from the binary's first bytes);
+/// a static library slice's archive on `libraries` and its headers on `headers`, which a
+/// link and an import take instead, and nothing embeds. The ports a slice does not fill
+/// carry the empty tree, so a formula wires all four without knowing which it is.
 ///
 /// The slice is read from its folder's subtree manifest (B-135), and each file keeps the
 /// mode it was pushed with: a framework holds executables (Sparkle's `Autoupdate`, its
@@ -181,7 +229,9 @@ public struct XCFrameworkSliceSelector: Node {
 
     /// 2: a framework's symbolic links are links in its tree, where they were copies (B-77).
     /// 3: the slice's folder is asked for as a tree, where it was walked (B-135).
-    public static let implementationVersion = 3
+    /// 4: a framework's binary is read for its kind, and only a dynamic one is published on
+    /// the new `embeddedFrameworks` (B-77 item 3, 12).
+    public static let implementationVersion = 4
 
     // MARK: Ports
 
@@ -197,8 +247,13 @@ public struct XCFrameworkSliceSelector: Node {
     static let sliceFileMetadata = "sliceFileMetadata"
 
     static let frameworks = "frameworks"
+    /// The frameworks a bundle embeds: `frameworks` when the slice is a dynamic framework,
+    /// and empty otherwise.
+    static let embeddedFrameworks = "embeddedFrameworks"
     static let libraries = "libraries"
     static let headers = "headers"
+
+    static let outputPorts = [frameworks, embeddedFrameworks, libraries, headers]
 
     /// The `.xcframework` folder in the input file system: what the slice folders the
     /// plist names are relative to.
@@ -218,7 +273,7 @@ public struct XCFrameworkSliceSelector: Node {
             .dynamic(sliceFiles),
             .dynamic(sliceFileMetadata),
         ],
-        outputPorts: [frameworks, libraries, headers]
+        outputPorts: outputPorts
     )
 
     // MARK: Processing
@@ -293,8 +348,31 @@ public struct XCFrameworkSliceSelector: Node {
               Set(fileSpecs.keys).isSubset(of: Set(files.keys)),
               Set(fileSpecs.keys).isSubset(of: Set(metadata.keys)) else {
             let walking = NodeValue.noValue(reason: .pending)
-            return .init(outputValues: [Self.frameworks: walking, Self.libraries: walking, Self.headers: walking],
+            return .init(outputValues: Dictionary(uniqueKeysWithValues: Self.outputPorts.map { ($0, walking) }),
                          inputWireSpecs: specs)
+        }
+
+        // What the slice is: a library by its plist, a framework by its binary's first
+        // bytes, read where the store holds them rather than whole.
+        let kind: XCFrameworkLibraryKind
+        if slice.isFramework {
+            let candidates = slice.frameworkBinaryPaths
+            guard let binaryPath = candidates.first(where: { files[(sliceFolder / $0).string] != nil }),
+                  let binary = files[(sliceFolder / binaryPath).string] else {
+                return try failed("\(xcframework): \(XCFrameworkSliceError.noFrameworkBinary(candidates.joined(separator: " or ")))",
+                                  inputWireSpecs: specs)
+            }
+            let hash = try binary.expectValue()
+            do {
+                kind = XCFrameworkLibraryKind(framework: try FrameworkBinary.kind { offset, count in
+                    DataObjectStore.shared.bytes(ofHash: hash, at: offset, count: count)
+                })
+            } catch let unrecognised as FrameworkBinary.Unrecognised {
+                let error = XCFrameworkSliceError.unrecognisedFrameworkBinary(binaryPath, unrecognised)
+                return try failed("\(xcframework): \(error)", inputWireSpecs: specs)
+            }
+        } else {
+            kind = .staticLibrary
         }
 
         // Each file under where it goes: a framework under its own name, a library under
@@ -338,16 +416,23 @@ public struct XCFrameworkSliceSelector: Node {
                 headerTree = try tree(under: (sliceFolder / headersPath).string, placedUnder: .empty)
             }
         }
-        return .init(outputValues: [Self.frameworks: .value(try frameworkTree.toJSON().intern()),
-                                    Self.libraries:  .value(try libraryTree.toJSON().intern()),
-                                    Self.headers:    .value(try headerTree.toJSON().intern())],
+        let frameworksValue = NodeValue.value(try frameworkTree.toJSON().intern())
+        let embedded = kind == .dynamicFramework ? frameworksValue : .value(try TreeManifest(entries: []).toJSON().intern())
+        return .init(outputValues: [Self.frameworks:         frameworksValue,
+                                    Self.embeddedFrameworks: embedded,
+                                    Self.libraries:          .value(try libraryTree.toJSON().intern()),
+                                    Self.headers:            .value(try headerTree.toJSON().intern())],
                      inputWireSpecs: specs)
     }
 
-    /// An error on every port, and no walk: nothing chosen is nothing to read.
-    private func failed(_ message: String) throws -> ProcessOutput {
+    /// An error on every port. With no walk, when nothing was chosen and so nothing is to be
+    /// read; with the walk's specs, when what was read is what failed, so that its wires
+    /// stay and a change to the slice runs the node again.
+    private func failed(_ message: String,
+                        inputWireSpecs: [String: [String: GraphSpecNode]] = [Self.sliceFolders: [:], Self.sliceFiles: [:],
+                                                                             Self.sliceFileMetadata: [:]]) throws -> ProcessOutput {
         let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "XCFrameworkSliceSelector: \(message)".intern()))
-        return .init(outputValues: [Self.frameworks: error, Self.libraries: error, Self.headers: error],
-                     inputWireSpecs: [Self.sliceFolders: [:], Self.sliceFiles: [:], Self.sliceFileMetadata: [:]])
+        return .init(outputValues: Dictionary(uniqueKeysWithValues: Self.outputPorts.map { ($0, error) }),
+                     inputWireSpecs: inputWireSpecs)
     }
 }

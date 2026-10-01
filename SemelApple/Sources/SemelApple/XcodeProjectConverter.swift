@@ -59,8 +59,12 @@ public struct XcodeProjectConverter: Node {
     /// stand for, and the `INFOPLIST_KEY_*` settings reach a plist only when it is
     /// generated (B-77); at 16, a project's own plist that is not generated keeps the
     /// identity and version it states, as Xcode's does, and a Mac bundle embeds its
-    /// packages' resource bundles laid out as Mac bundles (B-77).
-    public static let implementationVersion = 16
+    /// packages' resource bundles laid out as Mac bundles (B-77); at 17, a target's asset
+    /// catalogs write its Swift asset symbols, which its compiler takes as
+    /// `GeneratedAssetSymbols.swift`, and a bundle embeds each package product's
+    /// `embedded_<Product>()` — its dynamic frameworks — where it embedded every framework
+    /// (B-77 item 3, 10 and 12).
+    public static let implementationVersion = 17
 
     // MARK: Ports
 

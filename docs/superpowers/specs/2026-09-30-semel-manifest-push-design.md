@@ -80,6 +80,21 @@ transaction (`Folder.refreshMarkedContentRoot`), so no reader sees the one witho
 other. `ManifestPushScaleTests.test_aPushBeforeTheLastIsFoldedStillSendsWhatDiffers` pins
 it, and fails without the marks.
 
+### A dot-named file the server holds is folded (B-77 item 5, 2026-10-01)
+
+A walk of the disk leaves every dot-name out, but `push` of a dot-named file's exact path —
+and so `build`'s follow of one a formula names, CodeEdit's `.all-contributorsrc` — pushes it,
+and from then on it is in its folder's root on the engine's side. Folded without it, the
+disk's root would differ from the engine's for that folder and every one above it on every
+push, and the comparison of children would report it as gone from disk. So `contentRoots`
+answers, for each folder, the dot-named files it holds a value for (`HeldFolderRoot.hiddenFiles`,
+one more query in the same snapshot, a range over the index on `(parentNodeID, name)`), the
+client asks for the roots *before* it reads the disk, and `FolderOnDisk.read` folds each of
+those names it finds on disk as any file. The rule is "a dot-file that is in the graph is in
+the root", on both sides; a walk still discovers no dot-name, and `prepare`'s fold of a
+vendored folder is told of none, so a lock is what it was. `ProtocolVersion` 21; the roots
+cost three node selects where they cost two.
+
 ## `push` stays additive
 
 A file the server holds and the disk does not — deleted, or its folder emptied — is not

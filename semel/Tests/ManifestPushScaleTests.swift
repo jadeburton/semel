@@ -239,6 +239,33 @@ final class ManifestPushScaleTests: XCTestCase {
                        "the folder link itself did not change")
     }
 
+    // MARK: - A dot-named file a formula names (B-77 item 5)
+
+    /// A push of the folder passes a new dot-named file over; `push` naming it exactly
+    /// sends it. From then on the folder's push folds it as the server does: unchanged,
+    /// nothing is sent and nothing is said to be missing; edited, it is sent again; gone
+    /// from disk, it is reported and kept as any pushed file is.
+    func test_aDotNamedFilePushedByItsPathIsComparedByTheFolderFromThenOn() throws {
+        try write("tree/group0/.all-contributorsrc", "{\"contributors\": []}\n")
+        XCTAssertEqual(pushedFiles(pushTree()).filter { $0.contains("/.") }, [], "a walk leaves dot-names out")
+
+        lines = []
+        interpreter.handleCommand("push tree/group0/.all-contributorsrc")
+        XCTAssertEqual(pushedFiles(connection.takeSent()), ["tree/group0/.all-contributorsrc"], "\(lines)")
+        engine.waitUntilIdleBlocking()
+
+        XCTAssertEqual(pushTree(), [.contentRoots(path: "tree"), .beginBatch, .endBatch])
+        XCTAssertFalse(lines.contains { $0.hasPrefix("Not on disk") }, "\(lines)")
+
+        try write("tree/group0/.all-contributorsrc", "{\"contributors\": [\"someone\"]}\n")
+        XCTAssertEqual(pushedFiles(pushTree()), ["tree/group0/.all-contributorsrc"])
+
+        try FileManager.default.removeItem(at: externalRoot.appendingPathComponent("tree/group0/.all-contributorsrc"))
+        XCTAssertEqual(pushedFiles(pushTree()), [])
+        XCTAssertTrue(lines.contains("Not on disk, kept: 1 file (push only adds; rm removes them): tree/group0/.all-contributorsrc"),
+                      "\(lines)")
+    }
+
     /// Deleted on disk, the file stays in the graph, and the push says so; nothing is sent
     /// for it.
     func test_aFileGoneFromDiskIsReportedAndKept() throws {
