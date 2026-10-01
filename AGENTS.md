@@ -339,9 +339,13 @@ can be folded: a literal default — `false`, `0`, `nil` — is fine, and so is 
 names something read per call, such as `CommandInterpreter.init`'s `baseDirectory: String =
 FileManager.default.currentDirectoryPath`. A default that names a *constant* is not.
 
-**Force unwraps are being phased out.** `try!` is at zero; keep it there. Use
-`node.requireID()` rather than `node.id!`. A force unwrap is only acceptable where failure
-is genuinely impossible, and then it wants a comment saying why.
+**No force unwraps, force tries or force casts.** SwiftLint's `force_unwrapping`,
+`force_try` and `force_cast` are on under `--strict`, with no exemptions. A state the code
+claims impossible is said with a `guard` or a throwing accessor and a typed error naming
+what was missing: `node.requireID()` rather than `node.id!`, `requireName()`, a
+file-system node's throwing `path`, `ProcessInput.firstWire(onRequiredPort:)`. Where a
+crash really is the right outcome, go through `FatalErrors.fail` rather than a bare `!`.
+In tests, `try XCTUnwrap(…)` and a `throws` test method.
 
 ## Deliberate choices — do not "fix" these
 

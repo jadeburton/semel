@@ -9,11 +9,12 @@
 # deliberately off: on a codebase this size they produce the bulk of the noise and none of
 # the value, and a wall of warnings nobody triages trains people to ignore the tool.
 #
-# force_unwrapping, force_try and force_cast are also off. They are common and deliberate
-# here: `insertOrGetID` force-unwraps a SELECT that cannot miss, and
-# `thisNode.properties["path"]!` is load-bearing in the file-system node types. Turning
-# them on would mean a large exemption list or a large argument, neither of which is the
-# point of a linter.
+# force_unwrapping, force_try and force_cast are on, with no exemptions. A force is a
+# decision to crash on a state the code claims is impossible, made silently, at a place a
+# reader has to recognise as one. The code says such a state instead: a `guard` or a
+# throwing accessor with a typed error naming what was missing (`NodeRecord.requireID()`,
+# the file-system nodes' `path`), and where a crash really is the right outcome, the
+# explicit fatal path (`FatalErrors`) rather than a bare `!`.
 #
 # CI runs `swiftlint --strict`, so every finding fails the build. That is the right mode for
 # a set this small: a report nobody reads is the failure mode this file exists to avoid.
@@ -37,6 +38,10 @@ only_rules:
   # Code that says nothing.
   - implicit_optional_initialization
   - unneeded_break_in_switch
+  # Crashing on a state the code claims impossible, instead of saying it.
+  - force_unwrapping
+  - force_try
+  - force_cast
 
 # Two other lists name the same packages by hand and must be kept in step with this one:
 # `Semel.xcworkspace/contents.xcworkspacedata` (the FileRefs) and
