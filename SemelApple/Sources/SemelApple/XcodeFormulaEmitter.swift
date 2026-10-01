@@ -822,12 +822,9 @@ struct XcodeFormulaEmitter {
         // carries the arrays, dictionaries and booleans a plist has. The build settings a
         // `$(VAR)` may name travel the same way, every one the target evaluated: the
         // project's plist may name any of them, and the formula cannot read the plist.
-        let keysJSON = try Self.json(identity.generatedInfoPlistKeys(settings: settings))
-        let identityValues = ["PRODUCT_NAME": identity.productName,
-                              "PRODUCT_BUNDLE_IDENTIFIER": identity.bundleIdentifier,
-                              "PRODUCT_MODULE_NAME": identity.moduleName,
-                              "TARGET_NAME": target.name]
-        let settingsJSON = try Self.json(settings.values.merging(identityValues) { _, identityValue in identityValue })
+        let plistProperties = try Self.infoPlistProperties(identity: identity, settings: settings, targetName: target.name)
+        let keysJSON        = plistProperties[InfoPlistBuilder.keysProperty] ?? "{}"
+        let settingsJSON    = plistProperties[InfoPlistBuilder.buildSettingsProperty] ?? "{}"
         let base: String
         if let infoPlist = settings["INFOPLIST_FILE"], !infoPlist.isEmpty {
             base = "        base: ['base': StaticFile(path: \(Self.quoted("\(build.projectFolder)/\(infoPlist)"))).output],\n"
@@ -876,8 +873,12 @@ struct XcodeFormulaEmitter {
         // The resource bundles of the packages the target links, each under its own
         // `<Package>_<Target>.bundle/` (B-77): the package's formula carries them as one
         // tree per product, empty when no target has resources, so every product is named.
+        // A Mac bundle's are laid out as Mac bundles, with `Contents/Resources/` and an
+        // Info.plist, as Xcode lays them out.
         for product in target.packageProducts.map(\.product).sorted() {
-            bundleTrees.append("'\(FormulaIdentifier.bundlesFunc(forProduct: product))': \(FormulaIdentifier.bundlesFunc(forProduct: product))().files")
+            let bundles = layout.isShallow ? FormulaIdentifier.bundlesFunc(forProduct: product)
+                                           : FormulaIdentifier.macBundlesFunc(forProduct: product)
+            bundleTrees.append("'\(bundles)': \(bundles)().files")
         }
 
         if !bundleTrees.isEmpty {
@@ -927,6 +928,20 @@ struct XcodeFormulaEmitter {
     static func json(_ dictionary: [String: Any]) throws -> String {
         let data = try JSONSerialization.data(withJSONObject: dictionary, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self).replacingOccurrences(of: "'", with: "\\u0027")
+    }
+
+    /// What a target's `InfoPlistBuilder` is given besides its base and partials: the keys
+    /// Xcode's processing supplies, and every setting a `$(VAR)` in the project's file may
+    /// name, each a JSON dictionary.
+    static func infoPlistProperties(identity: TargetIdentity, settings: XcodeBuildSettings,
+                                    targetName: String) throws -> [String: String] {
+        let identityValues = ["PRODUCT_NAME": identity.productName,
+                              "PRODUCT_BUNDLE_IDENTIFIER": identity.bundleIdentifier,
+                              "PRODUCT_MODULE_NAME": identity.moduleName,
+                              "TARGET_NAME": targetName]
+        let buildSettings = settings.values.merging(identityValues) { _, identityValue in identityValue }
+        return [InfoPlistBuilder.keysProperty:          try json(identity.generatedInfoPlistKeys(settings: settings)),
+                InfoPlistBuilder.buildSettingsProperty: try json(buildSettings)]
     }
 
     static func isInsideCatalog(_ relativePath: String) -> Bool {
@@ -1328,18 +1343,26 @@ struct TargetIdentity {
     /// The plist Xcode generates when `GENERATE_INFOPLIST_FILE` is set — the keys a bundle
     /// cannot install without, and every `INFOPLIST_KEY_*` with its prefix stripped —
     /// typed as a plist types them, for the emitter to write as JSON.
+    ///
+    /// Over a project's own file that is not generated, Xcode adds the platform's keys and
+    /// leaves the bundle's identity and version to the file: CodeEdit's says
+    /// `CFBundleShortVersionString = 0.3.6` beside `MARKETING_VERSION = "Change in
+    /// Info.plist"`, and its app and extension come out of Xcode as 0.3.6 (B-77).
     func generatedInfoPlistKeys(settings: XcodeBuildSettings) -> [String: Any] {
-        var keys: [String: Any] = [
-            "CFBundleDevelopmentRegion": settings["DEVELOPMENT_LANGUAGE"] ?? "en",
-            "CFBundleExecutable": productName,
-            "CFBundleIdentifier": bundleIdentifier,
-            "CFBundleInfoDictionaryVersion": "6.0",
-            "CFBundleName": productName,
-            "CFBundlePackageType": packageType,
-            "CFBundleShortVersionString": settings["MARKETING_VERSION"] ?? "1.0",
-            "CFBundleVersion": settings["CURRENT_PROJECT_VERSION"] ?? "1",
-            "DTPlatformName": sdk,
-        ]
+        var keys: [String: Any] = ["DTPlatformName": sdk]
+        let hasOwnFile = !(settings["INFOPLIST_FILE"] ?? "").isEmpty
+        if settings["GENERATE_INFOPLIST_FILE"] == "YES" || !hasOwnFile {
+            keys.merge([
+                "CFBundleDevelopmentRegion": settings["DEVELOPMENT_LANGUAGE"] ?? "en",
+                "CFBundleExecutable": productName,
+                "CFBundleIdentifier": bundleIdentifier,
+                "CFBundleInfoDictionaryVersion": "6.0",
+                "CFBundleName": productName,
+                "CFBundlePackageType": packageType,
+                "CFBundleShortVersionString": settings["MARKETING_VERSION"] ?? "1.0",
+                "CFBundleVersion": settings["CURRENT_PROJECT_VERSION"] ?? "1",
+            ]) { _, identity in identity }
+        }
         // The deployment target under the key each platform reads, and the device
         // families only where there are any: a Mac bundle has neither `UIDeviceFamily`
         // nor `MinimumOSVersion`, and a stray one is what LaunchServices refuses.
