@@ -2293,9 +2293,16 @@ application target, simulator only, all library code in packages. In suggested o
    unsigned bundle lacks. (1's residual, a framework's links as copies, is done: links
    travel in trees.)
 3. *CodeEdit* — `open`; the first slice landed (2026-10-01): the Mac app compiles, links,
-   is signed, exports and stays up when launched, once three things are stepped around by
-   hand (5, 10 and 12 below, each open), and it opens its welcome window as Xcode's build
-   of the same commit does (16). Pinned at `fa2aebd86373211c78626074b53ab75010767575` (main,
+   is signed, exports and stays up when launched, and it opens its welcome window as Xcode's
+   build of the same commit does (16). Since the second slice the same day (5, 10 and 12
+   below) it does so from a fresh clone with nothing stepped around: `prepare --platform
+   macos`, then `build`, with no errors, the build following `.all-contributorsrc` by its
+   path — and the export verifies with `codesign --verify --deep --strict`, holds
+   `Sparkle.framework` alone under `Contents/Frameworks` (the grammars linked into the
+   executable, 290 `tree_sitter_` symbols, no load command for them), and
+   `.all-contributorsrc` and `Assets.car` under `Contents/Resources`; launched by `open`, it
+   stays up. A second `build` of the unchanged clone pushes all 8,635 files as unchanged,
+   the dot-file among them, and settles with no work. Pinned at `fa2aebd86373211c78626074b53ab75010767575` (main,
    2026-08-18, "macOS Tahoe Navigator, Inspector, and Utility Area"). The clone is not what
    this entry said from memory: the tree-sitter grammars are not C targets at all.
 
@@ -2461,7 +2468,7 @@ application target, simulator only, all library code in packages. In suggested o
       catalogs (B-89's invariant, checked over two runs with the colors made in opposite
       orders: symbols in name order, no path in it), so it is published as written; when
       the `Assets.car` of the compile cannot be made canonical, or either run fails, the port
-      carries the error. The emitter (v16) writes the symbol literals from the settings —
+      carries the error. The emitter (v17) writes the symbol literals from the settings —
       `ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS`, `…_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS`
       (default `NO`), `…_GENERATE_ASSET_SYMBOL_FRAMEWORKS` (default `SwiftUI UIKit AppKit`;
       actool honours one framework alone and reads any longer list as all three) and
@@ -2495,7 +2502,7 @@ application target, simulator only, all library code in packages. In suggested o
       `FrameworkBinary`: an `!<arch>` archive or relocatable object is static, a Mach-O
       dylib dynamic, a fat file of mixed kinds or anything else an error naming the
       binary). It publishes a fourth tree, `embeddedFrameworks`, the slice when it is a
-      dynamic framework and empty otherwise; the Swift converter (v18) defines
+      dynamic framework and empty otherwise; the Swift converter (v19) defines
       `embedded_<Product>()` over them beside `frameworks_<Product>()`, which still
       compiles and links against every framework (`-F`, `-framework`); the emitter lays
       `embedded_P()` under `Contents/Frameworks`, so a static framework is linked in and
@@ -2584,9 +2591,10 @@ application target, simulator only, all library code in packages. In suggested o
    the `(null) in Sources` build files; the SwiftLint `.artifactbundle`, which `prepare`
    vendors (117 MB) and the build pushes though no node reads it, and swift-syntax and
    swift-snapshot-testing, vendored for a test target; the 375 MB static framework, pushed
-   and stored. On a fresh home a cold build (push included) is about two minutes, 906
-   nodes; the tree-sitter C compiled with nothing new. Not in the roster: it does not build
-   without 5, 10 and 12.
+   and stored. On a fresh home a cold build (push included) is about two minutes; the
+   tree-sitter C compiled with nothing new. Nothing stops it short of a signed export that
+   verifies; not in the roster yet — an entry would compare four builds over 808 MB of
+   vendored packages.
 
    *Left from the comparison with Xcode's bundle* (2026-10-01): Xcode embeds
    `ZIPFoundation_ZIPFoundation.bundle` holding only `PrivacyInfo.xcprivacy`, from a
@@ -2595,7 +2603,8 @@ application target, simulator only, all library code in packages. In suggested o
    `CodeEditKit`, a `.dynamic` product, as a framework under `Contents/Frameworks` where
    Semel links every package product statically, as decided. For item 12: Xcode does embed
    `CodeLanguages_Container.framework`, but as a 33 KB arm64 dynamic library in place of
-   the archive, with its `Info.plist`, and no executable of the app loads it. Xcode's own
+   the archive, with its `Info.plist`, and no executable of the app loads it; Semel embeds
+   nothing for a static framework, which loses nothing that runs. Xcode's own
    Debug build splits the executable into `CodeEdit` and `CodeEdit.debug.dylib` (and a
    `__preview.dylib`), its previews' layout, which Semel does not copy. Xcode signs a Debug
    build it is allowed to sign with `com.apple.security.get-task-allow`, which Semel does
