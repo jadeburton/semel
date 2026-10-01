@@ -292,16 +292,22 @@ public struct NodeDataAccess: DataAccessType {
     /// The whole port rather than its kind, because a folder's manifest asks two questions
     /// of the same row — whether the child is pinned, and what its content hashes to — and
     /// the hash comes back in the row the kind was already read from.
+    ///
+    /// `CROSS JOIN` fixes the order, the folder's children outermost. With an equality on
+    /// each side and no statistics, the planner took the port's name instead — every row of
+    /// that port in the graph, each looked up in `Node` to test its parent — so one fold
+    /// read every file's port in the graph, and a push folding a new folder per path made
+    /// the cost of a tree grow with its square: a third of a cold push's database time.
     public func selectChildPorts(parentNodeID: ObjectID,
                                  nameSymbolID: ObjectID) throws -> [ObjectID: OutputPort] {
         try selecting { db in
             var result: [ObjectID: OutputPort] = [:]
             let rows = try Row.fetchAll(db, sql: """
                 SELECT p.nodeID AS nodeID, p.valueKind AS valueKind, p.dataObjectHash AS dataObjectHash
-                FROM OutputPort p
-                JOIN Node n ON n.id = p.nodeID
-                WHERE n.parentNodeID = ? AND p.nameSymbolID = ?
-                """, arguments: [parentNodeID, nameSymbolID])
+                FROM Node n
+                CROSS JOIN OutputPort p ON p.nodeID = n.id AND p.nameSymbolID = ?
+                WHERE n.parentNodeID = ?
+                """, arguments: [nameSymbolID, parentNodeID])
             for row in rows {
                 let raw: UInt8 = row["valueKind"]
                 guard let valueKind = OutputPort.ValueKind(rawValue: raw) else {
@@ -321,17 +327,18 @@ public struct NodeDataAccess: DataAccessType {
     /// name: `selectChildPorts` with the join's name column read instead of the id, for a
     /// caller that holds the children by name already — a folder folding its subtree
     /// manifest from its own manifest — and would otherwise read every child's row again
-    /// only to turn an id into a name.
+    /// only to turn an id into a name. Joined children first, for the reason
+    /// `selectChildPorts` is.
     public func selectChildPortsByName(parentNodeID: ObjectID,
                                        nameSymbolID: ObjectID) throws -> [String: OutputPort] {
         try selecting { db in
             var result: [String: OutputPort] = [:]
             let rows = try Row.fetchAll(db, sql: """
                 SELECT n.name AS name, p.nodeID AS nodeID, p.valueKind AS valueKind, p.dataObjectHash AS dataObjectHash
-                FROM OutputPort p
-                JOIN Node n ON n.id = p.nodeID
-                WHERE n.parentNodeID = ? AND p.nameSymbolID = ?
-                """, arguments: [parentNodeID, nameSymbolID])
+                FROM Node n
+                CROSS JOIN OutputPort p ON p.nodeID = n.id AND p.nameSymbolID = ?
+                WHERE n.parentNodeID = ?
+                """, arguments: [nameSymbolID, parentNodeID])
             for row in rows {
                 let raw: UInt8 = row["valueKind"]
                 guard let valueKind = OutputPort.ValueKind(rawValue: raw),
@@ -399,6 +406,10 @@ public struct NodeDataAccess: DataAccessType {
     /// Every row with a matching name comes back, not the first: a folder holding two
     /// children of one name is a graph the caller has to refuse, and it cannot refuse what
     /// it was not shown. Below such a pair the walk continues under both.
+    ///
+    /// `CROSS JOIN` puts the chain outermost, a lookup by id per step. Left to itself the
+    /// planner read every row of `Node` and kept those the chain named — a walk as costly
+    /// as the graph is large, once per file a push sends.
     public func selectPath(below ancestorNodeID: ObjectID,
                            names: [String],
                            portSymbolIDs: [ObjectID]) throws -> [NodePathStep] {
@@ -441,7 +452,7 @@ public struct NodeDataAccess: DataAccessType {
                        p.nodeID AS portNodeID, p.nameSymbolID AS portSymbolID,
                        p.valueKind AS portValueKind, p.dataObjectHash AS portDataObjectHash
                 FROM chain
-                JOIN Node n ON n.id = chain.nodeID
+                CROSS JOIN Node n ON n.id = chain.nodeID
                 LEFT JOIN OutputPort p ON p.nodeID = n.id AND \(portFilter)
                 ORDER BY chain.depth, n.id
                 """, arguments: StatementArguments(arguments))
