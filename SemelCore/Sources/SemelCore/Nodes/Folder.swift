@@ -61,9 +61,16 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// `contentRoot` carries the fold over a folder with nothing in it, which is a value
     /// like any other: an empty tree has a content hash, and it is the same hash wherever
     /// an empty tree stands. `subtreeManifest` likewise carries an empty tree's names.
+    ///
+    /// Folded over no children without reading any, because a folder being made has none:
+    /// its id is new, `Node` never issues an id twice, and so no row can name it as a
+    /// parent yet. A push makes every folder on the way to its files, and asking each one
+    /// for children it could not have was a query per port and kind per folder. The
+    /// children it then gets mark it (`markManifestDirty`), and the next pass folds it once
+    /// over all of them, however many files the push brought it.
     public func didCreate() throws -> ProcessOutput? {
-        .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest().toJSON().intern()),
-                             Self.contentRootOutputPort: .value(try buildContentRootDocument().intern()),
+        .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest(of: []).toJSON().intern()),
+                             Self.contentRootOutputPort: .value(try buildContentRootDocument(of: []).intern()),
                              Self.subtreeManifestOutputPort: .value(try FolderSubtreeManifest(entries: []).toJSON().intern()),
                              Self.pinnedOutputPort: try canBePinned() ? .noValue(reason: .initializing) : .value(""), // HACK
                              Self.symbolicLinkOutputPort: Self.notASymbolicLink],
@@ -513,11 +520,15 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// content root's count is: against the depth of the tree above a change of names.
     static let subtreeManifestRebuildCount = SharedCounter()
 
-    private func buildManifest() throws -> FolderManifest {
+    /// This folder's children, as a fold reads them. Summaries rather than whole nodes: a
+    /// manifest entry is a name and two flags, and decoding every child's properties to
+    /// produce that was most of the rebuild cost.
+    private func childSummaries() throws -> [NodeChildSummary] {
+        try database.node.selectChildSummaries(parentNodeID: try thisNode.requireID())
+    }
+
+    private func buildManifest(of children: [NodeChildSummary]) throws -> FolderManifest {
         Self.manifestRebuildCount.increment()
-        // Summaries rather than whole nodes: a manifest entry is a name and two flags, and
-        // decoding every child's properties to produce that was most of the rebuild cost.
-        let children = try database.node.selectChildSummaries(parentNodeID: try thisNode.requireID())
         let pinned   = try pinnedStates(of: children)
         // A subfolder's link, for a walk to know before it descends; a file's is on its
         // metadata, where what reads files looks.
@@ -538,9 +549,8 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// what that child's content is. A subfolder contributes its own root, which is how one
     /// hash comes to stand for a whole tree. `FolderContentRoot` states the format and the
     /// order; this supplies the lines.
-    private func buildContentRootDocument() throws -> String {
+    private func buildContentRootDocument(of children: [NodeChildSummary]) throws -> String {
         Self.contentRootRebuildCount.increment()
-        let children = try database.node.selectChildSummaries(parentNodeID: try thisNode.requireID())
         let content  = try contentStates(of: children)
         let (links, modes) = try symbolicLinkTargets(of: children)
 
@@ -605,8 +615,12 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
               let manifest: FolderManifest = try? TypeRegistry.decodeAndCast(encodedJSON: try manifestHash.resolveAsString()) else {
             throw NodeError.other(message: "the manifest of \(try path) cannot be read to fold its subtree manifest")
         }
-        let subtrees = try database.node.selectChildPortsByName(parentNodeID: try thisNode.requireID(),
+        // Only a subfolder carries a subtree manifest, so a folder of files asks for none.
+        var subtrees: [String: OutputPort] = [:]
+        if manifest.entries.contains(where: \.isFolder) {
+            subtrees = try database.node.selectChildPortsByName(parentNodeID: try thisNode.requireID(),
                                                                 nameSymbolID: Self.subtreeManifestOutputPort.asSymbolID())
+        }
 
         return FolderSubtreeManifest(entries: try manifest.entries.map { entry in
             var subtree: DataObjectHash?
@@ -629,7 +643,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         let parentNodeID = try thisNode.requireID()
 
         for (kind, portName) in [(Folder.kind,     Folder.contentRootOutputPort),
-                                 (StaticFile.kind, StaticFile.outputPort)] {
+                                 (StaticFile.kind, StaticFile.outputPort)] where Self.has(children, of: kind) {
             let ports = try database.node.selectChildPorts(parentNodeID: parentNodeID,
                                                            nameSymbolID: portName.asSymbolID())
             for child in children where child.kind == kind {
@@ -655,7 +669,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         var targets: [ObjectID: String] = [:]
         var modes:   [ObjectID: UInt16] = [:]
         for (kind, portName) in [(Folder.kind,     Folder.symbolicLinkOutputPort),
-                                 (StaticFile.kind, StaticFile.fileMetadataOutputPort)] {
+                                 (StaticFile.kind, StaticFile.fileMetadataOutputPort)] where Self.has(children, of: kind) {
             let ports = try database.node.selectChildPorts(parentNodeID: parentNodeID, nameSymbolID: portName.asSymbolID())
             var metadataByDocument: [DataObjectHash: (target: String?, mode: UInt16?)] = [:]
             for child in children where child.kind == kind {
@@ -696,7 +710,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         let parentNodeID = try thisNode.requireID()
 
         for (kind, portName) in [(Folder.kind,     Folder.pinnedOutputPort),
-                                 (StaticFile.kind, StaticFile.outputPort)] {
+                                 (StaticFile.kind, StaticFile.outputPort)] where Self.has(children, of: kind) {
             let ports = try database.node.selectChildPorts(parentNodeID: parentNodeID,
                                                            nameSymbolID: portName.asSymbolID())
             for child in children where child.kind == kind {
@@ -707,6 +721,14 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         }
 
         return result
+    }
+
+    /// Whether any of `children` is of `kind`: a port the fold reads per kind is read only
+    /// for a kind the folder holds, so a folder with no subfolders asks nothing about
+    /// subfolders, and a folder with no children — every folder as it is made — asks
+    /// nothing at all.
+    private static func has(_ children: [NodeChildSummary], of kind: UInt) -> Bool {
+        children.contains { $0.kind == kind }
     }
 
     // Folder works outside the cache system and therefore cannot use "process". It is a node with outputs, however.
@@ -722,7 +744,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// all.
     func refreshManifest() throws {
         try thisNode.writeToOutputPort(Self.folderManifestOutputPort,
-                                       value: .value(try buildManifest().toJSON().intern()))
+                                       value: .value(try buildManifest(of: childSummaries()).toJSON().intern()))
     }
 
     /// The fold over this folder's children, published as a hash.
@@ -734,7 +756,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     func refreshContentRoot() throws {
         let changed = try thisNode.writeToOutputPort(
             Self.contentRootOutputPort,
-            value: .value(try buildContentRootDocument().intern()))
+            value: .value(try buildContentRootDocument(of: childSummaries()).intern()))
 
         if changed, let parentNodeID = thisNode.parentNodeID {
             try Folder.markContentRootDirty(nodeID: parentNodeID)

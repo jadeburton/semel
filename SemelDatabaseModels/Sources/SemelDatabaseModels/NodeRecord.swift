@@ -256,30 +256,26 @@ public struct NodeDataAccess: DataAccessType {
     /// already left (B-95).
     public func countScheduled() throws -> Int {
         try selecting { db in
-            try NodeRecord.filter(NodeRecord.Columns.scheduled == true).fetchCount(db)
+            try db.cachedValue("SELECT COUNT(*) FROM Node WHERE scheduled = 1") ?? 0
         }
     }
 
     public func selectAllPendingDeletion() throws -> [NodeRecord] {
         try selecting { db in
-            try NodeRecord.filter(NodeRecord.Columns.pendingDeletion == true).fetchAll(db)
+            try db.cachedRecords("SELECT * FROM Node WHERE pendingDeletion = 1")
         }
     }
 
     public func updatePendingDeletion(nodeID: ObjectID, pendingDeletion: Bool) throws {
         try write { db in
-            try db.execute(
-                sql: "UPDATE Node SET pendingDeletion = ? WHERE id = ?",
-                arguments: [pendingDeletion, nodeID]
-            )
+            try db.cachedExecute("UPDATE Node SET pendingDeletion = ? WHERE id = ?",
+                                 arguments: [pendingDeletion, nodeID])
         }
     }
 
     public func selectChildSummaries(parentNodeID: ObjectID) throws -> [NodeChildSummary] {
         try selecting { db in
-            try Row.fetchAll(db,
-                             sql: "SELECT id, kind, name FROM Node WHERE parentNodeID = ?",
-                             arguments: [parentNodeID])
+            try db.cachedRows("SELECT id, kind, name FROM Node WHERE parentNodeID = ?", arguments: [parentNodeID])
                 .map { NodeChildSummary(id: $0["id"], kind: $0["kind"], name: $0["name"]) }
         }
     }
@@ -292,16 +288,22 @@ public struct NodeDataAccess: DataAccessType {
     /// The whole port rather than its kind, because a folder's manifest asks two questions
     /// of the same row — whether the child is pinned, and what its content hashes to — and
     /// the hash comes back in the row the kind was already read from.
+    ///
+    /// `CROSS JOIN` fixes the order, the folder's children outermost. With an equality on
+    /// each side and no statistics, the planner took the port's name instead — every row of
+    /// that port in the graph, each looked up in `Node` to test its parent — so one fold
+    /// read every file's port in the graph, and a push folding a new folder per path made
+    /// the cost of a tree grow with its square: a third of a cold push's database time.
     public func selectChildPorts(parentNodeID: ObjectID,
                                  nameSymbolID: ObjectID) throws -> [ObjectID: OutputPort] {
         try selecting { db in
             var result: [ObjectID: OutputPort] = [:]
-            let rows = try Row.fetchAll(db, sql: """
+            let rows = try db.cachedRows("""
                 SELECT p.nodeID AS nodeID, p.valueKind AS valueKind, p.dataObjectHash AS dataObjectHash
-                FROM OutputPort p
-                JOIN Node n ON n.id = p.nodeID
-                WHERE n.parentNodeID = ? AND p.nameSymbolID = ?
-                """, arguments: [parentNodeID, nameSymbolID])
+                FROM Node n
+                CROSS JOIN OutputPort p ON p.nodeID = n.id AND p.nameSymbolID = ?
+                WHERE n.parentNodeID = ?
+                """, arguments: [nameSymbolID, parentNodeID])
             for row in rows {
                 let raw: UInt8 = row["valueKind"]
                 guard let valueKind = OutputPort.ValueKind(rawValue: raw) else {
@@ -321,17 +323,18 @@ public struct NodeDataAccess: DataAccessType {
     /// name: `selectChildPorts` with the join's name column read instead of the id, for a
     /// caller that holds the children by name already — a folder folding its subtree
     /// manifest from its own manifest — and would otherwise read every child's row again
-    /// only to turn an id into a name.
+    /// only to turn an id into a name. Joined children first, for the reason
+    /// `selectChildPorts` is.
     public func selectChildPortsByName(parentNodeID: ObjectID,
                                        nameSymbolID: ObjectID) throws -> [String: OutputPort] {
         try selecting { db in
             var result: [String: OutputPort] = [:]
-            let rows = try Row.fetchAll(db, sql: """
+            let rows = try db.cachedRows("""
                 SELECT n.name AS name, p.nodeID AS nodeID, p.valueKind AS valueKind, p.dataObjectHash AS dataObjectHash
-                FROM OutputPort p
-                JOIN Node n ON n.id = p.nodeID
-                WHERE n.parentNodeID = ? AND p.nameSymbolID = ?
-                """, arguments: [parentNodeID, nameSymbolID])
+                FROM Node n
+                CROSS JOIN OutputPort p ON p.nodeID = n.id AND p.nameSymbolID = ?
+                WHERE n.parentNodeID = ?
+                """, arguments: [nameSymbolID, parentNodeID])
             for row in rows {
                 let raw: UInt8 = row["valueKind"]
                 guard let valueKind = OutputPort.ValueKind(rawValue: raw),
@@ -364,19 +367,21 @@ public struct NodeDataAccess: DataAccessType {
     /// a failure of the database itself still throws, so `try?` is never the right way to
     /// ask this question.
     public func find(nodeID: ObjectID) throws -> NodeRecord? {
-        try selecting { db in try NodeRecord.fetchOne(db, id: nodeID) }
+        try selecting { db in try db.cachedRecord("SELECT * FROM Node WHERE id = ?", arguments: [nodeID]) }
     }
 
     public func select(parentNodeID: ObjectID) throws -> [NodeRecord] {
         try selecting { db in
-            try NodeRecord.filter(NodeRecord.Columns.parentNodeID == parentNodeID).fetchAll(db)
+            try db.cachedRecords("SELECT * FROM Node WHERE parentNodeID = ?", arguments: [parentNodeID])
         }
     }
 
+    /// `IS` rather than `=` for the parent, so that a nil parent asks for the nodes that
+    /// have none rather than for no node at all.
     public func select(named name: String, parentNodeID: ObjectID?) throws -> [NodeRecord] {
         try selecting { db in
-            try NodeRecord.filter(NodeRecord.Columns.name == name &&
-                            NodeRecord.Columns.parentNodeID == parentNodeID).fetchAll(db)
+            try db.cachedRecords("SELECT * FROM Node WHERE name = ? AND parentNodeID IS ?",
+                                 arguments: [name, parentNodeID])
         }
     }
 
@@ -399,6 +404,10 @@ public struct NodeDataAccess: DataAccessType {
     /// Every row with a matching name comes back, not the first: a folder holding two
     /// children of one name is a graph the caller has to refuse, and it cannot refuse what
     /// it was not shown. Below such a pair the walk continues under both.
+    ///
+    /// `CROSS JOIN` puts the chain outermost, a lookup by id per step. Left to itself the
+    /// planner read every row of `Node` and kept those the chain named — a walk as costly
+    /// as the graph is large, once per file a push sends.
     public func selectPath(below ancestorNodeID: ObjectID,
                            names: [String],
                            portSymbolIDs: [ObjectID]) throws -> [NodePathStep] {
@@ -420,13 +429,13 @@ public struct NodeDataAccess: DataAccessType {
             arguments.append(contentsOf: portSymbolIDs)
         }
 
-        // Not a cached statement, though the text depends only on the depth: tried on a
-        // push, a cached one was prepared again on every use (`sqlite3Reprepare` under
-        // `sqlite3_step`) — each read through `DatabaseQueue` runs statements of its own
-        // around the block, and the cached one did not survive them — so it saved nothing.
+        // Cached, one statement per depth and number of ports. A read of its own, outside a
+        // transaction, expires every prepared statement (`CachedStatements.swift`), so there
+        // it saves nothing; a push records a batch of files in one transaction, and there it
+        // is prepared once per depth for the whole batch.
         let segmentValues = names.map { _ in "(?, ?)" }.joined(separator: ", ")
         let rows = try selecting { db in
-            try Row.fetchAll(db, sql: """
+            try db.cachedRows("""
                 WITH RECURSIVE
                     segment(depth, name) AS (VALUES \(segmentValues)),
                     chain(depth, nodeID) AS (
@@ -441,7 +450,7 @@ public struct NodeDataAccess: DataAccessType {
                        p.nodeID AS portNodeID, p.nameSymbolID AS portSymbolID,
                        p.valueKind AS portValueKind, p.dataObjectHash AS portDataObjectHash
                 FROM chain
-                JOIN Node n ON n.id = chain.nodeID
+                CROSS JOIN Node n ON n.id = chain.nodeID
                 LEFT JOIN OutputPort p ON p.nodeID = n.id AND \(portFilter)
                 ORDER BY chain.depth, n.id
                 """, arguments: StatementArguments(arguments))
@@ -573,15 +582,15 @@ public struct NodeDataAccess: DataAccessType {
 
     public func select(identity: String) throws -> [NodeRecord] {
         try selecting { db in
-            try NodeRecord.filter(NodeRecord.Columns.identity == identity).fetchAll(db)
+            try db.cachedRecords("SELECT * FROM Node WHERE identity = ?", arguments: [identity])
         }
     }
 
+    /// `IS` for the parent, as in `select(named:parentNodeID:)`.
     public func select(kind: UInt, named name: String, parentNodeID: ObjectID?) throws -> [NodeRecord] {
         try selecting { db in
-            try NodeRecord.filter(NodeRecord.Columns.kind == kind &&
-                            NodeRecord.Columns.name == name &&
-                            NodeRecord.Columns.parentNodeID == parentNodeID).fetchAll(db)
+            try db.cachedRecords("SELECT * FROM Node WHERE kind = ? AND name = ? AND parentNodeID IS ?",
+                                 arguments: [kind, name, parentNodeID])
         }
     }
 
@@ -591,7 +600,7 @@ public struct NodeDataAccess: DataAccessType {
     /// safe to call for a common kind as well as a rare one.
     public func select(kind: UInt) throws -> [NodeRecord] {
         try selecting { db in
-            try NodeRecord.filter(NodeRecord.Columns.kind == kind).fetchAll(db)
+            try db.cachedRecords("SELECT * FROM Node WHERE kind = ?", arguments: [kind])
         }
     }
 
@@ -612,10 +621,7 @@ public struct NodeDataAccess: DataAccessType {
     /// scheduling decisions by saving a stale full-node snapshot.
     public func updateScheduled(nodeID: ObjectID, scheduled: Bool) throws {
         try write { db in
-            try db.execute(
-                sql: "UPDATE Node SET scheduled = ? WHERE id = ?",
-                arguments: [scheduled, nodeID]
-            )
+            try db.cachedExecute("UPDATE Node SET scheduled = ? WHERE id = ?", arguments: [scheduled, nodeID])
         }
     }
 
@@ -623,8 +629,8 @@ public struct NodeDataAccess: DataAccessType {
     /// Never use this to change the scheduled flag — use `updateScheduled(nodeID:scheduled:)` instead.
     public func update(_ node: NodeRecord) throws {
         try write { db in
-            try db.execute(
-                sql: """
+            try db.cachedExecute(
+                """
                      UPDATE Node
                         SET parentNodeID      = ?,
                             kind              = ?,
@@ -647,9 +653,10 @@ public struct NodeDataAccess: DataAccessType {
 
     public func delete(nodeID: ObjectID) throws -> Bool {
         try write { db in
-            let result = try NodeRecord.deleteOne(db, id: nodeID)
-            try OutputPort.filter(OutputPort.Columns.nodeID == nodeID).deleteAll(db)
-            return result
+            try db.cachedExecute("DELETE FROM Node WHERE id = ?", arguments: [nodeID])
+            let deleted = db.changesCount > 0
+            try db.cachedExecute("DELETE FROM OutputPort WHERE nodeID = ?", arguments: [nodeID])
+            return deleted
         }
     }
 }

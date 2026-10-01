@@ -213,6 +213,54 @@ waits about a tenth of the push for the client, which reads a batch's files befo
 them and sends the next only after the answer; a client that read the next batch while the
 server records this one would take most of that.
 
+Measured 2026-10-01 again, on the same four trees assembled afresh — 4,530 files in 1,345
+folders, 166 MB: this repository as `git archive` exports it at `2957914`, the other three
+less `.git` — release binaries, a fresh home per push, `main` at `dcf606f`. A `sample` of
+`main`'s server put a third of the database queue under `selectChildPorts`: with an equality
+on each side of its join and no statistics, SQLite read a folder's child ports as every port
+of that name in the graph, each looked up in `Node` to test its parent, and a new folder's
+first fold asked four of them; `selectPath`, run twice per file, scanned `Node` for the same
+reason. A `CROSS JOIN` now puts the children and the path first, as `selectSubtree` already
+did. With those gone, preparing statements was a quarter of the queue: the accessors a push
+runs now prepare each text once per connection (`Database.cachedStatement`), and a batch is
+one transaction, so a statement stays prepared for the whole batch. A folder being made folds
+over no children without reading any, since it can have none, and a fold reads a per-kind
+port only for a kind the folder holds. Alternated, six rounds each, load average 4–6.5:
+
+| cold push, 4,530 files | `main` | joins, cached statements, folder creation |
+|---|---|---|
+| wall time, median of six (best) | 10.3 s (10.1 s) | 4.1 s (3.9 s) |
+| wall time, the two quietest rounds (load 4–5) | 10.2 s, 10.4 s | 4.1 s, 4.1 s |
+| server CPU time per push, median | 12.4 s | 6.2 s |
+| server CPU, average over the push | 121% | 150% |
+| files per second, median (best) | 442 (451) | 1,107 (1,154) |
+
+A step at a time, earlier the same evening at load 2–3 on `2957914`: 9.5 s for `main`, 7.0 s
+with the joins fixed, 3.8–4.2 s with the statements cached too. The fold at a folder's
+creation was a percent of the queue by then, inside the noise.
+
+| the database queue, one sampled push each (load 3.5–4.5) | `main` | after |
+|---|---|---|
+| busy, of the push's wall time | 84% | 67% |
+| samples (≈ ms) | 8,789 | 3,268 |
+| SQLite running statements | 3,032 (35%) | 421 (13%) |
+| SQLite preparing statements | 1,493 (17%) | 13 (0.4%) |
+| SQLite committing, savepoints, the log | 179 (2%) | 191 (6%) |
+| GRDB decoding rows and binding arguments | 1,591 (18%) | 862 (26%) |
+| the engine's own Swift | 1,278 (15%) | 882 (27%) |
+| the object store, on the queue | 1,212 (14%) | 899 (28%) |
+
+What is left is the engine and GRDB's decoding (half) and the object store (a quarter). A new
+folder interns a manifest of its own, a file written to the store and superseded at the next
+fold, and touches the empty tree's root and names; a file's metadata document is interned at
+its creation and again at its push, each a touch of the same object. `selectPath` decodes
+every node on the path whole, properties and all, and a cold push walks a new file's path
+three times: the unchanged-file check, the walk that makes its folders, and the file's own
+placement (`resolveFolderID`). The queue now waits about a third of the push for the client.
+The settle after a push folds each marked folder once, as before, outside a transaction,
+where every read expires the cached statements (GRDB's `PRAGMA query_only`), so the flush
+prepares as often as it did; folding in one transaction would keep them prepared.
+
 
 ## Design, correctness and code quality
 
