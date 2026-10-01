@@ -855,6 +855,33 @@ does. The stream and the disk are behind protocols, so the filter, the coalescer
 batch planner are tested with hand-fed events. Left out of the first version: deletions
 the initial push cannot see, a rule file, Linux, and reacting to what the settle built.
 
+Shipped 2026-10-01, as designed, with the differences in the design's "As built": the
+`SemelWatch` library (`WatchFilter`, `ChangeCoalescer`, `BatchPlanner`, `FileEvents`,
+`Watcher`, `WatchConfiguration`), the `semel-watch` executable with its FSEvents adapter,
+and `watch <folder>` / `unwatch` / `quit` at the prompt behind a `WatcherLauncher`. The
+watcher follows the formula's inputs as `build` does and watches what the follow pushed;
+a dot-named file is pushed only when the graph holds it or an `--only` names it exactly.
+The end-to-end run (`WatchEndToEndTests`, the C fixture) measures 2.2 s from a save on
+disk to the settle summary, two of them the quiet interval. What remains — the first
+version's "not in it", all open:
+
+1. **Deletions the initial push cannot see.** A file removed from disk while no watcher
+   ran stays in `input:` until an `rm`; the initial push adds and never subtracts — the
+   push says so (`Not on disk, kept: …`) and goes on. The fix is a listing of `input:`
+   against the disk at launch, with the same fix for `build`.
+2. **A rule file.** The flags are the rule; reconsidered when a second project needs the
+   same flags.
+3. **Linux.** `inotify` is a second conformance of `FileEvents`, when Semel runs there.
+4. **Watching the engine's side.** The watcher pushes; it does not run or restart what an
+   export replaced. That is a runner, a different program.
+5. **Sources behind a link out of the tree.** A push follows a link to a folder outside
+   the base; FSEvents reports changes under the watched path only, so a save behind such
+   a link reaches the graph at the next push of its folder, not at the save.
+6. **The prompt's first report of a followed source.** A watcher the prompt started
+   leaves the reports to the prompt's subscription, which is not held as `build` holds
+   them: a formula's input outside the watched folder is reported missing once, then
+   followed and settled again.
+
 **B-95** `open` `For Fable Only` — **Build progress: a line at the prompt.**
 Shipped: a `progress` event from the engine — the settle tally's running totals, the
 pending count, the nodes computing now by type and name — drawn by the client as one

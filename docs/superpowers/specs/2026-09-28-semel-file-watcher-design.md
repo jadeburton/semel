@@ -1,8 +1,8 @@
 # A file watcher that pushes as you save (B-126)
 
-Status: design, for review before any code. A separate program, `semel-watch`, that
-observes a tree on disk and pushes what changes into the engine, so that saving a file is
-building it.
+Status: design, then built — see "As built" at the end. A separate program,
+`semel-watch`, that observes a tree on disk and pushes what changes into the engine, so
+that saving a file is building it.
 
 ## The problem
 
@@ -211,3 +211,68 @@ exist and become `rm`s, and one batch in step 4.
   absorb it, so a second terminal remains the other honest interface.
 - The quiet interval is two seconds, above, and `--settle-after` is for measuring
   another; the default is not to be tuned per project.
+
+## As built (2026-10-01)
+
+Built as above; where the code and the design differed, or the design left a choice, this
+is what was done.
+
+- **The planner's commands are typed.** `BatchPlanner` returns `WatchCommand.push(Path)`
+  and `.remove(Path)`, which print as `push a/b.swift` and `rm a/c.swift` for a test and a
+  reader; nothing between the planner and the interpreter is text read back. The watcher
+  gives the interpreter each command as its words (`handleCommand(verb:arguments:)`), so
+  a path holding a space is one argument and no tokenizer reads it.
+- **One `push` and one `rm` per batch.** `push` and `rm` now take several paths — one
+  batch, one work list, one report — so a batch is `begin`, one `rm` of everything that
+  went, one `push` of everything that came or changed, `commit`, and the pushed and
+  removed counts are the push's own report: each path named up to twenty, counted beyond.
+- **The disk protocol is the lister's.** The planner reads the disk through
+  `FileWildcardMatcherInput`, asking the matcher for the exact path, so what it sees is
+  what `push` sees — dot-named folders, links above themselves — and a test's disk is a
+  lister holding the paths it names. Each folder is listed once per plan.
+- **A removal needs the graph to hold the path.** A third protocol, `InputHoldings`,
+  answered by the interpreter's `inputHolds`: an editor's temporary file that came and
+  went inside one quiet interval was never pushed, and an `rm` of it would be an error
+  about nothing. A folder that went is one `rm` of the highest vanished folder below its
+  watched root. A rescan of a path no longer on disk is planned as a change, so it
+  removes; the initial push still only adds, since every root exists at launch.
+- **Dot-named files.** B-77 item 5 landed after this design: a push takes a dot-named
+  file named exactly. The watcher takes one when the graph already holds it, or when an
+  `--only` names it exactly (`--only app/.all-contributorsrc`), never from a wildcard;
+  nothing below a dot-named folder is ever a candidate.
+- **The follow.** `push` does not follow a formula's inputs — `build` does — so the
+  interpreter's follow is public (`followSources(neededBy:)`), and the watcher runs it
+  after each `commit`. What it pushes from outside the watched folders — the C fixture's
+  `../semel.machine.config` — is watched from then on.
+- **Reports as `build` makes them.** A batch runs inside `holdingReports`, so its settles
+  print as one summary with the net artifact diff, after the follow, rather than a failing
+  line for the source the follow is about to push. Then, when the graph holds errors, the
+  watcher runs `errors`; with `--into` it exports only when it holds none. The decision
+  is the whole graph's, through `graphHasErrors`, not the settle event's: that event names
+  only what newly failed.
+- **`--no-reports`.** The prompt starts its watcher with it, and the watcher then neither
+  subscribes nor prints `errors`: events go to every subscribed connection, and the
+  prompt, subscribed already, prints the summary, the diff and the error report itself.
+  Without it each settle printed twice into one terminal. The cost is that the prompt's
+  reports are not held, so a followed source is reported missing once before it is pushed.
+- **The base as a folder.** `push .` names nothing — the matcher has no segment to
+  match — so the base is planned by its children; `export .` now exports every product.
+- **Arguments in the library.** `WatchConfiguration.parse` reads them, so they are tested;
+  the executable holds `main`, the signals and `FSEventsStream`. SIGINT and SIGTERM stop
+  the stream; a batch under way gets two seconds to finish its settle.
+- **FSEvents.** Dropped-event flags rescan as must-scan-subdirectories does. Paths are
+  made relative to the base as the kernel spells it (`F_GETPATH`), compared without case;
+  an event for the base itself is dropped unless it asks for a rescan.
+- **The prompt.** `watch` alone stays the progress line whether or not a watcher runs.
+  The folder is read as `push` reads one, from the session's current directory; `--into`
+  as `export` reads one. A watcher that ended by itself is said to have when `unwatch`
+  finds it. The end of a script or of standard input stops it, as `quit` does.
+- **Tests.** The root package's test classes are on `XCTestCase`, isolating the globals by
+  hand: `SemelCoreTestCase` lives in the engine package's own test target, which nothing
+  in the root package can depend on.
+- **The code, not the design.** A push of a folder no longer sends one `pushFile` per
+  file: it asks for the server's content roots first and sends only what differs (B-132).
+  The removal request is `remove(pattern:)`. `build` exports by default into
+  `<base>/semel-out/<folder>`, as the design says.
+- **Measured.** The end-to-end run over `EndToEnd/Fixtures/c` takes 2.2 s from writing
+  the file to the settle summary, two of them the quiet interval.

@@ -16,6 +16,7 @@ let package = Package(
         // executable's after its product, so `SemelServ.build` and `semelserv.build` are one
         // directory on a case-insensitive volume and the two builds corrupt each other.
         .executable(name: "semelserv", targets: ["semel-server"]),
+        .executable(name: "semel-watch", targets: ["semel-watch"]),
     ],
     dependencies: [
         .package(path: "SemelCore"),
@@ -173,6 +174,44 @@ let package = Package(
             exclude: ["Library"],
             sources: ["main.swift"]
         ),
+        // The file watcher's library (B-126): the filter, the coalescer, the batch planner,
+        // the stream protocol and the loop, which drives a `CommandInterpreter` as a person
+        // drives the prompt. It sees the CLI and the node kit's lister, never the engine.
+        .target(
+            name: "SemelWatch",
+            dependencies: [
+                "SemelCLI",
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+            ],
+            path: "semel-watch/Sources/SemelWatch"
+        ),
+        // The watcher itself: its arguments, its signals and the FSEvents adapter, the one
+        // conformance of the library's stream protocol that touches a disk.
+        .executableTarget(
+            name: "semel-watch",
+            dependencies: [
+                "SemelWatch",
+                "SemelCLI",
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+            ],
+            path: "semel-watch",
+            exclude: ["Sources", "Tests"],
+            sources: ["main.swift", "FSEventsStream.swift"]
+        ),
+        // The library's tests, the loop among them over an in-process server.
+        .testTarget(
+            name: "SemelWatchTests",
+            dependencies: [
+                "SemelWatch",
+                "SemelCLI",
+                "SemelServer",
+                .product(name: "SemelCore", package: "SemelCore"),
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+            ],
+            path: "semel-watch/Tests"
+        ),
         .testTarget(
             name: "SemelServerTests",
             dependencies: [
@@ -209,9 +248,10 @@ let package = Package(
             ],
             path: "semel/Tests"
         ),
-        // Real projects through the three binaries together: the fixtures under
+        // Real projects through the binaries together: the fixtures under
         // EndToEnd/Fixtures on every run, pinned external projects on opt-in
-        // (SEMEL_E2E_EXTERNAL=1). Depending on the executable targets is what makes
+        // (SEMEL_E2E_EXTERNAL=1), and one fixture watched by semel-watch over a real
+        // FSEvents stream. Depending on the executable targets is what makes
         // `swift test` build them beside the test bundle, where the harness finds them.
         .testTarget(
             name: "SemelEndToEndTests",
@@ -221,6 +261,7 @@ let package = Package(
                 "semel-server",
                 "semel-swift",
                 "semel-clang",
+                "semel-watch",
             ],
             path: "EndToEnd/Tests"
         ),

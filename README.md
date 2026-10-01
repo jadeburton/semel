@@ -34,7 +34,7 @@ cd semel
 swift build -c release
 ```
 
-The build places four executables under `.build/release`: `semelserv`, the engine; `semel`, the CLI; `semel-swift`, a tool to prepare a Swift project/package for Semel, including placing SPM dependendencies; and `semel-clang`, which adds a Semel configuration file to the C/C++ source directory.
+The build places five executables under `.build/release`: `semelserv`, the engine; `semel`, the CLI; `semel-swift`, a tool to prepare a Swift project/package for Semel, including placing SPM dependendencies; `semel-clang`, which adds a Semel configuration file to the C/C++ source directory; and `semel-watch`, which pushes a tree into the engine as you save.
 
 ## Usage
 
@@ -79,8 +79,8 @@ cd -i sources/
 
 | Command | Description |
 |---------|-------------|
-| `push <path>` | Push a file or directory from disk into the input file system |
-| `rm <path>` (`remove`) | Remove a file or directory from the input file system |
+| `push <path> ...` | Push files or directories from disk into the input file system: several paths are one push and one report |
+| `rm <path> ...` (`remove`) | Remove files or directories from the input file system |
 | `cp [-i\|-o] <src> [dest]` (`copy`) | Copy a file out of the internal file system to disk |
 | `export <folder> --into <dir>` | Copy every product under `<folder>` of the output file system into `<dir>`, keeping the tree below it |
 
@@ -100,6 +100,8 @@ rm build/**
 | `n` / `nudge` | Force-reschedule all nodes for re-evaluation |
 | `wait` | Block until the build has settled: every scheduled node processed, nothing asking for another pass |
 | `watch` | Show the progress line without committing to a wait: until any key is pressed, which leaves the settle running and says where it stood, or until the settle ends, which prints its summary and `Settled.` as `wait` would. Needs a terminal on standard input; in a script it says so and returns |
+| `watch <folder> [--into <dir>] [--only <pattern>]... [--except <pattern>]...` | Start a `semel-watch` for the session's base and that folder, as a child of the prompt: it pushes what you save, after two quiet seconds, and with `--into` exports after each settle without errors. Its lines interleave with the prompt's; the settle summaries are the prompt's own. One per session — a second replaces the first |
+| `unwatch` | Stop the watcher `watch <folder>` started; `quit` stops it too |
 | `e` / `errors` | Show all current build errors |
 | `explain <path>` (`why`) | Say why the last settle did what it did to a product (`output:/hello/hello`, `-o hello/hello`, or relative to the current directory): the nodes upstream of it that ran and the ones the cache answered, each with the wires whose values changed for it, down to the pushed files that changed. The record is the last settle's only, kept in memory: a restart forgets it, and `explain` says so |
 | `check` | Walk the graph and report every invariant that does not hold — a wire whose endpoint is gone, a product nothing produces, a manifest disagreeing with its folder. Repairs nothing; `reset` is the repair. Ask it of a settled graph (`wait`, or after `build`): a node the engine is still wiring has no wires yet, and the reply says how many nodes were still scheduled |
@@ -113,7 +115,7 @@ rm build/**
 |---------|-------------|
 | `base [path]` | Show or set the external base directory for `push` |
 | `begin` … `commit` | Hold the engine between several pushes so it settles once, on the `commit`, which also waits for that settle. Every `push` already does this for its own files; this is for a script whose tree arrives over several commands. `wait` refuses while a batch is open |
-| `q` / `quit` / `exit` | Exit |
+| `q` / `quit` / `exit` | Exit, stopping the watcher `watch <folder>` started |
 
 Commands can be prefixed with `semel` (e.g. `semel ls`) for scripting.
 
@@ -125,6 +127,20 @@ against a graph already broken the same way prints nothing) — which makes it a
 
 ```sh
 .build/release/semel 'base /path/to/repo' 'build Packages --into ./out'
+```
+
+To build as you save, watch the tree instead. `semel-watch` takes the base and the folders
+`build` would take, pushes them once, and from then on waits for two quiet seconds after
+each burst of saves — an editor's save, a `git checkout`, a generator's output — and runs
+one `begin`, a `push` of what changed and an `rm` of what went, `commit`: one settle, and
+its summary, per burst. It follows the formula's inputs as `build` does, and with `--into`
+exports after each settle without errors. What it watches is what `push` would push;
+`--only` and `--except` narrow that with the wildcards a for-each takes, and the export
+folder and `semel-out` are never pushed. At the prompt, `watch Packages --into ./out` starts
+one for the session's base; `unwatch` or `quit` stops it.
+
+```sh
+.build/release/semel-watch /path/to/repo Packages --into ./out --except 'Packages/**/Tests/**'
 ```
 ### Formulae
 
@@ -218,6 +234,9 @@ semel-swift/     semel-swift — `prepare`: finds a tree's roots, vendors git de
                  writes semel.fmla and the two config files (SemelSwiftTool)
 semel-clang/     semel-clang — writes semel.machine.config for the clang tools
                  (SemelClangTool)
+semel-watch/     semel-watch — watches a tree with FSEvents and, after two quiet seconds,
+                 runs the push and rm a person would type, through SemelCLI; one per tree
+  Sources/SemelWatch/  SemelWatch: the filter, the coalescer, the batch planner, the loop
 machine-file/    SemelMachineFile: the one writer of semel.machine.config, for both tools
 ```
 

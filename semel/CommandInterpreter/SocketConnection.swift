@@ -122,6 +122,13 @@ public final class SocketConnection: SemelConnection {
         closeAll()
     }
 
+    /// Whether requests can still be sent: false once the server has gone or `close` was
+    /// called. A client that outlives one engine — `semel-watch` — asks this to know when
+    /// to open the next connection.
+    public var isOpen: Bool {
+        lock.withLock { !isClosed }
+    }
+
     // MARK: - SemelConnection
 
     public func send(_ request: Request, body: Data?) throws -> (Response, Data?) {

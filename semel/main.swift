@@ -59,13 +59,16 @@ func main() throws {
         for command in scripted where interpreter.handleCommand(command) == .quit {
             break
         }
+        // A watcher a script started is the script's, and ends with it (B-126).
+        interpreter.stopWatcher()
         exit(interpreter.errorsReported == 0 ? 0 : 1)
     }
 
     // Interactive: a failed command is reported and the prompt continues; only quit ends
-    // the session.
+    // the session — or the end of standard input, which stops a watcher as `quit` does.
     while let line = readLine(), interpreter.handleCommand(line) != .quit {
     }
+    interpreter.stopWatcher()
 }
 
 #if !UNIT_TESTING
