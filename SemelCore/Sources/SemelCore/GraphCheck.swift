@@ -13,7 +13,7 @@
 // This reports and repairs nothing. `reset` is the repair; a finding is how one learns
 // whether it is needed and what to file when it is. It follows that nothing here may write:
 // no `asSymbolID()`, which interns, and no `makeNode()`, which places a node in the file
-// system and force-unwraps properties a broken row may not have. A check run over a graph
+// system and demands properties a broken row may not have. A check run over a graph
 // that is already wrong must not be a second way for it to go wrong.
 //
 // It is meant for a settled graph. The whole walk happens inside one read, so it can never

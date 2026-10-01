@@ -76,6 +76,15 @@ public enum TypeRegistry {
         return type
     }
 
+    /// The node type registered for `kind`, or an error naming the kind when what is
+    /// registered there is not a node — a stored node row whose kind another type claims.
+    public static func nodeType(kind: UInt) throws -> Node.Type {
+        guard let type = try type(kind: kind) as? Node.Type else {
+            throw TypeRegistryError.notANode(kind)
+        }
+        return type
+    }
+
     /// Look up the `kind` discriminator for a type identified by its Swift type name.
     /// Used when reconstructing a node from a `GraphSpecNode` string.
     public static func kind(forTypeName typeName: String) throws -> UInt {
@@ -109,6 +118,7 @@ public enum TypeRegistryError: Error, CustomStringConvertible {
     /// different version, or a malformed frame.
     case unknownKind(UInt)
     case notPolySerializable(UInt)
+    case notANode(UInt)
     case duplicateKind(kind: UInt, existing: String, duplicate: String)
 
     public var description: String {
@@ -121,6 +131,8 @@ public enum TypeRegistryError: Error, CustomStringConvertible {
             return "no type is registered for kind \(kind)"
         case .notPolySerializable(let kind):
             return "the type registered for kind \(kind) is not PolySerializable"
+        case .notANode(let kind):
+            return "the type registered for kind \(kind) is not a node type"
         case .duplicateKind(let kind, let existing, let duplicate):
             return "kind \(kind) is claimed by both \(existing) and \(duplicate)"
         }
@@ -182,7 +194,8 @@ extension Decodable {
 
 extension Encodable {
     public func toJSON() throws -> String {
-        String(data: try JSONEncoder().withSortedKeys().encode(self), encoding: .utf8)!
+        // JSONEncoder writes UTF-8, so decoding as UTF-8 is exact rather than a repair.
+        String(decoding: try JSONEncoder().withSortedKeys().encode(self), as: UTF8.self)
     }
 }
 

@@ -100,11 +100,11 @@ final class VendoredPackageSettleTests: XCTestCase {
 
     /// Runs `build Packages` and waits at most `seconds` for it to return. A build that
     /// never settles is the failure; the loop is then stopped so the test process goes on.
-    private func buildEnds(within seconds: Double) -> (ended: Bool, transcript: String) {
+    private func buildEnds(within seconds: Double) throws -> (ended: Bool, transcript: String) {
+        let interpreter = try XCTUnwrap(self.interpreter)
         let lines = LineLog()
         interpreter.output = { lines.append($0) }
         let finished = DispatchSemaphore(value: 0)
-        let interpreter = self.interpreter!
         DispatchQueue.global().async {
             interpreter.handleCommand("build Packages")
             finished.signal()
@@ -129,7 +129,7 @@ final class VendoredPackageSettleTests: XCTestCase {
     func test_aRemoteBinaryTargetNotVendoredSettlesNamingWhereItBelongs() throws {
         try writeTree(target: remoteTarget)
 
-        let (ended, transcript) = buildEnds(within: 30)
+        let (ended, transcript) = try buildEnds(within: 30)
 
         XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
         XCTAssertTrue(transcript.contains("is not vendored: nothing is at input:"), transcript)
@@ -144,7 +144,7 @@ final class VendoredPackageSettleTests: XCTestCase {
                       packageFiles: ["semel-artifacts/Sparkle/Sparkle.xcframework/Info.plist": "<plist/>",
                                      "semel-artifacts/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework/Sparkle": "binary"])
 
-        let (ended, transcript) = buildEnds(within: 30)
+        let (ended, transcript) = try buildEnds(within: 30)
 
         XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
         XCTAssertFalse(transcript.contains("SwiftFormulaConverter:"), transcript)
@@ -161,7 +161,7 @@ final class VendoredPackageSettleTests: XCTestCase {
             packageFiles: ["Sparkle.xcframework/Info.plist": "<plist/>",
                            "Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework/Sparkle": "binary"])
 
-        let (ended, transcript) = buildEnds(within: 30)
+        let (ended, transcript) = try buildEnds(within: 30)
 
         XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
         XCTAssertFalse(transcript.contains("SwiftFormulaConverter:"), transcript)
@@ -174,7 +174,7 @@ final class VendoredPackageSettleTests: XCTestCase {
     func test_aVendoredPackageNamingAFolderItLacksSettles() throws {
         try writeTree(target: #"{"name": "Sparkle", "type": "regular", "path": "Sources/Sparkle", "dependencies": []}"#)
 
-        let (ended, transcript) = buildEnds(within: 30)
+        let (ended, transcript) = try buildEnds(within: 30)
 
         XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
         XCTAssertTrue(transcript.contains("is not the tree its lock records"), transcript)

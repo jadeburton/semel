@@ -114,8 +114,8 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
                                              basePath: Path(projectFolder),
                                              wildcardExpander: { _ in [] })
         XCTAssertFalse(products.isEmpty, "the formula produced no products")
-        for name in products.keys.sorted() {
-            _ = try products[name]!.findOrCreateMatchingNode()
+        for (_, product) in products.sorted(by: { $0.key < $1.key }) {
+            _ = try product.findOrCreateMatchingNode()
         }
 
         guard let configText else {
@@ -160,8 +160,8 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
         XCTAssertFalse(wires.isEmpty, "nothing is wired to the configuration port of kind \(kind)")
 
         var merged: [String: String] = [:]
-        for wireKey in wires.keys.sorted() {
-            let text = try wires[wireKey]!.expectValue().resolveAsString()
+        for (_, wire) in wires.sorted(by: { $0.key < $1.key }) {
+            let text = try wire.expectValue().resolveAsString()
             merged = merged.mergedWith([String: String](plainText: text))
         }
         return merged

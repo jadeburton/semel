@@ -102,8 +102,8 @@ public struct DemandingSampleTool: Node {
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
         var text = ""
-        for wireKey in (input.inputValues[Self.input] ?? [:]).keys.sorted() {
-            text += try input.inputValues[Self.input]![wireKey]!.expectValue().resolveAsString()
+        for (_, value) in (input.inputValues[Self.input] ?? [:]).sorted(by: { $0.key < $1.key }) {
+            text += try value.expectValue().resolveAsString()
         }
         return .init(outputValues: [Self.output: .value(try text.intern())], inputWireSpecs: [:])
     }

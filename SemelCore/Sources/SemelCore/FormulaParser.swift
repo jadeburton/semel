@@ -617,11 +617,10 @@ enum FormulaLexer {
                     throw located(FormulaParseError.unterminatedPathLiteral(context: "<\(raw)"))
                 }
                 i += 1   // consume '>'
-                if raw.contains("%%") {
+                if let templateRange = raw.range(of: "%%") {
                     // Template path: resolve the static prefix (before the first %%) against
                     // basePath so the result has the right input:/... root.
                     // The %%marker%% portion is left intact for eval-time substitution.
-                    let templateRange = raw.range(of: "%%")!
                     let staticPrefix  = String(raw[..<templateRange.lowerBound])
                     let remainder     = String(raw[templateRange.lowerBound...])
                     if staticPrefix.isEmpty {

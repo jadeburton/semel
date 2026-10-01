@@ -343,8 +343,8 @@ struct SwiftCompiler: Node {
             wiredFolderTrees    = Set((input.inputValues[SwiftCompiler.inputFolderTrees] ?? [:]).keys)
             wiredModuleMapFiles = Set((input.inputValues[SwiftCompiler.inputModuleMapFiles] ?? [:]).keys)
 
-            let configString = try input.inputValues[SwiftCompiler.configuration]!
-                .values.first!.expectValue().resolveAsString()
+            let configString = try input.firstWire(onRequiredPort: SwiftCompiler.configuration)
+                .value.expectValue().resolveAsString()
 
             configuration = try .init(properties: [String: String](plainText: configString))
 

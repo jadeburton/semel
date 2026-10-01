@@ -56,8 +56,9 @@ final class SemelservExecutableTests: XCTestCase {
         try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: binary.path),
                           "semelserv is not built beside the test bundle at \(binary.path)")
 
+        let socketPath = try XCTUnwrap(self.socketPath)
         let server = try launch()
-        XCTAssertTrue(SocketWait.wait(forSocketAt: socketPath), "the server never created \(socketPath!)")
+        XCTAssertTrue(SocketWait.wait(forSocketAt: socketPath), "the server never created \(socketPath)")
 
         let client = try SocketConnection.connect(to: socketPath)
         let (reply, _) = try client.send(.hello(Hello(role: .daemon)), body: nil)
@@ -82,6 +83,7 @@ final class SemelservExecutableTests: XCTestCase {
     func test_bannerIsOnDiskBeforeShutdownWhenStdoutIsRedirectedToAFile() throws {
         try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: binary.path),
                           "semelserv is not built beside the test bundle at \(binary.path)")
+        let socketPath = try XCTUnwrap(self.socketPath)
 
         // A pipe (ManagedProcess) is read continuously and so hides block buffering; only a
         // real file, read back without the process's cooperation, shows what is actually
@@ -106,7 +108,7 @@ final class SemelservExecutableTests: XCTestCase {
             }
         }
 
-        XCTAssertTrue(SocketWait.wait(forSocketAt: socketPath), "the server never created \(socketPath!)")
+        XCTAssertTrue(SocketWait.wait(forSocketAt: socketPath), "the server never created \(socketPath)")
 
         // The socket is listening a moment before the banner is printed, so the file is
         // read again for a little while: what is asserted is that the lines reach the disk

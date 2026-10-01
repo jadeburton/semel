@@ -59,8 +59,9 @@ final class CascadeDeletionTests: SemelCoreTestCase {
         } while processed > 0
     }
 
-    private func nodeExists(_ node: NodeRecord) -> Bool {
-        (try? engine.database.node.select(nodeID: node.id!)) != nil
+    private func nodeExists(_ node: NodeRecord) throws -> Bool {
+        let nodeID = try node.requireID()
+        return (try? engine.database.node.select(nodeID: nodeID)) != nil
     }
 
     // When a consumer is marked pendingDeletion, processPendingDeletions
@@ -71,11 +72,11 @@ final class CascadeDeletionTests: SemelCoreTestCase {
 
         try wire(source, to: consumer, name: "link")
 
-        try engine.database.node.updatePendingDeletion(nodeID: consumer.id!, pendingDeletion: true)
+        try engine.database.node.updatePendingDeletion(nodeID: try consumer.requireID(), pendingDeletion: true)
         try runCleanup()
 
-        XCTAssertFalse(nodeExists(consumer), "consumer should be deleted")
-        XCTAssertFalse(nodeExists(source),   "orphaned source should cascade-delete")
+        XCTAssertFalse(try nodeExists(consumer), "consumer should be deleted")
+        XCTAssertFalse(try nodeExists(source),   "orphaned source should cascade-delete")
     }
 
     // A three-node chain A → B → C: removing C should cascade all the way to A.
@@ -87,12 +88,12 @@ final class CascadeDeletionTests: SemelCoreTestCase {
         try wire(nodeA, to: nodeB, name: "a_b")
         try wire(nodeB, to: nodeC, name: "b_c")
 
-        try engine.database.node.updatePendingDeletion(nodeID: nodeC.id!, pendingDeletion: true)
+        try engine.database.node.updatePendingDeletion(nodeID: try nodeC.requireID(), pendingDeletion: true)
         try runCleanup()
 
-        XCTAssertFalse(nodeExists(nodeC), "C should be deleted")
-        XCTAssertFalse(nodeExists(nodeB), "B should cascade-delete after C is gone")
-        XCTAssertFalse(nodeExists(nodeA), "A should cascade-delete after B is gone")
+        XCTAssertFalse(try nodeExists(nodeC), "C should be deleted")
+        XCTAssertFalse(try nodeExists(nodeB), "B should cascade-delete after C is gone")
+        XCTAssertFalse(try nodeExists(nodeA), "A should cascade-delete after B is gone")
     }
 
     // A source shared by two consumers must not be deleted when only one
@@ -105,12 +106,12 @@ final class CascadeDeletionTests: SemelCoreTestCase {
         try wire(source, to: consumer1, name: "to_c1")
         try wire(source, to: consumer2, name: "to_c2")
 
-        try engine.database.node.updatePendingDeletion(nodeID: consumer1.id!, pendingDeletion: true)
+        try engine.database.node.updatePendingDeletion(nodeID: try consumer1.requireID(), pendingDeletion: true)
         try runCleanup()
 
-        XCTAssertFalse(nodeExists(consumer1), "consumer1 should be deleted")
-        XCTAssertTrue(nodeExists(source),     "shared source should survive (consumer2 still wired)")
-        XCTAssertTrue(nodeExists(consumer2),  "consumer2 should be unaffected")
+        XCTAssertFalse(try nodeExists(consumer1), "consumer1 should be deleted")
+        XCTAssertTrue(try nodeExists(source),     "shared source should survive (consumer2 still wired)")
+        XCTAssertTrue(try nodeExists(consumer2),  "consumer2 should be unaffected")
     }
 
     // Removing both consumers of a shared source should eventually clean it up.
@@ -122,13 +123,13 @@ final class CascadeDeletionTests: SemelCoreTestCase {
         try wire(source, to: consumer1, name: "to_c1")
         try wire(source, to: consumer2, name: "to_c2")
 
-        try engine.database.node.updatePendingDeletion(nodeID: consumer1.id!, pendingDeletion: true)
-        try engine.database.node.updatePendingDeletion(nodeID: consumer2.id!, pendingDeletion: true)
+        try engine.database.node.updatePendingDeletion(nodeID: try consumer1.requireID(), pendingDeletion: true)
+        try engine.database.node.updatePendingDeletion(nodeID: try consumer2.requireID(), pendingDeletion: true)
         try runCleanup()
 
-        XCTAssertFalse(nodeExists(consumer1), "consumer1 should be deleted")
-        XCTAssertFalse(nodeExists(consumer2), "consumer2 should be deleted")
-        XCTAssertFalse(nodeExists(source),    "source should cascade-delete once both consumers are gone")
+        XCTAssertFalse(try nodeExists(consumer1), "consumer1 should be deleted")
+        XCTAssertFalse(try nodeExists(consumer2), "consumer2 should be deleted")
+        XCTAssertFalse(try nodeExists(source),    "source should cascade-delete once both consumers are gone")
     }
 }
 
@@ -167,7 +168,7 @@ final class FindMatchingNodeTests: SemelCoreTestCase {
 
         let match = try findMatchingNode(spec)
 
-        XCTAssertEqual(match?.id, node.id!, "findMatchingNode must return the same node")
+        XCTAssertEqual(match?.id, try node.requireID(), "findMatchingNode must return the same node")
         XCTAssertEqual(portID, "output".asSymbolID(), "output port symbol must match")
     }
 
@@ -177,13 +178,13 @@ final class FindMatchingNodeTests: SemelCoreTestCase {
         let (nodeA, _) = try GraphSpecNode.parse("SettingsLiteral(env: 'debug').output").findOrCreateMatchingNode()
         let (nodeB, _) = try GraphSpecNode.parse("SettingsLiteral(env: 'release').output").findOrCreateMatchingNode()
 
-        XCTAssertNotEqual(nodeA.id!, nodeB.id!)
+        XCTAssertNotEqual(try nodeA.requireID(), try nodeB.requireID())
 
         let matchA = try findMatchingNode("SettingsLiteral(env: 'debug').output")
         let matchB = try findMatchingNode("SettingsLiteral(env: 'release').output")
 
-        XCTAssertEqual(matchA?.id, nodeA.id!)
-        XCTAssertEqual(matchB?.id, nodeB.id!)
+        XCTAssertEqual(matchA?.id, try nodeA.requireID())
+        XCTAssertEqual(matchB?.id, try nodeB.requireID())
     }
 
     // A node that has not been created yet must not be found.
@@ -198,7 +199,7 @@ final class FindMatchingNodeTests: SemelCoreTestCase {
         let (node, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
 
         // Mark the node pendingDeletion and run cleanup.
-        try engine.database.node.updatePendingDeletion(nodeID: node.id!, pendingDeletion: true)
+        try engine.database.node.updatePendingDeletion(nodeID: try node.requireID(), pendingDeletion: true)
         var processed = 0
         repeat { processed = try engine.processPendingDeletions() } while processed > 0
 

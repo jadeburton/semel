@@ -17,6 +17,17 @@ public enum NodeError: Error, CustomStringConvertible {
     /// per declared port when it is created, so this is a graph something damaged — not a
     /// port that has yet to be written, which holds a state of its own.
     case outputPortMissing(nodeID: ObjectID, port: String)
+    /// A node reading an input port that is not in what it was given to process. Every port
+    /// its type declares is there, holding no wires when none is wired, so this is a node
+    /// asking for a port by a name its own descriptor does not declare.
+    case inputPortMissing(port: String)
+    /// A required input port with no wire, met inside `process`. The engine processes a
+    /// node only once each of its required ports has a wire, so this is a graph changed
+    /// since — or a node reading a port as required that its descriptor calls optional.
+    case requiredInputPortUnwired(port: String)
+    /// A node whose record lacks a property its type is always created with — the `path`
+    /// of a file-system node. Nothing makes such a node, so its row has been damaged.
+    case propertyMissing(kind: UInt, nodeID: ObjectID?, property: String)
     /// More than one wire on an input port that takes one, by the port and the wires'
     /// names. The settings nodes' ports are the ones that say so: two sets of settings meet
     /// only in a `ConfigMerger`, whose `base` and `override` state which wins, and a port
@@ -55,6 +66,9 @@ public enum NodeError: Error, CustomStringConvertible {
 
         case .nodeNotFound,
              .outputPortMissing,
+             .inputPortMissing,
+             .requiredInputPortUnwired,
+             .propertyMissing,
              .severalWiresOnOneWirePort,
              .other,
              .processNotSupported,
@@ -73,6 +87,14 @@ public enum NodeError: Error, CustomStringConvertible {
         case .outputPortMissing(let nodeID, let port):
             return "node #\(nodeID) holds no row for its output port '\(port)', which its type declares, so the "
                  + "graph is damaged; `check` names every such port and `reset` rebuilds the graph"
+        case .inputPortMissing(let port):
+            return "this node read input port '\(port)', which its type does not declare"
+        case .requiredInputPortUnwired(let port):
+            return "required input port '\(port)' has no wire"
+        case .propertyMissing(let kind, let nodeID, let property):
+            let node = nodeID.map { "#\($0)" } ?? "(not yet saved)"
+            return "node \(node) of kind \(kind) has no '\(property)' property, which its type is always "
+                 + "created with, so the graph is damaged; `reset` rebuilds the graph"
         case .severalWiresOnOneWirePort(let port, let wires):
             let names = wires.map { "'\($0)'" }.joined(separator: ", ")
             return "input port '\(port)' takes one wire, and \(wires.count) are wired to it: \(names). "

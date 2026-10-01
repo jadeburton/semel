@@ -68,13 +68,10 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable, File
 
     public var thisNode: NodeRecord
 
-    var path: Path {
-        Path(thisNode.properties[Self.pathProperty]!)
-    }
-
     public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
-        assert(!path.string.contains(Folder.outputFileSystemName))
+        let inputPath = try self.path
+        assert(!inputPath.string.contains(Folder.outputFileSystemName))
         try placeInFileSystem()
     }
 

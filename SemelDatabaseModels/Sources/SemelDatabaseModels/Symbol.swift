@@ -69,8 +69,11 @@ public struct SymbolDataAccess: DataAccessType {
             // so the subsequent SELECT always finds exactly one row.
             try db.execute(sql: "INSERT OR IGNORE INTO Symbol (name) VALUES (?)",
                            arguments: [name])
-            return try Int64.fetchOne(db, sql: "SELECT id FROM Symbol WHERE name = ?",
-                                      arguments: [name])!
+            guard let id = try Int64.fetchOne(db, sql: "SELECT id FROM Symbol WHERE name = ?",
+                                              arguments: [name]) else {
+                throw SymbolError.nameMissingAfterInsert(name: name)
+            }
+            return id
         }
     }
 
@@ -131,6 +134,9 @@ func resetSymbolCache() {
 
 enum SymbolError: Error {
     case symbolNotFoundByID
+    /// The row `INSERT OR IGNORE` has just made sure of is not there to select: the
+    /// database disagrees with itself.
+    case nameMissingAfterInsert(name: String)
 }
 
 extension String {
@@ -144,7 +150,7 @@ extension String {
     /// Does not throw. Every port name, wire name and file name in the graph goes through
     /// here, so a `try` at each of the forty-odd call sites would suggest a decision the
     /// caller could make — and there is none. `insertOrGetID` is `INSERT OR IGNORE` followed
-    /// by a `SELECT` that force-unwraps its result: the only ways it fails are the volume
+    /// by a `SELECT` of the row it has just made sure of: the only ways it fails are the volume
     /// being full, read-only or unreachable, and the next name looked up hits the same wall.
     public func asSymbolID() -> ObjectID {
         if let id = symbolCache.id(for: self) { return id }

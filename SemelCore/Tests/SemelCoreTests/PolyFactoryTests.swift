@@ -21,8 +21,8 @@ final class TypeRegistryTests: SemelCoreTestCase {
     func test_toJSON_outputIsSortedKeys() throws {
         struct TwoKeys: Codable { let z: Int; let a: Int }
         let json = try TwoKeys(z: 1, a: 2).toJSON()
-        let aIdx = json.range(of: "\"a\"")!.lowerBound
-        let zIdx = json.range(of: "\"z\"")!.lowerBound
+        let aIdx = try XCTUnwrap(json.range(of: "\"a\"")).lowerBound
+        let zIdx = try XCTUnwrap(json.range(of: "\"z\"")).lowerBound
         XCTAssertLessThan(aIdx, zIdx, "keys should be sorted: 'a' must appear before 'z'")
     }
 

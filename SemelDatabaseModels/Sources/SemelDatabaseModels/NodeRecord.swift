@@ -51,6 +51,16 @@ public struct NodeRecord: Identifiable, FetchableRecord, PersistableRecord {
         return id
     }
 
+    /// The node's name, or an error for one that has none.
+    ///
+    /// Optional because most nodes are unnamed; a node placed in the file-system tree is
+    /// always named after the last component of its path, so one of those without a name
+    /// is a damaged row, said as an error rather than a crash.
+    public func requireName() throws -> String {
+        guard let name else { throw NodeIdentityError.nodeHasNoName(kind: kind, id: id) }
+        return name
+    }
+
     public init(id: ObjectID? = nil,
                 parentNodeID: ObjectID? = nil,
                 kind: UInt,
@@ -165,6 +175,13 @@ public struct NodeChildSummary {
         self.id = id
         self.kind = kind
         self.name = name
+    }
+
+    /// The child's name, or an error for one that has none — which a child of a folder,
+    /// named after the last component of its path, never is unless its row is damaged.
+    public func requireName() throws -> String {
+        guard let name else { throw NodeIdentityError.nodeHasNoName(kind: kind, id: id) }
+        return name
     }
 }
 
@@ -606,11 +623,15 @@ extension NodeRecord: CustomStringConvertible {
 public enum NodeIdentityError: Error, CustomStringConvertible {
     /// An operation needed a persisted node's id, but the node has no row yet.
     case nodeNotPersisted(kind: UInt, name: String?)
+    /// An operation needed the name of a node that has none.
+    case nodeHasNoName(kind: UInt, id: ObjectID?)
 
     public var description: String {
         switch self {
         case .nodeNotPersisted(let kind, let name):
             return "node of kind \(kind)\(name.map { " named '\($0)'" } ?? "") has not been saved, so it has no id"
+        case .nodeHasNoName(let kind, let id):
+            return "node \(id.map { "#\($0)" } ?? "(not yet saved)") of kind \(kind) has no name, and it needs one here"
         }
     }
 }

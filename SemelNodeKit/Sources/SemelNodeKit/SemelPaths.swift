@@ -18,9 +18,7 @@ public enum SemelPaths {
         if let home = ProcessInfo.processInfo.environment["SEMEL_HOME"], !home.isEmpty {
             return URL(fileURLWithPath: home, isDirectory: true)
         }
-        return FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("semel", isDirectory: true)
+        return URL.applicationSupportDirectory.appendingPathComponent("semel", isDirectory: true)
     }
 
     /// The content-addressed object store.

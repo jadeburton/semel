@@ -41,8 +41,8 @@ final class SpecTextScanTests: XCTestCase {
     /// A type call with a quoted value inside and a port suffix after, inside a string
     /// literal: `"…Type(key: '…').port…"`. The quote is what tells a spec from an
     /// interpolated call such as `\(UUID().uuidString)`.
-    private static let specInAString = try! NSRegularExpression(
-        pattern: #""[^"\n]*\b[A-Z][A-Za-z0-9]*\([^"\n]*'[^"\n]*\)\.[a-z][A-Za-z]*\b[^"\n]*""#)
+    private static let specInAStringPattern =
+        #""[^"\n]*\b[A-Z][A-Za-z0-9]*\([^"\n]*'[^"\n]*\)\.[a-z][A-Za-z]*\b[^"\n]*""#
 
     private static func swiftSources() throws -> [URL] {
         var files: [URL] = []
@@ -69,10 +69,11 @@ final class SpecTextScanTests: XCTestCase {
     }
 
     func test_noComponentHandsAnotherASpecAsAString() throws {
+        let specInAString = try NSRegularExpression(pattern: Self.specInAStringPattern)
         var offenders: [String] = []
         for file in try Self.swiftSources() where Self.filesThatWriteFormulas[file.lastPathComponent] == nil {
             offenders += try Self.offendingLines(in: file) { code in
-                Self.specInAString.firstMatch(in: code, range: NSRange(code.startIndex..., in: code)) != nil
+                specInAString.firstMatch(in: code, range: NSRange(code.startIndex..., in: code)) != nil
             }
         }
         XCTAssertTrue(offenders.isEmpty, """

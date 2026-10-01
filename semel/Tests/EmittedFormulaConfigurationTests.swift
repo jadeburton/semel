@@ -156,8 +156,8 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
                                              basePath: Path(packageFolder),
                                              wildcardExpander: { _ in [] })
         XCTAssertFalse(products.isEmpty, "the converter emitted no products:\n\(formula)")
-        for name in products.keys.sorted() {
-            _ = try products[name]!.findOrCreateMatchingNode()
+        for (_, product) in products.sorted(by: { $0.key < $1.key }) {
+            _ = try product.findOrCreateMatchingNode()
         }
     }
 
@@ -201,8 +201,8 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
         XCTAssertFalse(wires.isEmpty, "nothing is wired to \(nodeRecord.kind)'s \(port) port")
 
         var merged: [String: String] = [:]
-        for wireKey in wires.keys.sorted() {
-            let text = try wires[wireKey]!.expectValue().resolveAsString()
+        for (_, wire) in wires.sorted(by: { $0.key < $1.key }) {
+            let text = try wire.expectValue().resolveAsString()
             merged = merged.mergedWith([String: String](plainText: text))
         }
         return merged

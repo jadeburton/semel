@@ -68,6 +68,28 @@ public struct ProcessInput {
     public init(inputValues: [String: [String: NodeValue]]) {
         self.inputValues = inputValues
     }
+
+    /// The wires on `port`, by name — none when nothing is wired to it.
+    ///
+    /// Throws rather than handing back an empty set for a port that is not here at all:
+    /// every port the node's type declares is present, so an absent one is a name the
+    /// node's own descriptor does not declare, and reading it as "no wires" would hide that.
+    public func wires(on port: String) throws -> [String: NodeValue] {
+        guard let wires = inputValues[port] else {
+            throw NodeError.inputPortMissing(port: port)
+        }
+        return wires
+    }
+
+    /// A wire on a required port, by name and value. The engine processes a node only once
+    /// each required port has a wire, so an empty one here is said as an error naming it.
+    /// Which wire, when a port holds several, is whichever the dictionary yields first.
+    public func firstWire(onRequiredPort port: String) throws -> (key: String, value: NodeValue) {
+        guard let wire = try wires(on: port).first else {
+            throw NodeError.requiredInputPortUnwired(port: port)
+        }
+        return wire
+    }
 }
 
 public struct ProcessOutput {
