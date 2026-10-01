@@ -86,11 +86,31 @@ extension RequestHandler {
 
     // MARK: - push
 
-    /// Interns the bytes and stores them at `path` in the input file system, with the mode
-    /// beside them, creating the folders on the way. Returns whether the bytes or the mode
-    /// changed.
-    func pushFile(path: String, mode: UInt16, body: Data) throws -> DaemonResponse {
-        .pushFile(didChange: try StaticFile.push([UInt8](body), mode: mode, at: Path(path)))
+    /// Records each file, its bytes already interned, at its path in the input file system
+    /// with its mode beside it, creating the folders on the way: one `pushFile` after
+    /// another, in order, in one turn of the queue and one transaction. A file the graph
+    /// refuses is answered as its own `pushFile` would have been, and the rest are recorded
+    /// all the same (B-130); a failure of the machine is the whole request's, as it stops
+    /// the server.
+    ///
+    /// One transaction, because a file's push is otherwise several — a commit for each
+    /// folder made, for the file's node, for each port written — and a read transaction
+    /// for each read between them: a cold push of a tree spent a fifth of its time opening
+    /// and committing them. `withTransactionPerStep` keeps each of those transactions'
+    /// boundaries inside the one, so a refused file leaves behind what it left before.
+    func pushFiles(_ files: [InternedFile]) throws -> [PushedFileOutcome] {
+        try database.withTransactionPerStep {
+            try files.map { file in
+                do {
+                    return .stored(didChange: try StaticFile.push(interned: file.contentHash, mode: file.mode,
+                                                                  at: Path(file.path)))
+                } catch let error as any UnrecoverableError {
+                    throw error
+                } catch {
+                    return .failed(error: Self.errorResponse(for: error))
+                }
+            }
+        }
     }
 
     /// A symbolic link (B-77). To a file: a file whose metadata names the target and whose

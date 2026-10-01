@@ -6,7 +6,7 @@
 //  anything, and sends only where the two differ. Its cost is pinned here in requests, the
 //  unit a push paid per file before: an unchanged push of 400 files in 40 folders sends a
 //  handful, a one-file change sends that file and the queries on its path, and a fresh
-//  push sends one per file, as it always did. Over `InProcessConnection` with a live
+//  push sends every file, several to a request. Over `InProcessConnection` with a live
 //  processing loop, so the roots compared are the ones the engine folds.
 //
 
@@ -124,23 +124,29 @@ final class ManifestPushScaleTests: XCTestCase {
     }
 
     private func pushedFiles(_ sent: [DaemonRequest]) -> [String] {
-        sent.compactMap { request in
-            if case .pushFile(let path, _) = request {
-                return path
+        sent.flatMap { request -> [String] in
+            switch request {
+            case .pushFile(let path, _):
+                return [path]
+            case .pushFiles(let files):
+                return files.map(\.path)
+            default:
+                return []
             }
-            return nil
         }
     }
 
     // MARK: - Costs
 
-    /// A tree the server has never seen costs what a push always cost: one request per
-    /// file, batched, and the one question before it.
-    func test_aFreshPushSendsOneRequestPerFile() {
+    /// A tree the server has never seen sends every file, several to a request, and the
+    /// one question before them.
+    func test_aFreshPushSendsEveryFileSeveralToARequest() {
         let sent = pushTree()
 
+        let requestsOfFiles = (Self.fileCount + FilePlugin.filesPerRequest - 1) / FilePlugin.filesPerRequest
         XCTAssertEqual(pushedFiles(sent).count, Self.fileCount)
-        XCTAssertEqual(sent.count, Self.fileCount + 4, "the roots, the batch around the files, and the folder: \(sent.filter { if case .pushFile = $0 { return false }; return true })")
+        XCTAssertEqual(Set(pushedFiles(sent)).count, Self.fileCount, "each file once")
+        XCTAssertEqual(sent.count, requestsOfFiles + 4, "the roots, the batch around the files, and the folder: \(sent.filter { if case .pushFiles = $0 { return false }; return true })")
         XCTAssertEqual(sent.first, .contentRoots(path: "tree"))
         XCTAssertTrue(lines.contains("Pushed \(Self.fileCount) files and 1 folder"), "\(lines)")
     }

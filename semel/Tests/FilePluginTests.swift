@@ -74,6 +74,51 @@ final class FilePluginTests: XCTestCase {
         XCTAssertEqual(context.messages, ["Push folder: src", "Push file: src/a.c [no change]"])
     }
 
+    /// Several files are one request, their bytes one after another in its body, and each
+    /// is reported from its own outcome, in the order the push listed them.
+    func test_severalFilesGoInOneRequestWithTheirBytesInTurn() throws {
+        try write("src/a.c", "a")
+        try write("src/b.c", "bb")
+        try replyHoldingNothing()
+        connection.reply(.ok)
+        connection.reply(.ok)
+        connection.reply(.pushFiles(outcomes: [.stored(didChange: true), .stored(didChange: false)]))
+        connection.reply(.ok)
+
+        try run("push", ["src"])
+
+        XCTAssertEqual(connection.daemonRequests, [.contentRoots(path: "src"), .beginBatch, .pushFolder(path: "src"),
+                                                   .pushFiles(files: [PushedFileHeader(path: "src/a.c", mode: 0o644, length: 1),
+                                                                      PushedFileHeader(path: "src/b.c", mode: 0o644, length: 2)]),
+                                                   .endBatch])
+        XCTAssertEqual(connection.requests[3].body, Data("abb".utf8))
+        XCTAssertEqual(context.messages, ["Push folder: src", "Push file: src/a.c", "Push file: src/b.c [no change]"])
+    }
+
+    /// A file deleted between the listing and the read is reported in its place among the
+    /// others, and the files around it are sent together.
+    func test_aFileThatCannotBeReadIsReportedAndTheRestGoTogether() throws {
+        try write("src/a.c", "a")
+        try write("src/b.c", "b")
+        try write("src/c.c", "c")
+        connection.reply(.ok)
+        connection.reply(.pushFiles(outcomes: [.stored(didChange: true), .stored(didChange: true)]))
+        connection.reply(.ok)
+        let unreadable = externalRoot.appendingPathComponent("src/b.c").path
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: unreadable)
+        defer { chmod(unreadable, 0o644) }
+
+        try run("push", ["src/*.c"])
+
+        XCTAssertEqual(connection.daemonRequests, [.beginBatch,
+                                                   .pushFiles(files: [PushedFileHeader(path: "src/a.c", mode: 0o644, length: 1),
+                                                                      PushedFileHeader(path: "src/c.c", mode: 0o644, length: 1)]),
+                                                   .endBatch])
+        XCTAssertEqual(context.messages, ["Push file: src/a.c", "Push file: src/c.c"])
+        XCTAssertEqual(context.errors.count, 1)
+        XCTAssertTrue(context.errors.first?.hasPrefix("push: src/b.c: ") == true, "\(context.errors)")
+    }
+
     /// B-130. A file the server could not store is named with the server's reason, and the
     /// push goes on to the files after it, as it does for a file it cannot read.
     func test_aFileTheServerRefusesIsReportedAndThePushGoesOn() throws {
@@ -83,9 +128,9 @@ final class FilePluginTests: XCTestCase {
         try replyHoldingNothing()
         connection.reply(.ok)
         connection.reply(.ok)
-        connection.reply(.pushFile(didChange: true))
-        connection.responses.append((.error(.nodeError(description: "the node it wakes cannot be made")), nil))
-        connection.reply(.pushFile(didChange: true))
+        connection.reply(.pushFiles(outcomes: [.stored(didChange: true),
+                                               .failed(error: .nodeError(description: "the node it wakes cannot be made")),
+                                               .stored(didChange: true)]))
         connection.reply(.ok)
 
         try run("push", ["src"])
@@ -124,9 +169,10 @@ final class FilePluginTests: XCTestCase {
         try replyHoldingNothing()
         connection.reply(.ok)
         connection.reply(.ok)
-        for _ in 0..<5 {
+        for _ in 0..<3 {
             connection.reply(.pushFile(didChange: true))
         }
+        connection.reply(.pushFiles(outcomes: [.stored(didChange: true), .stored(didChange: true)]))
         connection.reply(.ok)
 
         try run("push", ["fw"])
@@ -137,8 +183,8 @@ final class FilePluginTests: XCTestCase {
             .pushFile(path: "fw/Outside.h", mode: 0o644),
             .pushSymbolicLink(path: "fw/Tiny", target: "Versions/Current/Tiny", referent: .file(mode: 0o755)),
             .pushSymbolicLink(path: "fw/Versions/Current", target: "A", referent: .folder),
-            .pushFile(path: "fw/Versions/A/Tiny", mode: 0o755),
-            .pushFile(path: "fw/Versions/Current/Tiny", mode: 0o755),
+            .pushFiles(files: [PushedFileHeader(path: "fw/Versions/A/Tiny", mode: 0o755, length: 6),
+                               PushedFileHeader(path: "fw/Versions/Current/Tiny", mode: 0o755, length: 6)]),
             .endBatch,
         ])
         XCTAssertEqual(connection.requests[3].body, Data("outside".utf8))
@@ -169,9 +215,7 @@ final class FilePluginTests: XCTestCase {
         try replyHoldingNothing()
         connection.reply(.ok)
         connection.reply(.ok)
-        for index in 0..<21 {
-            connection.reply(.pushFile(didChange: index > 1))
-        }
+        connection.reply(.pushFiles(outcomes: (0..<21).map { .stored(didChange: $0 > 1) }))
         connection.reply(.ok)
 
         try run("push", ["src"])

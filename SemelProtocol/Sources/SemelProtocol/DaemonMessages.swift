@@ -356,6 +356,13 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
     /// The file's bytes travel in the frame body. No hash: hashing lives in SemelNodeKit,
     /// which this package does not link, so the server interns and hashes the bytes itself.
     case pushFile(path: String, mode: UInt16)
+    /// Several files, each as its own `pushFile`, in order: the headers in the JSON and the
+    /// bytes one after another in the frame body (`PushedFiles`). What a push of a tree
+    /// sends, because a request per file is a round trip per file — the client waiting on
+    /// each answer before it sends the next — and because the server hashes and stores a
+    /// batch's bytes on every core before the one queue that writes the graph records
+    /// them. Answered by `pushFiles(outcomes:)`, one outcome per header in the same order.
+    case pushFiles(files: [PushedFileHeader])
     /// A symbolic link that stays inside its folder, pushed as the link it is: `target` as
     /// the link holds it, relative to its folder (B-77). What it names is pushed as a push
     /// always stored a link — a file's bytes in this frame's body, a folder's files as
@@ -421,6 +428,8 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     case ok
     case list(entries: [ListEntry])
     case pushFile(didChange: Bool)
+    /// The answer to `pushFiles`: what became of each file, in the order they were sent.
+    case pushFiles(outcomes: [PushedFileOutcome])
     /// The answer to `contentRoots`: a JSON array of `HeldFolderRoot` in the frame body. In
     /// the body for the reason `check`'s findings are: the answer grows with the tree, one
     /// record per folder, and a large tree's would pass the megabyte the JSON section takes.

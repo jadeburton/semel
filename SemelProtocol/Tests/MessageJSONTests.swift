@@ -47,9 +47,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsTwentyOne() {
-        XCTAssertEqual(ProtocolVersion.current, 21)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 21,
+    func test_currentProtocolVersionIsTwentyTwo() {
+        XCTAssertEqual(ProtocolVersion.current, 22)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 22,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -99,6 +99,25 @@ final class MessageJSONTests: XCTestCase {
                        #"{"daemon":{"list":{"fileSystem":"input","pattern":"src\/*.c"}}}"#)
     }
 
+    /// The headers only: the bytes are in the frame body, and a header says how many of
+    /// them are its file's.
+    func test_encodesABatchOfFilesAsTheirHeaders() throws {
+        let request = Request.daemon(.pushFiles(files: [PushedFileHeader(path: "src/a.c", mode: 0o644, length: 13)]))
+
+        XCTAssertEqual(try json(request),
+                       #"{"daemon":{"pushFiles":{"files":[{"length":13,"mode":420,"path":"src\/a.c"}]}}}"#)
+    }
+
+    /// One outcome per file, in the order sent, each saying what that file's own `pushFile`
+    /// would have answered.
+    func test_encodesWhatBecameOfEachFileOfABatch() throws {
+        let response = DaemonResponse.pushFiles(outcomes: [.stored(didChange: false),
+                                                           .failed(error: .nodeError(description: "boom"))])
+
+        XCTAssertEqual(try json(response),
+                       #"{"pushFiles":{"outcomes":[{"stored":{"didChange":false}},{"failed":{"error":{"nodeError":{"description":"boom"}}}}]}}"#)
+    }
+
     func test_encodesAPayloadFreeRequestAsAnEmptyObject() throws {
         XCTAssertEqual(try json(Request.daemon(.nudge)), #"{"daemon":{"nudge":{}}}"#)
     }
@@ -120,6 +139,9 @@ final class MessageJSONTests: XCTestCase {
             .beginBatch,
             .endBatch,
             .pushFile(path: "src/main.c", mode: 0o644),
+            .pushFiles(files: [PushedFileHeader(path: "src/main.c", mode: 0o644, length: 13),
+                               PushedFileHeader(path: "run.sh", mode: 0o755, length: 0)]),
+            .pushFiles(files: []),
             .pushSymbolicLink(path: "Tiny.framework/Tiny", target: "Versions/Current/Tiny", referent: .file(mode: 0o755)),
             .pushSymbolicLink(path: "Tiny.framework/Versions/Current", target: "A", referent: .folder),
             .pushFolder(path: "src"),
@@ -237,6 +259,9 @@ final class MessageJSONTests: XCTestCase {
             .ok,
             .list(entries: [ListEntry(path: "a", kind: .file, size: 1, mode: 0o755, status: .pending)]),
             .pushFile(didChange: true),
+            .pushFiles(outcomes: [.stored(didChange: true), .stored(didChange: false),
+                                  .failed(error: .nodeError(description: "boom")),
+                                  .failed(error: .pathNotFound(path: "src"))]),
             .contentRoots,
             .folderChildren,
             .remove(removedFiles: ["a", "b"], removedFolders: ["src"]),

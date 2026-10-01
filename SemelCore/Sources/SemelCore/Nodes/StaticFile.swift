@@ -187,11 +187,29 @@ extension StaticFile {
     /// names (B-77).
     public static func push(_ bytes: [UInt8], mode: UInt16, symbolicLinkTarget: String? = nil,
                             at relativePath: Path) throws -> Bool {
+        try push(contentHash: bytes.internedHash, storing: { try bytes.intern() },
+                 mode: mode, symbolicLinkTarget: symbolicLinkTarget, at: relativePath)
+    }
+
+    /// `push` for bytes already in the object store under `contentHash`, so that what calls
+    /// this hashes and stores nothing and touches only the graph. The server interns a
+    /// push's bytes before the one queue that writes the graph, on every core, and hands
+    /// that queue the hash; the answer and the rows are the ones `push` gives for the
+    /// bytes.
+    public static func push(interned contentHash: DataObjectHash, mode: UInt16, symbolicLinkTarget: String? = nil,
+                            at relativePath: Path) throws -> Bool {
+        try push(contentHash: contentHash, storing: { contentHash },
+                 mode: mode, symbolicLinkTarget: symbolicLinkTarget, at: relativePath)
+    }
+
+    /// The one push both of the above are. `storing` puts the bytes in the store and names
+    /// them `contentHash`; it is called only on the path that writes.
+    private static func push(contentHash: DataObjectHash, storing: () throws -> DataObjectHash,
+                             mode: UInt16, symbolicLinkTarget: String?, at relativePath: Path) throws -> Bool {
         let fullPath = Path(Folder.inputFileSystemName) / relativePath
         let specNode = GraphSpecNode(StaticFile.self, properties: [pathProperty: fullPath.string])
 
         if let rootID = Folder.cachedInputFileSystemID {
-            let contentHash  = bytes.internedHash
             let metadataHash = try metadataDocument(mode: mode, symbolicLinkTarget: symbolicLinkTarget).internedHash
             let pushed = PushedFile(identity:         try specNode.identity(),
                                     content:          .value(contentHash),
@@ -214,7 +232,7 @@ extension StaticFile {
         guard let staticFile = try fromNode.nodeAsAny() as? StaticFile else {
             throw NodeError.nameCollision(path: fullPath.string, existingKind: fromNode.kind)
         }
-        return try staticFile.replaceContent(try bytes.intern(), mode: mode, symbolicLinkTarget: symbolicLinkTarget)
+        return try staticFile.replaceContent(try storing(), mode: mode, symbolicLinkTarget: symbolicLinkTarget)
     }
 
     /// What one push would leave in the graph, worked out before anything is read.

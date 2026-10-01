@@ -68,6 +68,9 @@ public final class DatabaseLayer {
 
     struct TaskLocalDatabase: @unchecked Sendable {
         let db: Database
+        /// Set by `withTransactionPerStep`: a `withTransaction` reached inside it is a
+        /// savepoint, where inside any other transaction it simply takes part.
+        var nestsAsSavepoints = false
     }
 
     @TaskLocal static var currentDB: TaskLocalDatabase?
@@ -120,6 +123,8 @@ public final class DatabaseLayer {
         /// A data accessor used after the `DatabaseLayer` that made it was released, named
         /// by its type.
         case layerReleased(accessor: String)
+        /// A savepoint that returned without running the work inside it.
+        case savepointNotRun
     }
 
     /// Execute `work` inside a single GRDB write transaction.
@@ -133,9 +138,13 @@ public final class DatabaseLayer {
     ///     that `currentDB` is already set and runs `work` directly without
     ///     opening a second transaction.
     public func withTransaction<T>(_ work: () throws -> T) throws -> T {
-        // Already inside a transaction — participate without opening a new one.
-        if DatabaseLayer.currentDB != nil {
-            return try work()
+        // Already inside a transaction — participate without opening a new one, or, inside
+        // `withTransactionPerStep`, open a savepoint in its place.
+        if let wrapper = DatabaseLayer.currentDB {
+            guard wrapper.nestsAsSavepoints else {
+                return try work()
+            }
+            return try Self.inSavepoint(of: wrapper.db, work)
         }
 
         return try translatingVolumeFailures {
@@ -145,6 +154,49 @@ public final class DatabaseLayer {
                 }
             }
         }
+    }
+
+    /// One write transaction around a run of steps that would each have been transactions
+    /// of their own, committed once at the end: what a batch of pushed files is recorded
+    /// in. Each step's writes cost a commit, and with it a sync of the log, when it is its
+    /// own; together they cost one.
+    ///
+    /// The steps keep the boundaries they would have had. A `withTransaction` reached
+    /// directly inside this one is a savepoint rather than a part of it, so a step that
+    /// throws out of one undoes that one's writes and nothing else, as its own transaction
+    /// would have, and the caller can catch it and go on to the next step. A
+    /// `withTransaction` inside that savepoint takes part in it, as one inside a transaction
+    /// always has. A bare `write` is given no savepoint: SQLite undoes a statement that
+    /// fails by itself, and writes that must stand or fall together belong in a
+    /// `withTransaction`. What does not keep its boundaries is an error thrown out of
+    /// `work`: it rolls back every step, the finished ones too — which is why a caller
+    /// catches a step's failure inside, and lets out only the machine's, a full disk or a
+    /// read-only volume, on which the server stops anyway.
+    public func withTransactionPerStep<T>(_ work: () throws -> T) throws -> T {
+        if DatabaseLayer.currentDB != nil {
+            return try withTransaction(work)
+        }
+
+        return try translatingVolumeFailures {
+            try dbQueue.write { db in
+                try DatabaseLayer.$currentDB.withValue(TaskLocalDatabase(db: db, nestsAsSavepoints: true)) {
+                    try work()
+                }
+            }
+        }
+    }
+
+    /// `work` inside a savepoint of `db`, with what it reaches taking part in that savepoint
+    /// rather than opening another: one level, the boundary a transaction of its own drew.
+    private static func inSavepoint<T>(of db: Database, _ work: () throws -> T) throws -> T {
+        var completed: Result<T, Error> = .failure(DatabaseError.savepointNotRun)
+        try db.inSavepoint {
+            completed = .success(try DatabaseLayer.$currentDB.withValue(TaskLocalDatabase(db: db)) {
+                try work()
+            })
+            return .commit
+        }
+        return try completed.get()
     }
 
     /// Execute `work` against one read of the database, so every query it makes — directly
