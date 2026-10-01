@@ -173,6 +173,30 @@ let package = Package(
             exclude: ["Library"],
             sources: ["main.swift"]
         ),
+        // The file watcher's library (B-126): the filter, the coalescer, the batch planner,
+        // the stream protocol and the loop, which drives a `CommandInterpreter` as a person
+        // drives the prompt. It sees the CLI and the node kit's lister, never the engine.
+        .target(
+            name: "SemelWatch",
+            dependencies: [
+                "SemelCLI",
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+            ],
+            path: "semel-watch/Sources/SemelWatch"
+        ),
+        // The library's tests, the loop among them over an in-process server.
+        .testTarget(
+            name: "SemelWatchTests",
+            dependencies: [
+                "SemelWatch",
+                "SemelCLI",
+                "SemelServer",
+                .product(name: "SemelCore", package: "SemelCore"),
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+            ],
+            path: "semel-watch/Tests"
+        ),
         .testTarget(
             name: "SemelServerTests",
             dependencies: [

@@ -206,6 +206,14 @@ public final class CommandInterpreter: CommandContext {
     /// Says hello, subscribes to events, and starts printing them. Returns what the banner
     /// needs. Events arrive on the connection's thread and are printed from there.
     public func connect() throws -> (serverVersion: String, databasePath: String) {
+        try connect(subscribing: true)
+    }
+
+    /// Says hello, and subscribes to events only when `subscribing`. A client that leaves
+    /// the reports to another one on the same engine — a `semel-watch` the prompt started,
+    /// whose settles the prompt already prints from its own subscription — would otherwise
+    /// print every summary twice into one terminal.
+    public func connect(subscribing: Bool) throws -> (serverVersion: String, databasePath: String) {
         let (reply, _) = try connection.send(.hello(Hello(role: .daemon)), body: nil)
         guard case .hello(let helloResponse) = reply else {
             throw ConnectError.unexpectedReply
@@ -214,6 +222,9 @@ public final class CommandInterpreter: CommandContext {
         case .rejected(let reason):
             throw ConnectError.rejected(reason)
         case .accepted(let serverVersion, let databasePath):
+            guard subscribing else {
+                return (serverVersion, databasePath)
+            }
             connection.onEvent = { [weak self] event in self?.printEvent(event) }
             _ = try request(.subscribe)
             return (serverVersion, databasePath)
@@ -272,9 +283,21 @@ public final class CommandInterpreter: CommandContext {
     /// reads the outcome from the result.
     @discardableResult
     public func handleCommand(_ command: String) -> HandleCommandResult {
+        handle { try run(command) }
+    }
+
+    /// Runs one command given as its words, as a program issues one: the verb and each
+    /// argument already apart, so a path holding a space or a quote is one argument and
+    /// no tokenizer reads it. What `semel-watch` drives the commands a person types with.
+    @discardableResult
+    public func handleCommand(verb: String, arguments: [String]) -> HandleCommandResult {
+        handle { try run(tokens: [verb] + arguments) }
+    }
+
+    private func handle(_ body: () throws -> Void) -> HandleCommandResult {
         let errorsBefore = errorsReported
         do {
-            try run(command)
+            try body()
         } catch CommandInterpreterError.quit {
             return .quit
         } catch {
@@ -299,7 +322,11 @@ public final class CommandInterpreter: CommandContext {
     /// Only `CommandInterpreterError.quit` escapes; every other error is reported here so
     /// a macro's later steps still run after an earlier one failed.
     private func run(_ command: String) throws {
-        var tokens = tokenize(command)
+        try run(tokens: tokenize(command))
+    }
+
+    private func run(tokens: [String]) throws {
+        var tokens = tokens
         guard !tokens.isEmpty else {
             return
         }
@@ -348,7 +375,7 @@ public final class CommandInterpreter: CommandContext {
             let errorsBeforeSettle = errorsReported
             try run("wait")
             if follows {
-                try followSources(neededBy: folder, errorsBeforeSettle: errorsBeforeSettle)
+                _ = try followSources(neededBy: folder, errorsBeforeSettle: errorsBeforeSettle)
             }
             // After the last `Settled.`, which says only that the waiting is over: this is
             // what the build did, read with the report under it.
@@ -392,6 +419,75 @@ public final class CommandInterpreter: CommandContext {
         }
     }
 
+    // MARK: - Driven by a program (B-126)
+
+    /// Runs `body` as `build` runs its steps: the idle-time error reports and the settle
+    /// summaries held while it runs, and printed at its end as one summary with the net
+    /// artifact diff under it (`HeldSettles`). A program that pushes and then follows the
+    /// formula's inputs would otherwise print a failing line for a source it is about to
+    /// push. Counted either way, as during a build; the reports themselves are for an
+    /// `errors` the caller runs after, as `build` runs one.
+    public func holdingReports(_ body: () -> Void) {
+        printsErrorEvents = false
+        defer { printsErrorEvents = true }
+        holdSettles()
+        defer { _ = releaseSettles() }
+        body()
+        releaseSettles().forEach { outputMessage($0) }
+    }
+
+    /// `build`'s follow of the formula's inputs, on its own: pushes what the last settle
+    /// reported missing and finds on disk under `base`, saying which formula in `folder`
+    /// asked, and waits again, until a round finds nothing new. Returns the paths it
+    /// pushed, relative to `base`, in path order. A failure is reported and counted, as a
+    /// command's is.
+    public func followSources(neededBy folder: String) -> [String] {
+        var pushed: Set<String> = []
+        _ = handle { pushed = try followSources(neededBy: folder, errorsBeforeSettle: errorsReported) }
+        return pushed.sorted()
+    }
+
+    /// Keeps `path`, relative to `base`, out of every later push, as `build` keeps its
+    /// export folder out: a program that exports into the tree it pushes would otherwise
+    /// push its own products back in.
+    public func excludeFromPush(_ path: String) {
+        pushExclusions.insert(path)
+    }
+
+    /// Whether the input file system holds `path` — relative to its root, as `push` and
+    /// `rm` take it — as something pushed: a file with its bytes, a folder pinned or not,
+    /// and not a source already removed or a name the graph only asks for. What a program
+    /// asks before an `rm`, so a file that came and went between two looks at the disk is
+    /// not reported as a removal of nothing.
+    public func inputHolds(_ path: String) throws -> Bool {
+        let response: DaemonResponse
+        do {
+            response = try request(.list(fileSystem: .input, pattern: path)).0
+        } catch let failure as ServerError where failure.isTheRequestsOwn {
+            // A folder on the way that the graph does not hold is the listing's own
+            // failure, and the answer is that the path is not held either.
+            return false
+        }
+        guard case .list(let entries) = response else {
+            return false
+        }
+        let asked = Path(path)
+        return entries.contains { entry in
+            Path(entry.path) == asked && (entry.status == .none || entry.status == .unreferenced)
+        }
+    }
+
+    /// Whether the graph holds any failure, as `errors` would list it, without printing
+    /// it. What decides an export after a settle: the settle's own event names only what
+    /// newly failed, and a failure that stands from an earlier one leaves the products as
+    /// broken as a new one does.
+    public func graphHasErrors() throws -> Bool {
+        guard case .errors(let records) = try request(.errors).0 else {
+            return false
+        }
+        return !records.isEmpty
+    }
+
     // MARK: - help
 
     /// One entry per command: the verbs it answers to, how it is spelled, what it does.
@@ -431,9 +527,9 @@ public final class CommandInterpreter: CommandContext {
                       description: "discard everything derived and rebuild it; --cache discards the cached builds too"),
         ]),
         ("Files", [
-            HelpEntry(verbs: ["push"], usage: "push <path>",
-                      description: "send a file or folder under the base into the input file system"),
-            HelpEntry(verbs: ["rm", "remove"], usage: "rm <path>", description: "remove a pushed file or folder"),
+            HelpEntry(verbs: ["push"], usage: "push <path> ...",
+                      description: "send files or folders under the base into the input file system"),
+            HelpEntry(verbs: ["rm", "remove"], usage: "rm <path> ...", description: "remove pushed files or folders"),
             HelpEntry(verbs: ["cp", "copy"], usage: "cp <path> [<destination>]",
                       description: "copy a file out of the input or output file system"),
             HelpEntry(verbs: ["export"], usage: "export <folder> --into <dir>", description: "copy a build's products out"),
@@ -512,12 +608,14 @@ public final class CommandInterpreter: CommandContext {
     /// reported absent by name, so an unrelated folder beside the project stays where it
     /// is. Only what exists: a path missing on disk stays the error it is. Bounded: a path
     /// is pushed once, so a round that finds only paths already tried is the last.
-    private func followSources(neededBy folder: String, errorsBeforeSettle: Int) throws {
+    ///
+    /// Returns the paths it pushed, relative to `base`.
+    private func followSources(neededBy folder: String, errorsBeforeSettle: Int) throws -> Set<String> {
         var pushed: Set<String> = []
         var errorsBeforeSettle = errorsBeforeSettle
         while true {
             guard case .errors(let records) = try request(.errors).0 else {
-                return
+                return pushed
             }
             let missing = records
                 .flatMap { $0.entries.compactMap(\.missingSource) }
@@ -527,7 +625,7 @@ public final class CommandInterpreter: CommandContext {
                     && FileManager.default.fileExists(atPath: (baseDirectory as NSString).appendingPathComponent(path))
             }
             guard !onDisk.isEmpty else {
-                return
+                return pushed
             }
 
             // The settle just reported what this round supplies, so its report is not the
@@ -609,8 +707,9 @@ public final class CommandInterpreter: CommandContext {
     /// `path` as seen from `folder`, both relative to `base`: `clang.cfg` from `hello` is
     /// `../clang.cfg`, which is how the formula spelled it.
     static func relativePath(to path: String, from folder: String) -> String {
+        // `.` is the base itself, so a folder of `.` climbs nothing.
         let target = Path(path).segments
-        let origin = Path(folder).segments
+        let origin = Path(folder).segments.filter { $0 != "." }
         let shared = zip(target, origin).prefix { $0 == $1 }.count
         let up = Array(repeating: "..", count: origin.count - shared)
         return (up + target.dropFirst(shared)).joined(separator: "/")

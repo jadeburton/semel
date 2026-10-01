@@ -14,16 +14,16 @@ final class FilePlugin: CommandPlugin {
     func handle(verb: String, tokens: [String], context: any CommandContext) throws {
         switch verb {
         case "push":
-            guard let path = tokens.first else {
+            guard !tokens.isEmpty else {
                 throw CommandParserError.missingArgument(command: "push", expected: "pathOrWildcard")
             }
-            try handlePush(externalPathOrWildcard: path, context: context)
+            try handlePush(externalPathsOrWildcards: tokens, context: context)
 
         case "rm", "remove":
-            guard let path = tokens.first else {
+            guard !tokens.isEmpty else {
                 throw CommandParserError.missingArgument(command: "rm", expected: "pathOrWildcard")
             }
-            try handleRemove(pathOrWildcard: path, context: context)
+            try handleRemove(pathsOrWildcards: tokens, context: context)
 
         case "cp", "copy":
             let (folder, remaining) = parseOptionalFileSystemFlag(tokens: tokens)
@@ -45,26 +45,36 @@ final class FilePlugin: CommandPlugin {
 
     // MARK: - push
 
-    private func handlePush(externalPathOrWildcard: String, context: any CommandContext) throws {
-        // The matcher is rooted at baseDirectory, and Path drops a leading slash, so an
-        // absolute path would silently be reinterpreted as relative and match nothing.
-        // Say so instead of doing nothing.
-        guard !externalPathOrWildcard.hasPrefix("/"), !externalPathOrWildcard.hasPrefix("~") else {
-            context.outputError("push: \(externalPathOrWildcard): only paths under \(context.baseDirectory) can be pushed")
-            return
-        }
-
-        // Resolve the user-supplied wildcard relative to the internal current directory
-        // so that "push *.c" from "src/a" reads baseDirectory/src/a/*.c and stores
-        // the files at input:/src/a/*.c.  `resolve` also folds away "." and "..".
-        let effectiveWildcard = context.resolve(externalPathOrWildcard,
-                                                relativeTo: context.currentDirectoryPath)
-
+    /// Several paths are one push: one batch, one work list — so a file two of them reach
+    /// is sent once — and one report, which counts rather than names once the list is
+    /// long. What `semel-watch` issues for a burst of saves; a path that matches nothing is
+    /// reported and the rest are pushed.
+    private func handlePush(externalPathsOrWildcards arguments: [String], context: any CommandContext) throws {
         let matcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: context.baseDirectory))
-        let entries = try matcher.findAllMatching(pathOrWildcard: effectiveWildcard)
+        var entries: [FileWildcardEntry] = []
+        for externalPathOrWildcard in arguments {
+            // The matcher is rooted at baseDirectory, and Path drops a leading slash, so an
+            // absolute path would silently be reinterpreted as relative and match nothing.
+            // Say so instead of doing nothing.
+            guard !externalPathOrWildcard.hasPrefix("/"), !externalPathOrWildcard.hasPrefix("~") else {
+                context.outputError("push: \(externalPathOrWildcard): only paths under \(context.baseDirectory) can be pushed")
+                continue
+            }
 
+            // Resolve the user-supplied wildcard relative to the internal current directory
+            // so that "push *.c" from "src/a" reads baseDirectory/src/a/*.c and stores
+            // the files at input:/src/a/*.c.  `resolve` also folds away "." and "..".
+            let effectiveWildcard = context.resolve(externalPathOrWildcard,
+                                                    relativeTo: context.currentDirectoryPath)
+
+            let matched = try matcher.findAllMatching(pathOrWildcard: effectiveWildcard)
+            guard !matched.isEmpty else {
+                context.outputError("push: \(externalPathOrWildcard): no such file or directory")
+                continue
+            }
+            entries.append(contentsOf: matched)
+        }
         guard !entries.isEmpty else {
-            context.outputError("push: \(externalPathOrWildcard): no such file or directory")
             return
         }
 
@@ -107,7 +117,7 @@ final class FilePlugin: CommandPlugin {
         if !excluded.isEmpty {
             work.removeAll { isExcluded($0.entry.path) }
             if work.isEmpty {
-                context.outputError("push: \(externalPathOrWildcard): a build's export folder is never pushed")
+                context.outputError("push: \(arguments.joined(separator: " ")): a build's export folder is never pushed")
                 return
             }
         }
@@ -469,9 +479,10 @@ final class FilePlugin: CommandPlugin {
 
     // MARK: - rm
 
-    private func handleRemove(pathOrWildcard: String, context: any CommandContext) throws {
+    /// Several paths are one removal: one batch and one report, as several paths are one
+    /// push. A path that matches nothing is reported and the rest are removed.
+    private func handleRemove(pathsOrWildcards: [String], context: any CommandContext) throws {
         let base = context.currentDirectoryPath
-        let fullPattern: Path = base.isEmpty ? Path(pathOrWildcard) : base / pathOrWildcard
 
         // One batch around the removal, as a push takes around its files: the server
         // unpins and marks as it walks the matches, and without a batch the engine drains
@@ -479,13 +490,22 @@ final class FilePlugin: CommandPlugin {
         _ = try context.request(.beginBatch)
         defer { _ = try? context.request(.endBatch) }
 
-        guard case .remove(let removedFiles, let removedFolders)
-                = try context.request(.remove(pattern: fullPattern.string)).0 else {
-            return
+        var removedFiles:   [String] = []
+        var removedFolders: [String] = []
+        for pathOrWildcard in pathsOrWildcards {
+            let fullPattern: Path = base.isEmpty ? Path(pathOrWildcard) : base / pathOrWildcard
+            guard case .remove(let files, let folders)
+                    = try context.request(.remove(pattern: fullPattern.string)).0 else {
+                continue
+            }
+            guard !files.isEmpty || !folders.isEmpty else {
+                context.outputError("rm: \(pathOrWildcard): no such file or directory")
+                continue
+            }
+            removedFiles.append(contentsOf: files)
+            removedFolders.append(contentsOf: folders)
         }
-
         guard !removedFiles.isEmpty || !removedFolders.isEmpty else {
-            context.outputError("rm: \(pathOrWildcard): no such file or directory")
             return
         }
 
@@ -647,14 +667,18 @@ final class FilePlugin: CommandPlugin {
 
         // The folder is a path in the output file system, from its root — the same folder
         // `build` took, which named the input tree the products mirror.
+        // `.` is the root itself, which is always there and which a listing cannot name:
+        // every product, as a watcher of the whole base exports them (B-126).
         let folderPath = context.resolve(folderToken, relativeTo: .empty)
-        guard case .list(let folderMatches) = try context.request(.list(fileSystem: .output,
-                                                                        pattern: folderPath.string)).0 else {
-            return
-        }
-        guard folderMatches.count == 1, folderMatches[0].kind == .folder else {
-            context.outputError("export: \(folderToken): no such folder in the output file system")
-            return
+        if !folderPath.isEmpty {
+            guard case .list(let folderMatches) = try context.request(.list(fileSystem: .output,
+                                                                            pattern: folderPath.string)).0 else {
+                return
+            }
+            guard folderMatches.count == 1, folderMatches[0].kind == .folder else {
+                context.outputError("export: \(folderToken): no such folder in the output file system")
+                return
+            }
         }
 
         let treePattern = (folderPath / Path("**/*")).string
