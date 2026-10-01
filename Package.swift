@@ -16,6 +16,7 @@ let package = Package(
         // executable's after its product, so `SemelServ.build` and `semelserv.build` are one
         // directory on a case-insensitive volume and the two builds corrupt each other.
         .executable(name: "semelserv", targets: ["semel-server"]),
+        .executable(name: "semel-watch", targets: ["semel-watch"]),
     ],
     dependencies: [
         .package(path: "SemelCore"),
@@ -183,6 +184,20 @@ let package = Package(
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
             ],
             path: "semel-watch/Sources/SemelWatch"
+        ),
+        // The watcher itself: its arguments, its signals and the FSEvents adapter, the one
+        // conformance of the library's stream protocol that touches a disk.
+        .executableTarget(
+            name: "semel-watch",
+            dependencies: [
+                "SemelWatch",
+                "SemelCLI",
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+            ],
+            path: "semel-watch",
+            exclude: ["Sources", "Tests"],
+            sources: ["main.swift", "FSEventsStream.swift"]
         ),
         // The library's tests, the loop among them over an in-process server.
         .testTarget(
