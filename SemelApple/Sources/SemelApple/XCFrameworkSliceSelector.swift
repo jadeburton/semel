@@ -74,7 +74,7 @@ struct XCFrameworkSlice: Equatable {
     let headersPath: String?
     /// The binary, relative to the slice's folder, as `xcodebuild -create-xcframework`
     /// records it: `Sparkle.framework/Versions/B/Sparkle`. Nil in a plist that does not say.
-    var binaryPath: String? = nil
+    let binaryPath: String?
 
     /// A framework is a folder with its binary, its headers and its module map inside; a
     /// library slice is the one file, with its headers beside it.

@@ -2296,8 +2296,8 @@ application target, simulator only, all library code in packages. In suggested o
    is signed, exports and stays up when launched, and it opens its welcome window as Xcode's
    build of the same commit does (16). Since the second slice the same day (5, 10 and 12
    below) it does so from a fresh clone with nothing stepped around: `prepare --platform
-   macos`, then `build`, with no errors, the build following `.all-contributorsrc` by its
-   path — and the export verifies with `codesign --verify --deep --strict`, holds
+   macos`, then `build`, 914 nodes and no errors, the build following `.all-contributorsrc`
+   by its path — and the export verifies with `codesign --verify --deep --strict`, holds
    `Sparkle.framework` alone under `Contents/Frameworks` (the grammars linked into the
    executable, 290 `tree_sitter_` symbols, no load command for them), and
    `.all-contributorsrc` and `Assets.car` under `Contents/Resources`; launched by `open`, it
