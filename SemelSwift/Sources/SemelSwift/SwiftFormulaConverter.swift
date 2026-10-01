@@ -114,8 +114,9 @@ struct SwiftFormulaConverter: Node {
     /// level a pass (B-135); at 16, a `byName` dependency on another package waits only for
     /// the package of that name, not for every dependency the manifest declares, every
     /// target compiles with `SWIFT_PACKAGE` defined and its package named, and a `.docc`
-    /// catalog is not walked (B-77).
-    public static let implementationVersion = 16
+    /// catalog is not walked (B-77); at 17, a target dependency or a setting behind a trait
+    /// the package does not enable by default is neither waited for nor linked.
+    public static let implementationVersion = 17
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -779,7 +780,7 @@ struct SwiftFormulaConverter: Node {
         let languageMode: String?
 
         enum CodingKeys: String, CodingKey {
-            case name, targets, products, dependencies, toolsVersion, swiftLanguageVersions
+            case name, targets, products, dependencies, toolsVersion, swiftLanguageVersions, traits
         }
 
         /// `{"_version": "6.2.0"}`.
@@ -789,10 +790,18 @@ struct SwiftFormulaConverter: Node {
             enum CodingKeys: String, CodingKey { case version = "_version" }
         }
 
+        /// One entry of the manifest's `traits`: `{"name": "SQLCipher", "enabledTraits": []}`,
+        /// and `{"name": "default", "enabledTraits": ["SystemSQLite"]}` for `.default(…)`.
+        private struct Trait: Decodable {
+            let name: String
+            let enabledTraits: [String]?
+        }
+
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             name = try c.decode(String.self,      forKey: .name)
-            targets = try c.decode([SPMTarget].self,  forKey: .targets)
+            let enabledTraits = Self.enabledTraits(declared: (try? c.decodeIfPresent([Trait].self, forKey: .traits)) ?? [])
+            targets = try c.decode([SPMTarget].self, forKey: .targets).map { $0.holding(enabledTraits: enabledTraits) }
             products = try c.decode([SPMProduct].self, forKey: .products)
             let rawDeps = (try? c.decode([AnySPMDependency].self, forKey: .dependencies)) ?? []
             packageDependencies = rawDeps.flatMap { $0.dependencies }
@@ -806,6 +815,35 @@ struct SwiftFormulaConverter: Node {
             try JSONDecoder().decode(SPMManifest.self, from: Data(json.utf8))
         }
 
+        /// The traits a build of this package enables: its default traits and the traits
+        /// they enable in turn, and nothing else — what SwiftPM enables for a package nobody
+        /// configures, which is what `prepare` resolved with. A target dependency or a
+        /// setting `.when(traits:)` none of these holds is dropped as the manifest is read
+        /// (`SPMTarget.holding(enabledTraits:)`), so a package only it names is neither
+        /// waited for nor linked: SQLite.swift's CSQLite and SQLCipher.swift, behind traits
+        /// IceCubes never enables, are packages SwiftPM never fetches.
+        ///
+        /// ISSUE: a dependent's `.package(…, traits:)` is not read, so a package built with
+        /// traits other than its defaults builds with its defaults here; and an enabled
+        /// trait is not defined as a compilation condition, as SwiftPM defines it for the
+        /// package's Swift targets.
+        private static func enabledTraits(declared: [Trait]) -> Set<String> {
+            let implied = Dictionary(declared.map { ($0.name, $0.enabledTraits ?? []) },
+                                     uniquingKeysWith: { first, _ in first })
+            var enabled = Set<String>()
+            var pending = implied[defaultTraitName] ?? []
+            while let trait = pending.popLast() {
+                guard enabled.insert(trait).inserted else {
+                    continue
+                }
+                pending += implied[trait] ?? []
+            }
+            return enabled
+        }
+
+        /// The name `dump-package` gives a manifest's `.default(enabledTraits:)`.
+        private static let defaultTraitName = "default"
+
         /// The package dependencies some target actually uses — what SwiftPM itself checks
         /// out. A dependency declared for a plugin or for documentation (swift-markdown
         /// names swift-docc-plugin) is used by no target, SwiftPM never fetches it, and a
@@ -818,7 +856,8 @@ struct SwiftFormulaConverter: Node {
         /// test-only swift-custom-dump, which Xcode never fetches, is not waited for. One
         /// naming no dependency could be a product of any, so then every dependency is
         /// followed: waiting for one too many is a stall the user can see; dropping one
-        /// that was needed is a compile failure that explains nothing.
+        /// that was needed is a compile failure that explains nothing. One behind a trait
+        /// the build does not enable is not here to follow (`enabledTraits`).
         func referencedDependencies() -> [SPMPackageDependency] {
             let localTargets = Set(targets.map(\.name))
             var referenced   = Set<String>()
@@ -989,7 +1028,7 @@ struct SwiftFormulaConverter: Node {
         /// platforms it is conditional on (B-77): upcoming and experimental features,
         /// `.define`, `.unsafeFlags` and `.swiftLanguageMode`. Decided for the platform being
         /// built by `swiftCompilerSettings(platform:)`, as `linkerSettings` are.
-        let swiftSettings: [SPMSwiftSetting]
+        var swiftSettings: [SPMSwiftSetting]
         /// `publicHeadersPath:`, relative to the target's path; nil means SwiftPM's `include`.
         let publicHeadersPath: String?
         /// The target's unconditional `.define` settings from `cSettings` and `cxxSettings`,
@@ -1008,7 +1047,7 @@ struct SwiftFormulaConverter: Node {
         /// The target's `.linkedFramework` and `.linkedLibrary` settings, in manifest order,
         /// with the platforms each is conditional on (B-55). A Swift target's count as a C
         /// target's do: SwiftPM links them into every product that reaches the target.
-        let linkerSettings: [SPMLinkerSetting]
+        var linkerSettings: [SPMLinkerSetting]
         /// Non-decoded. Set only on synthetic targets created for external packages.
         var overridePackageFolder: String?
         /// Non-decoded. What the target's folder tree said, once it arrived: nil means Swift.
@@ -1052,6 +1091,17 @@ struct SwiftFormulaConverter: Node {
         var hasPlatformConditionalSetting: Bool {
             linkerSettings.contains { $0.platforms != nil } || swiftSettings.contains { $0.platforms != nil }
                 || dependencies.contains { $0.platforms != nil }
+        }
+
+        /// The target with only the dependencies and settings `enabledTraits` hold:
+        /// one `.when(traits:)` holds when any trait it names is enabled, as in SwiftPM
+        /// (`SPMManifest.enabledTraits`).
+        func holding(enabledTraits: Set<String>) -> SPMTarget {
+            var holding = self
+            holding.dependencies   = dependencies.filter   { SwiftFormulaConverter.holds(traits: $0.traits, enabled: enabledTraits) }
+            holding.swiftSettings  = swiftSettings.filter  { SwiftFormulaConverter.holds(traits: $0.traits, enabled: enabledTraits) }
+            holding.linkerSettings = linkerSettings.filter { SwiftFormulaConverter.holds(traits: $0.traits, enabled: enabledTraits) }
+            return holding
         }
 
         /// What compiling this target's Swift takes from its `swiftSettings` on `platform`,
@@ -1163,13 +1213,16 @@ struct SwiftFormulaConverter: Node {
             let platformNames: [String]
             /// `.when(configuration:)`: `debug` or `release`; nil when it names none.
             let configuration: String?
+            /// `.when(traits:)`; nil when it names none.
+            let traits: [String]?
 
             enum CodingKeys: String, CodingKey { case kind, tool, condition }
 
-            /// `{"platformNames": ["ios"], "config": "debug"}`.
+            /// `{"platformNames": ["ios"], "config": "debug", "traits": ["SQLCipher"]}`.
             private struct Condition: Decodable {
                 let platformNames: [String]?
                 let config: String?
+                let traits: [String]?
             }
 
             /// A kind's `_0`: `{"_0": "6"}` or `{"_0": ["-warnings-as-errors"]}`, or `{}`.
@@ -1194,6 +1247,7 @@ struct SwiftFormulaConverter: Node {
                 let condition = try? container.decode(Condition.self, forKey: .condition)
                 platformNames = condition?.platformNames ?? []
                 configuration = condition?.config
+                traits        = condition?.traits
             }
 
             /// A `.linkedFramework` or `.linkedLibrary`, with the platforms it holds for.
@@ -1206,10 +1260,10 @@ struct SwiftFormulaConverter: Node {
                     return nil
                 }
                 if let framework = kind?["linkedFramework"]?.string {
-                    return .init(item: .framework(framework), platforms: platforms)
+                    return .init(item: .framework(framework), platforms: platforms, traits: traits)
                 }
                 if let library = kind?["linkedLibrary"]?.string {
-                    return .init(item: .library(library), platforms: platforms)
+                    return .init(item: .library(library), platforms: platforms, traits: traits)
                 }
                 return nil
             }
@@ -1224,19 +1278,19 @@ struct SwiftFormulaConverter: Node {
                     return nil
                 }
                 if let feature = kind["enableUpcomingFeature"]?.string {
-                    return .init(item: .upcomingFeature(feature), platforms: platforms)
+                    return .init(item: .upcomingFeature(feature), platforms: platforms, traits: traits)
                 }
                 if let feature = kind["enableExperimentalFeature"]?.string {
-                    return .init(item: .experimentalFeature(feature), platforms: platforms)
+                    return .init(item: .experimentalFeature(feature), platforms: platforms, traits: traits)
                 }
                 if let name = kind["define"]?.string {
-                    return .init(item: .define(name), platforms: platforms)
+                    return .init(item: .define(name), platforms: platforms, traits: traits)
                 }
                 if let flags = kind["unsafeFlags"]?.strings {
-                    return .init(item: .unsafeFlags(flags), platforms: platforms)
+                    return .init(item: .unsafeFlags(flags), platforms: platforms, traits: traits)
                 }
                 if let mode = kind["swiftLanguageMode"]?.string {
-                    return .init(item: .languageMode(mode), platforms: platforms)
+                    return .init(item: .languageMode(mode), platforms: platforms, traits: traits)
                 }
                 return nil
             }
@@ -1354,6 +1408,8 @@ struct SwiftFormulaConverter: Node {
         let item: Item
         /// `.when(platforms:)` as SwiftPM names them (`macos`, `ios`); nil for every one.
         let platforms: [String]?
+        /// `.when(traits:)`; nil when it names none.
+        let traits: [String]?
 
         var frameworkName: String? {
             guard case .framework(let name) = item else { return nil }
@@ -1384,6 +1440,8 @@ struct SwiftFormulaConverter: Node {
         let item: Item
         /// `.when(platforms:)` as SwiftPM names them (`macos`, `ios`); nil for every one.
         let platforms: [String]?
+        /// `.when(traits:)`; nil when it names none.
+        let traits: [String]?
     }
 
     /// What one target's compile takes from its `swiftSettings` on the platform being
@@ -1440,6 +1498,15 @@ struct SwiftFormulaConverter: Node {
         return platforms.contains(platform)
     }
 
+    /// Whether a dependency or a setting conditional on `traits` — nil or empty for none —
+    /// holds with `enabled`: when any trait it names is, as SwiftPM's trait condition reads.
+    static func holds(traits: [String]?, enabled: Set<String>) -> Bool {
+        guard let traits, !traits.isEmpty else {
+            return true
+        }
+        return traits.contains(where: enabled.contains)
+    }
+
     /// SwiftPM's name for the platform an SDK builds for, the name a `.when(platforms:)`
     /// uses: `iphonesimulator` builds for `ios`. nil for an SDK it has no name for, on
     /// which no platform-conditional setting holds.
@@ -1474,6 +1541,9 @@ struct SwiftFormulaConverter: Node {
         /// LanguageClient depends on ProcessEnv on macOS alone, and its
         /// `#if canImport(ProcessEnv)` hides `localProcessChannel` from a build without it.
         let platforms: [String]?
+        /// `.when(traits:)`; nil when it names none. SQLite.swift's SQLCipher product is
+        /// `.when(platforms: applePlatforms, traits: ["SQLCipher"])`.
+        let traits: [String]?
 
         private struct AnyKey: CodingKey {
             var stringValue: String
@@ -1484,13 +1554,14 @@ struct SwiftFormulaConverter: Node {
         }
 
         /// One element of the array form: a name, nothing, or an object — a product's
-        /// module aliases, or the condition, `{"platformNames": ["macos"]}`, which is last.
+        /// module aliases, or the condition, `{"platformNames": ["macos"], "traits": […]}`,
+        /// which is last.
         private enum Field: Decodable {
             case text(String)
-            case object(platformNames: [String]?)
+            case object(platformNames: [String]?, traits: [String]?)
             case absent
 
-            private enum ConditionKeys: String, CodingKey { case platformNames }
+            private enum ConditionKeys: String, CodingKey { case platformNames, traits }
 
             init(from decoder: Decoder) throws {
                 let container = try decoder.singleValueContainer()
@@ -1500,7 +1571,8 @@ struct SwiftFormulaConverter: Node {
                     self = .text(text)
                 } else {
                     let object = try decoder.container(keyedBy: ConditionKeys.self)
-                    self = .object(platformNames: try object.decodeIfPresent([String].self, forKey: .platformNames))
+                    self = .object(platformNames: try object.decodeIfPresent([String].self, forKey: .platformNames),
+                                   traits:        try object.decodeIfPresent([String].self, forKey: .traits))
                 }
             }
 
@@ -1515,6 +1587,7 @@ struct SwiftFormulaConverter: Node {
             var found: String?
             var package: String?
             var conditionPlatforms: [String]?
+            var conditionTraits: [String]?
             var byName = false
 
             for key in ["byName", "target", "product"] {
@@ -1525,8 +1598,11 @@ struct SwiftFormulaConverter: Node {
                     if key == "product", texts.count >= 2 { package = texts[1] }
                     // A condition on a configuration alone names no platform (`[]`): the
                     // dependency is kept, a package being built in no configuration here.
-                    if let last = fields.last, case .object(let platformNames) = last, platformNames?.isEmpty == false {
-                        conditionPlatforms = platformNames
+                    if let last = fields.last, case .object(let platformNames, let traits) = last {
+                        if platformNames?.isEmpty == false {
+                            conditionPlatforms = platformNames
+                        }
+                        conditionTraits = traits
                     }
                 } else if let object = try? container.nestedContainer(keyedBy: AnyKey.self, forKey: AnyKey(key)),
                           let name   = try? object.decode(String.self, forKey: AnyKey("name")) {
@@ -1539,6 +1615,7 @@ struct SwiftFormulaConverter: Node {
             packageName = package
             isByName    = byName
             platforms   = conditionPlatforms
+            traits      = conditionTraits
         }
     }
 

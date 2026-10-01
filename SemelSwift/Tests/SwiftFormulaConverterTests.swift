@@ -1706,6 +1706,87 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertEqual(try externalSpecs(output).keys.sorted(), ["input:/repo/Editor/Dependencies/CodeEditTextView"])
     }
 
+    /// SQLite.swift's traits as `dump-package` emits them: `SystemSQLite` by default, which
+    /// here enables `Shims` in turn, and `SQLCipher` and `SQLiteSwiftCSQLite`, which only a
+    /// consumer asking for them enables.
+    private let sqliteTraits = """
+        [{"name": "SystemSQLite", "enabledTraits": ["Shims"]},
+         {"name": "Shims", "enabledTraits": []},
+         {"name": "SQLCipher", "enabledTraits": []},
+         {"name": "SQLiteSwiftCSQLite", "enabledTraits": []},
+         {"name": "default", "enabledTraits": ["SystemSQLite"], "description": "The default traits of this package."}]
+        """
+
+    /// SQLite.swift names CSQLite and SQLCipher.swift only behind traits IceCubes never
+    /// enables, so SwiftPM never fetches them and `prepare` never vendors them: a package
+    /// named only behind a trait the build does not enable is not waited for. One behind a
+    /// trait a default trait enables is.
+    func test_doesNotWaitForAPackageNamedOnlyBehindATraitTheBuildDoesNotEnable() throws {
+        let csqlite = """
+            {"sourceControl": [{"identity": "csqlite", "location": {"remote": [{"urlString": "https://github.com/stephencelis/CSQLite"}]},
+                                "traits": [{"condition": {"traits": ["FTS5"]}, "name": "FTS5"}]}]}
+            """
+        let sqlcipher = """
+            {"sourceControl": [{"identity": "sqlcipher.swift", "location": {"remote": [{"urlString": "https://github.com/sqlcipher/SQLCipher.swift"}]},
+                                "traits": [{"name": "default"}]}]}
+            """
+        let shims = """
+            {"sourceControl": [{"identity": "sqlite-shims", "location": {"remote": [{"urlString": "https://github.com/example/sqlite-shims"}]}}]}
+            """
+        let json = """
+            {
+              "name": "SQLite.swift",
+              "traits": \(sqliteTraits),
+              "dependencies": [\(csqlite), \(sqlcipher), \(shims)],
+              "products": [{"name": "SQLite", "targets": ["SQLite"], "type": {"library": ["automatic"]}}],
+              "targets": [
+                {"name": "SQLite", "type": "regular", "path": "Sources/SQLite",
+                 "dependencies": [{"product": ["SQLiteSwiftCSQLite", "CSQLite", null, {"platformNames": [], "traits": ["SQLiteSwiftCSQLite"]}]},
+                                  {"product": ["SQLCipher", "SQLCipher.swift", null, {"platformNames": ["ios", "macos"], "traits": ["SQLCipher"]}]},
+                                  {"product": ["Shims", "sqlite-shims", null, {"platformNames": [], "traits": ["Shims"]}]}]}
+              ]
+            }
+            """
+        let output = try convert(packageFolder: "input:/repo/SQLite", json: json)
+
+        XCTAssertEqual(try externalSpecs(output).keys.sorted(), ["input:/repo/SQLite/Dependencies/sqlite-shims"])
+    }
+
+    /// A target dependency or a Swift setting behind a trait the build does not enable is
+    /// not one: not wired, not linked, not compiled with — and, though it names platforms,
+    /// does not make the conversion ask which platform is built.
+    func test_aTargetDependencyBehindATraitTheBuildDoesNotEnableIsNotOne() throws {
+        let json = """
+            {
+              "name": "SQLite.swift",
+              "traits": \(sqliteTraits),
+              "dependencies": [],
+              "products": [{"name": "SQLite", "targets": ["SQLite"], "type": {"library": ["automatic"]}}],
+              "targets": [
+                {"name": "SQLite", "type": "regular", "path": "Sources/SQLite",
+                 "dependencies": [{"target": ["Cipher", {"platformNames": ["ios", "macos"], "traits": ["SQLCipher"]}]},
+                                  {"byName": ["System", {"platformNames": [], "traits": ["SQLiteSwiftCSQLite", "SystemSQLite"]}]}],
+                 "settings": [{"condition": {"platformNames": [], "traits": ["SQLCipher"]}, "kind": {"define": {"_0": "SQLITE_HAS_CODEC"}}, "tool": "swift"},
+                              {"condition": {"platformNames": [], "traits": ["Shims"]}, "kind": {"define": {"_0": "SHIMS"}}, "tool": "swift"},
+                              {"condition": {"platformNames": [], "traits": ["SQLCipher"]}, "kind": {"linkedLibrary": {"_0": "sqlcipher"}}, "tool": "linker"}]},
+                {"name": "Cipher", "type": "regular", "path": "Sources/Cipher", "dependencies": []},
+                {"name": "System", "type": "regular", "path": "Sources/System", "dependencies": []}
+              ]
+            }
+            """
+        let output = try convert(json: json)
+        XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.linkerConfiguration] ?? [:], [:],
+                       "nothing that holds is conditional on a platform")
+
+        let result   = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]).expectValue().resolveAsString()
+        let compiler = try funcDefinition("compilerSQLite", in: result)
+        XCTAssertFalse(compiler.contains("Cipher"), "got:\n\(compiler)")
+        XCTAssertTrue(compiler.contains("'System': compilerSystem().swiftmodule"),
+                      "a trait condition holds when any trait it names is enabled, got:\n\(compiler)")
+        XCTAssertTrue(compiler.contains("defines: 'SWIFT_PACKAGE,SHIMS', "), "got:\n\(compiler)")
+        XCTAssertFalse(result.contains("sqlcipher"), "got:\n\(result)")
+    }
+
     /// `.package(name: "Models", path: ...)` is referenced as "Models" while its identity
     /// is "models": the match is case-insensitive.
     func test_matchesAPathDependencysIdentityCaseInsensitively() throws {
