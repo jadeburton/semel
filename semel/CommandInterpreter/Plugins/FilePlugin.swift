@@ -135,18 +135,7 @@ final class FilePlugin: CommandPlugin {
 
         defer { reportNotOnDisk(notOnDisk, namedIndividually: nameEachPath, context: context) }
 
-        for item in work {
-            let entry = item.entry
-            let outcome: PushOutcome
-            switch item {
-            case .held:
-                outcome = Self.heldOutcome(of: entry)
-            case .send:
-                guard let sent = try pushOne(entry, baseDirectory: context.baseDirectory, context: context) else {
-                    continue
-                }
-                outcome = sent
-            }
+        func report(_ entry: FileWildcardEntry, _ outcome: PushOutcome) {
             switch outcome {
 
             case .folder:
@@ -176,6 +165,26 @@ final class FilePlugin: CommandPlugin {
                 }
             }
         }
+
+        var batch = PushBatch()
+        for item in work {
+            switch item {
+            case .held(let entry):
+                batch.append(.decided(entry, Self.heldOutcome(of: entry)))
+            case .send(let entry) where entry.kind == .file:
+                batch.append(PushBatch.Step(reading: entry, under: context.baseDirectory))
+            case .send(let entry):
+                try batch.send(context: context, report: report)
+                guard let sent = try pushOne(entry, context: context) else {
+                    continue
+                }
+                report(entry, sent)
+            }
+            if batch.isFull {
+                try batch.send(context: context, report: report)
+            }
+        }
+        try batch.send(context: context, report: report)
 
         guard !nameEachPath, let counts = Self.countedTogether(files: files, folders: folders) else {
             return
@@ -416,65 +425,188 @@ final class FilePlugin: CommandPlugin {
         context.outputMessage("Not on disk, kept: \(counts) (push only adds; rm removes them): \(Self.named(paths))")
     }
 
-    /// Pushes one entry and says what it was; `nil` when it was reported and skipped.
+    /// How many files one push request carries, and how many of their bytes, past which the
+    /// next file starts another: enough that the round trip is a small part of each file's
+    /// cost, few enough that one push does not hold the server's queue, which every client
+    /// takes turns on, for long at a time. The file that reaches either limit closes its
+    /// request, however large it is; the frame's own limit is far above both.
+    static let filesPerRequest = 64
+    static let bytesPerRequest = 8 << 20
+
+    /// Pushes one folder and says what it was; `nil` when it was reported and skipped. A
+    /// file goes in a `PushBatch`.
     ///
     /// A server that could not store this entry is reported by its path and the push goes
     /// on to the next, as for a file that cannot be read: one entry the graph refused says
     /// nothing about the rest (B-130).
-    private func pushOne(_ entry: FileWildcardEntry, baseDirectory: String,
-                         context: any CommandContext) throws -> PushOutcome? {
+    private func pushOne(_ entry: FileWildcardEntry, context: any CommandContext) throws -> PushOutcome? {
         do {
-            return try sendOne(entry, baseDirectory: baseDirectory, context: context)
+            return try sendFolder(entry, context: context)
         } catch let failure as ServerError where failure.isTheRequestsOwn {
             context.outputError("push: \(entry.path): \(failure)")
             return nil
         }
     }
 
-    private func sendOne(_ entry: FileWildcardEntry, baseDirectory: String,
-                         context: any CommandContext) throws -> PushOutcome? {
-
-        let relativePath = entry.path
-
-        if case .folder = entry.kind {
-            // Just the folder. Its contents are separate entries in the work list, put
-            // there by `expand`, so that a file reachable both directly and through its
-            // folder is still pushed once.
-            guard let target = entry.symbolicLinkTarget else {
-                _ = try context.request(.pushFolder(path: relativePath.string))
-                return .folder
-            }
-            let request = DaemonRequest.pushSymbolicLink(path: relativePath.string, target: target, referent: .folder)
-            guard case .pushFile(let didChange) = try context.request(request).0 else {
-                return nil
-            }
-            return .symbolicLink(target: target, didChange: didChange)
+    /// Just the folder. Its contents are separate entries in the work list, put there by
+    /// `expand`, so that a file reachable both directly and through its folder is still
+    /// pushed once.
+    private func sendFolder(_ entry: FileWildcardEntry, context: any CommandContext) throws -> PushOutcome? {
+        guard let target = entry.symbolicLinkTarget else {
+            _ = try context.request(.pushFolder(path: entry.path.string))
+            return .folder
         }
-
-        let absolutePath = (baseDirectory as NSString).appendingPathComponent(relativePath.string)
-
-        // The matcher listed this file a moment ago, but it can be deleted or made
-        // unreadable in between — that is a report-and-continue, not a crash.
-        let content: PushedContent
-        do {
-            content = try PushedContent(ofFileAt: absolutePath, listedAs: entry)
-        } catch {
-            context.outputError("push: \(relativePath): \(error.localizedDescription)")
-            return nil
-        }
-
-        guard let target = content.symbolicLinkTarget else {
-            guard case .pushFile(let didChange) = try context.request(.pushFile(path: relativePath.string, mode: content.mode),
-                                                                       body: content.bytes).0 else {
-                return nil
-            }
-            return .file(didChange: didChange)
-        }
-        let request = DaemonRequest.pushSymbolicLink(path: relativePath.string, target: target, referent: .file(mode: content.mode))
-        guard case .pushFile(let didChange) = try context.request(request, body: content.bytes).0 else {
+        let request = DaemonRequest.pushSymbolicLink(path: entry.path.string, target: target, referent: .folder)
+        guard case .pushFile(let didChange) = try context.request(request).0 else {
             return nil
         }
         return .symbolicLink(target: target, didChange: didChange)
+    }
+
+    /// The files a push sends, gathered into one request (`pushFiles`) rather than one
+    /// each: a request per file is a round trip per file, the client waiting on every
+    /// answer before it reads the next file, and the server hashes and stores the files of
+    /// one request on every core before its one queue records them. What stands between
+    /// them in the work list — an entry already held, a file that could not be read — waits
+    /// in here too, so the report keeps the work list's order.
+    private struct PushBatch {
+
+        enum Step {
+            /// Reported as it is, with no request.
+            case decided(FileWildcardEntry, PushOutcome)
+            /// Listed a moment ago and deleted or made unreadable since: reported, and the
+            /// push goes on, as for a file the server refuses.
+            case unreadable(message: String)
+            case file(FileWildcardEntry, PushedContent)
+
+            init(reading entry: FileWildcardEntry, under baseDirectory: String) {
+                let absolutePath = (baseDirectory as NSString).appendingPathComponent(entry.path.string)
+                do {
+                    self = .file(entry, try PushedContent(ofFileAt: absolutePath, listedAs: entry))
+                } catch {
+                    self = .unreadable(message: "push: \(entry.path): \(error.localizedDescription)")
+                }
+            }
+        }
+
+        private var steps: [Step] = []
+        private var fileCount = 0
+        private var byteCount = 0
+        /// A link to a file is a request of its own (`pushSymbolicLink`): what it holds is a
+        /// target as well as bytes. It closes the batch, so the requests leave in the work
+        /// list's order.
+        private var endsWithLink = false
+
+        var isFull: Bool {
+            endsWithLink || fileCount >= FilePlugin.filesPerRequest || byteCount >= FilePlugin.bytesPerRequest
+        }
+
+        mutating func append(_ step: Step) {
+            steps.append(step)
+            guard case .file(_, let content) = step else {
+                return
+            }
+            guard content.symbolicLinkTarget == nil else {
+                endsWithLink = true
+                return
+            }
+            fileCount += 1
+            byteCount += content.bytes.count
+        }
+
+        /// Sends what is gathered and reports every step in order, leaving the batch empty.
+        /// A failure that is the server's rather than one file's stops the push, as it does
+        /// for a folder.
+        mutating func send(context: any CommandContext, report: (FileWildcardEntry, PushOutcome) -> Void) throws {
+            let gathered = steps
+            self = PushBatch()
+
+            let files = gathered.compactMap { step -> (entry: FileWildcardEntry, content: PushedContent)? in
+                guard case .file(let entry, let content) = step, content.symbolicLinkTarget == nil else {
+                    return nil
+                }
+                return (entry, content)
+            }
+            var outcomes = try Self.send(files, context: context)[...]
+
+            for step in gathered {
+                switch step {
+                case .decided(let entry, let outcome):
+                    report(entry, outcome)
+                case .unreadable(let message):
+                    context.outputError(message)
+                case .file(let entry, let content):
+                    guard let target = content.symbolicLinkTarget else {
+                        try Self.report(outcomes.popFirst() ?? nil, of: entry, context: context, report: report)
+                        continue
+                    }
+                    let request = DaemonRequest.pushSymbolicLink(path: entry.path.string, target: target,
+                                                                 referent: .file(mode: content.mode))
+                    do {
+                        guard case .pushFile(let didChange) = try context.request(request, body: content.bytes).0 else {
+                            continue
+                        }
+                        report(entry, .symbolicLink(target: target, didChange: didChange))
+                    } catch let failure as ServerError where failure.isTheRequestsOwn {
+                        context.outputError("push: \(entry.path): \(failure)")
+                    }
+                }
+            }
+        }
+
+        /// What became of each file, in order; nil for one the reply did not answer as a
+        /// push, which is skipped unreported. One file goes as `pushFile`, which is all a
+        /// batch of one needs; several as `pushFiles`.
+        private static func send(_ files: [(entry: FileWildcardEntry, content: PushedContent)],
+                                 context: any CommandContext) throws -> [PushedFileOutcome?] {
+            guard files.count > 1 else {
+                guard let file = files.first else {
+                    return []
+                }
+                do {
+                    let request = DaemonRequest.pushFile(path: file.entry.path.string, mode: file.content.mode)
+                    guard case .pushFile(let didChange) = try context.request(request, body: file.content.bytes).0 else {
+                        return [nil]
+                    }
+                    return [.stored(didChange: didChange)]
+                } catch let failure as ServerError where failure.isTheRequestsOwn {
+                    return [.failed(error: failure.response)]
+                }
+            }
+
+            let headers = files.map {
+                PushedFileHeader(path: $0.entry.path.string, mode: $0.content.mode, length: $0.content.bytes.count)
+            }
+            let reply: DaemonResponse
+            do {
+                reply = try context.request(.pushFiles(files: headers),
+                                            body: PushedFiles.body(joining: files.map(\.content.bytes))).0
+            } catch let failure as ServerError where failure.isTheRequestsOwn {
+                return files.map { _ in .failed(error: failure.response) }
+            }
+            guard case .pushFiles(let outcomes) = reply, outcomes.count == files.count else {
+                return files.map { _ in nil }
+            }
+            return outcomes
+        }
+
+        /// One file's outcome, said as a push says it; a failure that is not the file's own
+        /// is thrown.
+        private static func report(_ outcome: PushedFileOutcome?, of entry: FileWildcardEntry, context: any CommandContext,
+                                   report: (FileWildcardEntry, PushOutcome) -> Void) throws {
+            switch outcome {
+            case .stored(let didChange):
+                report(entry, .file(didChange: didChange))
+            case .failed(let error):
+                let failure = ServerError(response: error)
+                guard failure.isTheRequestsOwn else {
+                    throw failure
+                }
+                context.outputError("push: \(entry.path): \(failure)")
+            case nil:
+                break
+            }
+        }
     }
 
     // MARK: - rm

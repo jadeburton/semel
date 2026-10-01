@@ -70,6 +70,99 @@ final class RequestHandlerFileTests: RequestHandlerTestCase {
                        .pushFile(didChange: false))
     }
 
+    // MARK: - push, several files to a request
+
+    private func batch(_ files: [(path: String, mode: UInt16, text: String)]) -> (DaemonRequest, Data) {
+        let contents = files.map { Data($0.text.utf8) }
+        let headers  = zip(files, contents).map { PushedFileHeader(path: $0.path, mode: $0.mode, length: $1.count) }
+        return (.pushFiles(files: headers), PushedFiles.body(joining: contents))
+    }
+
+    func test_aBatchStoresEachFileAndSaysWhetherEachChanged() throws {
+        try daemon(.pushFile(path: "src/old.c", mode: 0o644), body: Data("old".utf8))
+        let (request, body) = batch([("src/main.c", 0o644, "int main() {}"), ("src/old.c", 0o644, "old"),
+                                     ("run.sh", 0o755, "echo")])
+
+        XCTAssertEqual(try daemon(request, body: body).0,
+                       .pushFiles(outcomes: [.stored(didChange: true), .stored(didChange: false), .stored(didChange: true)]))
+        XCTAssertEqual(try daemon(.fetch(fileSystem: .input, path: "src/main.c")).1, Data("int main() {}".utf8))
+        XCTAssertEqual(try daemon(.fetch(fileSystem: .input, path: "run.sh")).0, .fetch(mode: 0o755))
+        XCTAssertEqual(try daemon(request, body: body).0,
+                       .pushFiles(outcomes: [.stored(didChange: false), .stored(didChange: false), .stored(didChange: false)]),
+                       "the same batch again changes nothing")
+    }
+
+    /// B-130. A file the graph refuses is answered as its own push would have been, and the
+    /// files after it are stored all the same — whether the refusal comes on the way to the
+    /// file (a file named as a folder) or from making it (a file where a folder is).
+    func test_aFileOfABatchTheGraphRefusesFailsAloneAndTheRestAreStored() throws {
+        try daemon(.pushFolder(path: "src/lib"))
+        let (request, body) = batch([("src/a.c", 0o644, "a"), ("src/a.c/b.c", 0o644, "b"), ("src/lib", 0o644, "lib"),
+                                     ("src/c.c", 0o644, "c")])
+
+        guard case .pushFiles(let outcomes) = try daemon(request, body: body).0 else {
+            return XCTFail("expected the batch's outcomes")
+        }
+
+        XCTAssertEqual(outcomes.count, 4)
+        XCTAssertEqual(outcomes[0], .stored(didChange: true))
+        guard case .failed(.nodeError) = outcomes[1], case .failed(.nodeError) = outcomes[2] else {
+            return XCTFail("expected both refusals as node errors, got \(outcomes)")
+        }
+        XCTAssertEqual(outcomes[3], .stored(didChange: true))
+        XCTAssertEqual(try daemon(.fetch(fileSystem: .input, path: "src/c.c")).1, Data("c".utf8))
+        let (_, findings) = try daemon(.check)
+        XCTAssertEqual(try MessageCoder.decode([CheckFinding].self, from: try XCTUnwrap(findings)), [],
+                       "a refused file leaves no half-made node behind")
+    }
+
+    /// The batch is one transaction with each file's own transactions kept inside it, so
+    /// the graph it leaves is the one pushing each file alone leaves — refused files too.
+    func test_aBatchLeavesTheGraphThatPushingEachFileAloneLeaves() throws {
+        let files: [(path: String, mode: UInt16, text: String)] = [
+            ("src/main.c", 0o644, "int main() {}"),
+            ("src/lib/util.c", 0o644, "int util;"),
+            ("src/main.c/inner.c", 0o644, "a file named as a folder"),
+            ("src/lib", 0o644, "a file where a folder is"),
+            ("run.sh", 0o755, "echo"),
+            ("empty.txt", 0o644, ""),
+        ]
+        for file in files {
+            _ = try? StaticFile.push(Array(file.text.utf8), mode: file.mode, at: Path(file.path))
+        }
+        let pushedAlone = try engine.graphDescription()
+
+        tearDown()
+        try setUpWithError()
+        let (request, body) = batch(files)
+        try daemon(request, body: body)
+
+        XCTAssertEqual(try engine.graphDescription(), pushedAlone)
+    }
+
+    /// A body the headers do not account for byte for byte is the request's fault, and
+    /// nothing of it is stored.
+    func test_aBatchWhoseBodyTheHeadersDoNotAccountForIsMalformedAndStoresNothing() throws {
+        let (request, body) = batch([("a.c", 0o644, "aa"), ("b.c", 0o644, "bb")])
+        let root           = try engine.inputFileSystem
+        let storedBefore   = Set(DataObjectStore.shared.allHashes())
+
+        guard case .malformedRequest = daemonError(request, body: body + Data("!".utf8)) else {
+            return XCTFail("expected a malformed request")
+        }
+        XCTAssertNil(try root.childNode(path: Path("a.c")))
+        XCTAssertEqual(Set(DataObjectStore.shared.allHashes()), storedBefore)
+    }
+
+    /// A single file the graph refuses is still the request's own error, as it was.
+    func test_aSingleFileTheGraphRefusesIsAnErrorReply() throws {
+        try daemon(.pushFile(path: "src/a.c", mode: 0o644), body: Data("a".utf8))
+
+        guard case .nodeError = daemonError(.pushFile(path: "src/a.c/b.c", mode: 0o644), body: Data("b".utf8)) else {
+            return XCTFail("expected a node error")
+        }
+    }
+
     func test_pushFolderCreatesAPinnedFolder() throws {
         let (response, _) = try daemon(.pushFolder(path: "src/lib"))
 

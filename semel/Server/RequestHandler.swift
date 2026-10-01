@@ -49,6 +49,19 @@ public final class RequestHandler {
             return (.daemon(.ok), nil)
         }
 
+        // A push's bytes are hashed and stored here, on the caller's thread and every core,
+        // and the queue is handed the hashes: none of that reads a row, and on the queue it
+        // is a tenth of what a cold push of a tree costs the one queue every client takes
+        // turns on.
+        switch request {
+        case .daemon(.pushFiles(let headers)):
+            return pushFiles(headers, body: body ?? Data())
+        case .daemon(.pushFile(let path, let mode)):
+            return pushFile(PushedFileHeader(path: path, mode: mode, length: body?.count ?? 0), body: body ?? Data())
+        default:
+            break
+        }
+
         return queue.sync { () -> (Response, Data?) in
             switch request {
             case .hello(let hello):
@@ -85,7 +98,7 @@ public final class RequestHandler {
     // MARK: - Daemon dispatch
 
     private func handleDaemon(_ request: DaemonRequest, body: Data?, session: Session) -> (Response, Data?) {
-        do {
+        answering {
             switch request {
             case .list(let fileSystem, let pattern):
                 return (.daemon(try list(fileSystem: fileSystem, pattern: pattern)), nil)
@@ -100,8 +113,10 @@ public final class RequestHandler {
                 engine.endBatch()
                 session.batchClosed()
                 return (.daemon(.ok), nil)
-            case .pushFile(let path, let mode):
-                return (.daemon(try pushFile(path: path, mode: mode, body: body ?? Data())), nil)
+            case .pushFile, .pushFiles:
+                // Answered in `handle`, which interns the bytes before the queue. Unreachable
+                // here, and the switch wants every case.
+                return (.daemon(.ok), nil)
             case .pushSymbolicLink(let path, let target, let referent):
                 return (.daemon(try pushSymbolicLink(path: path, target: target, referent: referent, body: body ?? Data())), nil)
             case .pushFolder(let path):
@@ -151,21 +166,75 @@ public final class RequestHandler {
                 session.isSubscribed = true
                 return (.daemon(.ok), nil)
             }
-        } catch let failure as HandlerFailure {
-            return (.error(failure.response), nil)
-        } catch let error as NodeError {
-            return (.error(.nodeError(description: "\(error)")), nil)
-        } catch let error as any UnrecoverableError {
+        }
+    }
+
+    // MARK: - Push
+
+    /// One file: a batch of one, answered as itself.
+    private func pushFile(_ header: PushedFileHeader, body: Data) -> (Response, Data?) {
+        answering {
+            let files = try interned([header], body: body)
+            switch try queue.sync(execute: { try pushFiles(files) }).first {
+            case .stored(let didChange):
+                return (.daemon(.pushFile(didChange: didChange)), nil)
+            case .failed(let error):
+                return (.error(error), nil)
+            case nil:
+                throw HandlerFailure.malformed(description: "\(header.path) was not recorded")
+            }
+        }
+    }
+
+    /// A batch: every file interned off the queue, then recorded on it in order, in one
+    /// turn. A failure to intern is the whole request's — a body the headers do not cut, or
+    /// a store that cannot be written — and a failure to record is that file's alone.
+    private func pushFiles(_ headers: [PushedFileHeader], body: Data) -> (Response, Data?) {
+        answering {
+            let files = try interned(headers, body: body)
+            return (.daemon(.pushFiles(outcomes: try queue.sync(execute: { try pushFiles(files) }))), nil)
+        }
+    }
+
+    /// `PushInterner.intern`, with a body the headers do not account for answered as the
+    /// malformed request it is rather than as a node's failure.
+    private func interned(_ headers: [PushedFileHeader], body: Data) throws -> [InternedFile] {
+        do {
+            return try PushInterner.intern(headers, body: body)
+        } catch let failure as PushedFilesError {
+            throw HandlerFailure.malformed(description: failure.description)
+        }
+    }
+
+    // MARK: - Answering
+
+    /// Runs `work` and turns what it throws into the reply that says so.
+    private func answering(_ work: () throws -> (Response, Data?)) -> (Response, Data?) {
+        do {
+            return try work()
+        } catch {
+            return (.error(Self.errorResponse(for: error)), nil)
+        }
+    }
+
+    /// The reply to a failure, by what kind of failure it is.
+    static func errorResponse(for error: Error) -> ErrorResponse {
+        switch error {
+        case let failure as HandlerFailure:
+            return failure.response
+        case let error as NodeError:
+            return .nodeError(description: "\(error)")
+        case let error as any UnrecoverableError:
             // The machine, not the request, is broken. The handler runs first — under the
             // default handler it stops the process, as it does anywhere else — and a server
             // that installs its own handler gets to answer the client before it exits.
             FatalErrors.handler(error)
-            return (.error(.unrecoverable(message: "\(error)")), nil)
-        } catch {
+            return .unrecoverable(message: "\(error)")
+        default:
             // Interpolated, as the client prints its own errors: `localizedDescription` of a
             // Swift error that is not a `LocalizedError` is "The operation couldn't be
             // completed", a type name and a case number.
-            return (.error(.nodeError(description: "\(error)")), nil)
+            return .nodeError(description: "\(error)")
         }
     }
 
@@ -277,12 +346,14 @@ enum HandlerFailure: Error {
     case pathNotFound(path: String)
     case notAFolder(path: String)
     case node(description: String)
+    case malformed(description: String)
 
     var response: ErrorResponse {
         switch self {
         case .pathNotFound(let path):     return .pathNotFound(path: path)
         case .notAFolder(let path):       return .notAFolder(path: path)
         case .node(let description):      return .nodeError(description: description)
+        case .malformed(let description): return .malformedRequest(description: description)
         }
     }
 }
