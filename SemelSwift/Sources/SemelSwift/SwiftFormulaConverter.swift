@@ -119,8 +119,10 @@ struct SwiftFormulaConverter: Node {
     /// product's bundles are also defined laid out for the Mac, `macBundles_<Product>()`
     /// (B-77); at 19, every product has an `embedded_<Product>()` func, its binary targets'
     /// dynamic frameworks, which an app embeds where it embedded `frameworks_<Product>()`
-    /// (B-77 item 12).
-    public static let implementationVersion = 19
+    /// (B-77 item 12); at 20, a Swift target with build-tool plugins and no Swift source of
+    /// its own is the conversion's error, naming the target and its plugins, where it was
+    /// compiled with nothing to compile (B-77 item 3).
+    public static let implementationVersion = 20
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -425,6 +427,10 @@ struct SwiftFormulaConverter: Node {
                                               PackageClangTarget(targetFolder: folder, moduleName: target.moduleName,
                                                                  rules: target.clangRules, manifests: folderManifests)
                                           },
+                                          hasSwiftSource: { target, folder in
+                                              PackageClangTarget.hasSwiftSource(targetFolder: folder, rules: target.clangRules,
+                                                                                manifests: folderManifests)
+                                          },
                                           resources: { target, folder in
                                               PackageResources.detect(rules: target.resourceRules, targetFolder: folder,
                                                                       manifests: folderManifests)
@@ -641,6 +647,14 @@ struct SwiftFormulaConverter: Node {
         let products:      [String]
     }
 
+    /// A Swift target whose sources only its build-tool plugins would make.
+    struct PluginOnlyTarget: Equatable {
+        let package: String
+        let target:  String
+        /// Its plugins as the notice names them: `SwiftLint (SwiftLintPlugin)`.
+        let plugins: [String]
+    }
+
     /// Why a conversion that has every input still makes no formula, by case.
     enum SwiftPackageConversionError: Error, Equatable, CustomStringConvertible {
         /// A product reaches a binary target whose artifact is not an `.xcframework` that is
@@ -652,9 +666,20 @@ struct SwiftFormulaConverter: Node {
         /// What still is not (B-133): an artifact that is anything else — an
         /// `.artifactbundle`, which holds executables for plugins rather than a library.
         case binaryTargetsNotBuilt([UnbuiltBinaryTarget])
+        /// A Swift target a product reaches names build-tool plugins and has no `.swift`
+        /// file of its own: its sources are what the plugins would generate, and no plugin
+        /// is run (B-77). Compiled anyway, it would reach `swiftc` with nothing to compile,
+        /// and fail naming no cause; so the conversion names the target and its plugins.
+        case sourcesOnlyFromPlugins([PluginOnlyTarget])
 
         var description: String {
             switch self {
+            case .sourcesOnlyFromPlugins(let targets):
+                return targets.map { target in
+                    "target \(target.target) of package \(target.package) has no Swift source of its own, only what its "
+                  + "build-tool plugins would generate — \(target.plugins.joined(separator: ", ")) — and build-tool plugins "
+                  + "are not run (B-77), so it cannot be compiled"
+                }.joined(separator: "\n")
             case .binaryTargetsNotBuilt(let targets):
                 return targets.map { target in
                     let products = target.products.joined(separator: ", ")
@@ -1056,6 +1081,11 @@ struct SwiftFormulaConverter: Node {
         var overridePackageFolder: String?
         /// Non-decoded. What the target's folder tree said, once it arrived: nil means Swift.
         var clangInfo: PackageClangTarget?
+
+        /// Non-decoded. Whether the target's folder tree holds a `.swift` file its
+        /// `sources:` and `exclude:` keep, once it arrived. A Swift target without one has
+        /// nothing to compile but what a plugin would generate (`pluginOnlyTargets`).
+        var hasSwiftSource = true
 
         /// Non-decoded. The resources the target's folder holds, by the manifest's rules
         /// and SwiftPM's types, once the folder tree has been walked (B-77).
@@ -1679,6 +1709,7 @@ struct SwiftFormulaConverter: Node {
                                  platform: String?,
                                  binaryArtifacts: [String: BinaryArtifactLocation] = [:],
                                  clangInfo: (SPMTarget, String) -> PackageClangTarget?,
+                                 hasSwiftSource: (SPMTarget, String) -> Bool,
                                  resources: (SPMTarget, String) -> [PackageResource] = { _, _ in [] }) throws -> String {
         // Every lookup below walks the external packages in one fixed order. Dictionary
         // iteration order is seeded per process, so walking the dictionary itself let two
@@ -1700,6 +1731,7 @@ struct SwiftFormulaConverter: Node {
             // resolves it (`referencedDependencies`).
             placed.dependencies = target.dependencies.filter { Self.holds(platforms: $0.platforms, on: platform) }
             placed.clangInfo = clangInfo(target, folder)
+            placed.hasSwiftSource = hasSwiftSource(target, folder)
             placed.resources = resources(placed, folder)
             return placed
         }
@@ -1737,6 +1769,9 @@ struct SwiftFormulaConverter: Node {
         // Every binary target a product reaches whose artifact cannot be used, by its key,
         // with the products reaching it.
         var unbuiltBinaryTargets: [String: (target: SPMTarget, location: BinaryArtifactLocation, reachingProducts: Set<String>)] = [:]
+        // Every Swift target a product reaches whose sources only its plugins would make, by
+        // `<package folder>/<target>`.
+        var pluginOnlyTargets: [String: PluginOnlyTarget] = [:]
 
         // A binary target's `.xcframework`, when it is one that is there (B-77).
         func binaryKey(_ target: SPMTarget) -> String {
@@ -1823,6 +1858,15 @@ struct SwiftFormulaConverter: Node {
                 let fn = headerTreeFuncName(for: target.name)
                 guard emittedFuncs.insert(fn).inserted else { continue }
                 blocks.append(headerTreeFuncDef(target: target, packageFolder: rootPackageFolder))
+            }
+
+            // A Swift target with plugins and no source of its own would reach `swiftc` with
+            // nothing to compile: what it compiles is what its plugins would generate, and
+            // none is run (B-77).
+            for target in allTargets where !target.pluginUsages.isEmpty && !target.hasSwiftSource {
+                pluginOnlyTargets["\(target.overridePackageFolder ?? rootPackageFolder)/\(target.name)"] =
+                    PluginOnlyTarget(package: target.packageName ?? rootManifest.name, target: target.name,
+                                     plugins: target.pluginUsages.map(\.description))
             }
 
             // Emit one func definition per unique target (shared across products).
@@ -2049,6 +2093,9 @@ struct SwiftFormulaConverter: Node {
                                         products:      reached.reachingProducts.sorted())
                 }
             })
+        }
+        guard pluginOnlyTargets.isEmpty else {
+            throw SwiftPackageConversionError.sourcesOnlyFromPlugins(pluginOnlyTargets.sorted { $0.key < $1.key }.map(\.value))
         }
         return blocks.joined(separator: "\n\n")
     }

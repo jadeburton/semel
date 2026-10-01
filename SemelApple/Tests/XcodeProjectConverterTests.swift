@@ -451,6 +451,68 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         XCTAssertTrue(message.contains("input:/repo/App.xcconfig is missing"), message)
     }
 
+    // MARK: - Plugins (B-77)
+
+    /// An app whose folder `App` holds `schema.graphql` and `Legacy.swift`, and which runs
+    /// two package plugins, as CodeEdit's app runs SwiftLint's: a target dependency on a
+    /// `plugin:` product. `excludingLegacy` leaves `Legacy.swift` out of the target by an
+    /// exception set.
+    private func pluginProject(excludingLegacy: Bool) throws -> NodeValue {
+        .value(try """
+            // !$*UTF8*$!
+            {
+                archiveVersion = 1;
+                objectVersion = 77;
+                objects = {
+                    P1 = { isa = PBXProject; buildConfigurationList = CL1; targets = ( T1 ); packageReferences = ( R1 ); };
+                    CL1 = { isa = XCConfigurationList; buildConfigurations = ( C1 ); };
+                    C1 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { }; };
+                    R1 = { isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/example/Generators"; };
+                    T1 = { isa = PBXNativeTarget; name = App; productType = "com.apple.product-type.application";
+                           productReference = PR1; buildConfigurationList = CL2; buildPhases = ( );
+                           fileSystemSynchronizedGroups = ( SG1 ); dependencies = ( TD1, TD2 ); packageProductDependencies = ( ); };
+                    TD1 = { isa = PBXTargetDependency; productRef = PD1; };
+                    TD2 = { isa = PBXTargetDependency; productRef = PD2; };
+                    PD1 = { isa = XCSwiftPackageProductDependency; package = R1; productName = "plugin:GraphQLGenerator"; };
+                    PD2 = { isa = XCSwiftPackageProductDependency; package = R1; productName = "plugin:Stamp"; };
+                    SG1 = { isa = PBXFileSystemSynchronizedRootGroup; path = App; exceptions = ( \(excludingLegacy ? "EX1" : "") );
+                            sourceTree = "<group>"; };
+                    EX1 = { isa = PBXFileSystemSynchronizedBuildFileExceptionSet; membershipExceptions = ( Legacy.swift ); target = T1; };
+                    PR1 = { isa = PBXFileReference; explicitFileType = wrapper.application; path = "App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+                    CL2 = { isa = XCConfigurationList; buildConfigurations = ( C2 ); };
+                    C2 = { isa = XCBuildConfiguration; name = Debug; buildSettings = {
+                        PRODUCT_NAME = App;
+                        PRODUCT_BUNDLE_IDENTIFIER = "com.example.App";
+                    }; };
+                };
+                rootObject = P1;
+            }
+            """.intern())
+    }
+
+    /// A target whose sources only its plugins would generate has nothing to compile, as no
+    /// plugin is run (B-77): the conversion fails naming the target and its plugins, rather
+    /// than hand the compiler an empty folder. A Swift file the target's exceptions leave
+    /// out is not its own; one they keep is, and the target compiles without its plugins.
+    func test_aTargetWhoseSourcesOnlyAPluginWouldMakeFailsNamingThePlugin() throws {
+        let folders = ["input:/repo/App": try manifestValue("input:/repo/App", files: ["Legacy.swift", "schema.graphql"])]
+
+        let failed = try process(projectFile: try pluginProject(excludingLegacy: true), folders: folders)
+        guard case .noValue(.error(let messageHash)) = try XCTUnwrap(failed.outputValues[XcodeProjectConverter.formulaOutput]) else {
+            XCTFail("expected the target and its plugins as the formula's error")
+            return
+        }
+        XCTAssertEqual(try messageHash.resolveAsString(),
+                       "XcodeProjectConverter: App has no source of its own, only what its build-tool plugins would generate — "
+                     + "GraphQLGenerator, Stamp — and build-tool plugins are not run (B-77), so it cannot be compiled")
+        XCTAssertEqual(failed.inputWireSpecs[XcodeProjectConverter.folders]?.keys.sorted(), ["input:/repo/App"],
+                       "the wires are kept, so a source pushed into the folder wakes the conversion")
+
+        let built = try process(projectFile: try pluginProject(excludingLegacy: false), folders: folders)
+        let formula = try XCTUnwrap(built.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
+        XCTAssertTrue(formula.contains("func compiler_App() =\n    SwiftCompiler("), formula)
+    }
+
     // MARK: - NetNewsWire's bundle (B-77)
 
     /// The part of the Mac folder these tests need, laid out as the clone has it: a xib

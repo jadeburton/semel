@@ -481,6 +481,22 @@ struct XcodeFormulaEmitter {
         guard listedOther.isEmpty else {
             throw XcodeProjectError.unsupportedSources(target: target.name, files: listedOther)
         }
+        // A target that runs plugins and has no source of its own — none in its folders that
+        // its exceptions keep, none listed, none borrowed — would compile only what they
+        // generate, and no plugin is run (B-77): said with the plugins, rather than handing
+        // the compiler nothing.
+        if !target.plugins.isEmpty {
+            let isSource = { (path: String) in path.hasSuffix(".swift") || Self.isCFamilySource(path) }
+            let hasFolderSource = target.synchronizedFolders.contains { folder in
+                (listing("\(build.projectFolder)/\(folder.path)") ?? FolderListing()).files.contains { file in
+                    !folder.excludes(file) && isSource(file)
+                }
+            }
+            guard hasFolderSource || !listedSources.isEmpty || !listedCFamily.isEmpty
+                    || target.borrowedFiles.contains(where: isSource) else {
+                throw XcodeProjectError.sourcesOnlyFromPlugins(target: target.name, plugins: target.plugins)
+            }
+        }
         guard !target.synchronizedFolders.isEmpty || !listedSources.isEmpty
                 || target.borrowedFiles.contains(where: { $0.hasSuffix(".swift") }) else {
             throw XcodeProjectError.noSuchTarget("\(target.name): no synchronized folder, no listed sources and no borrowed sources")

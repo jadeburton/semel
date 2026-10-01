@@ -1566,6 +1566,42 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                        "no plugin, nothing said")
     }
 
+    /// A target whose sources only its plugins would generate has nothing to compile, as no
+    /// plugin is run (B-77): the conversion stops and names the target, its package and its
+    /// plugins, rather than hand `swiftc` an empty folder. A `.swift` file the target's
+    /// `exclude:` leaves out is not its own; one it keeps is, and the target compiles.
+    func test_aTargetWhoseSourcesOnlyAPluginWouldMakeFailsNamingThePlugin() throws {
+        func manifest(exclude: [String]) -> String {
+            let excluded = exclude.map { "\"\($0)\"" }.joined(separator: ", ")
+            return """
+                {
+                  "name": "Gen",
+                  "dependencies": [],
+                  "products": [{"name": "Gen", "targets": ["Gen"], "type": {"library": ["automatic"]}}],
+                  "targets": [
+                    {"name": "Gen", "type": "regular", "path": "Sources/Gen", "dependencies": [{"byName": ["Schema", null]}]},
+                    {"name": "Schema", "type": "regular", "path": "Sources/Schema", "dependencies": [], "exclude": [\(excluded)],
+                     "pluginUsages": [{"plugin": ["Generate", "GenPlugin"]}, {"plugin": ["Stamp", null]}]}
+                  ]
+                }
+                """
+        }
+        let schemaFolder = [
+            "input:/pkg/Sources/Schema": [FolderManifestEntry(name: "schema.graphql", isFolder: false, isPinned: true),
+                                          FolderManifestEntry(name: "Old", isFolder: true, isPinned: true)],
+            "input:/pkg/Sources/Schema/Old": [FolderManifestEntry(name: "Legacy.swift", isFolder: false, isPinned: true)],
+        ]
+
+        let failed = try outcome(try convert(json: manifest(exclude: ["Old"]), folderContents: schemaFolder))
+        XCTAssertEqual(failed, "error: SwiftFormulaConverter: target Schema of package Gen has no Swift source of its own, "
+                             + "only what its build-tool plugins would generate — Generate (GenPlugin), Stamp — and "
+                             + "build-tool plugins are not run (B-77), so it cannot be compiled")
+
+        let built = try outcome(try convert(json: manifest(exclude: []), folderContents: schemaFolder))
+        XCTAssertTrue(built.hasPrefix("formula: ") && built.contains("func compilerSchema()"),
+                      "Old/Legacy.swift is the target's own when nothing excludes it, got:\n\(built)")
+    }
+
     /// Settings that hold everywhere need no platform, and the conversion does not ask.
     func test_unconditionalSwiftSettingsNeedNoPlatform() throws {
         let unconditional = swiftSettingsManifest

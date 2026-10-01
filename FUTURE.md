@@ -2369,9 +2369,17 @@ application target, simulator only, all library code in packages. In suggested o
    (B-77): SwiftLint (SwiftLintPlugin) on CodeEditTextView. Each target builds without what
    its plugins would do.` — `SwiftFormulaConverter` from the targets' `pluginUsages`,
    `XcodeProjectConverter` from a target dependency on a `plugin:` product (and a
-   `plugin:` product among a target's products is never linked). Not done: a target whose
-   sources come only from a plugin should fail naming the plugin; today it would reach
-   `swiftc` with nothing to compile. SwiftLint's plugin writes nothing the build uses, so
+   `plugin:` product among a target's products is never linked). A target whose sources
+   would come only from its plugins fails the conversion naming the target and the plugins,
+   rather than reaching `swiftc` with nothing to compile (done 2026-10-01): a package's
+   Swift target a product reaches that names plugins and holds no `.swift` file its
+   `sources:` and `exclude:` keep (`SwiftPackageConversionError.sourcesOnlyFromPlugins`,
+   Swift converter v20), and an Xcode target that runs plugins with no Swift or C-family
+   source in its folders that its exceptions keep, none listed and none borrowed
+   (`XcodeProjectError.sourcesOnlyFromPlugins`, Xcode converter v18, which now reports
+   every error the emitter names as the formula's, with the pass's demands, as it reports
+   the project's other errors). Pinned by `SwiftFormulaConverterTests` and
+   `XcodeProjectConverterTests`. SwiftLint's plugin writes nothing the build uses, so
    CodeEdit loses nothing by it.
 
    *What stops it*, in the order a `build` of a fresh clone after `prepare --platform macos`

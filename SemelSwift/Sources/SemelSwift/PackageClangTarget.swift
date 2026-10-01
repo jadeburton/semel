@@ -31,6 +31,48 @@ struct PackageClangTarget: Equatable {
             self.publicHeadersPath = publicHeadersPath
             self.headerSearchPaths = headerSearchPaths
         }
+
+        func isExcluded(_ path: String) -> Bool {
+            exclude.contains { PackageResources.isAtOrUnder(path, $0) }
+        }
+
+        func isInScope(_ path: String) -> Bool {
+            sources.isEmpty || sources.contains { PackageResources.isAtOrUnder(path, $0) }
+        }
+    }
+
+    /// Every pinned file under `targetFolder`, as a path relative to it, excluded or not:
+    /// the walk does not enter a hidden folder or a resource whole (an `.xcassets`, a
+    /// `.docc`), and neither does a formula's `**`, so the two agree on what the target
+    /// holds.
+    static func files(in targetFolder: String, manifests: [String: FolderManifest]) -> [String] {
+        func files(under relative: String) -> [String] {
+            let folderPath = relative.isEmpty ? targetFolder : "\(targetFolder)/\(relative)"
+            guard let manifest = manifests[folderPath] else {
+                return []
+            }
+            var found: [String] = []
+            for entry in manifest.entries.sorted(by: { $0.name < $1.name }) where entry.isPinned {
+                let entryPath = relative.isEmpty ? entry.name : "\(relative)/\(entry.name)"
+                if !entry.isFolder {
+                    found.append(entryPath)
+                    continue
+                }
+                if PackageResources.isWalked(folderName: entry.name) {
+                    found.append(contentsOf: files(under: entryPath))
+                }
+            }
+            return found
+        }
+        return files(under: "")
+    }
+
+    /// Whether the target holds a `.swift` file its `sources:` and `exclude:` keep: what
+    /// makes it a Swift target with something to compile (B-77).
+    static func hasSwiftSource(targetFolder: String, rules: Rules, manifests: [String: FolderManifest]) -> Bool {
+        files(in: targetFolder, manifests: manifests).contains { file in
+            fileExtension(file).lowercased() == "swift" && rules.isInScope(file) && !rules.isExcluded(file)
+        }
     }
 
     static let cFamilyExtensions: Set<String> = ["c", "m", "mm", "cpp", "cc", "cxx"]
@@ -139,36 +181,9 @@ struct PackageClangTarget: Equatable {
             return nil
         }
 
-        /// Every pinned file under `relative`, as a path relative to the target folder,
-        /// excluded or not — the caller decides.
-        func files(under relative: String) -> [String] {
-            let folderPath = relative.isEmpty ? targetFolder : "\(targetFolder)/\(relative)"
-            guard let manifest = manifests[folderPath] else {
-                return []
-            }
-            var found: [String] = []
-            for entry in manifest.entries.sorted(by: { $0.name < $1.name }) where entry.isPinned {
-                let entryPath = relative.isEmpty ? entry.name : "\(relative)/\(entry.name)"
-                if !entry.isFolder {
-                    found.append(entryPath)
-                    continue
-                }
-                if PackageResources.isWalked(folderName: entry.name) {
-                    found.append(contentsOf: files(under: entryPath))
-                }
-            }
-            return found
-        }
-
-        func isExcluded(_ path: String) -> Bool {
-            rules.exclude.contains { PackageResources.isAtOrUnder(path, $0) }
-        }
-
-        func isInScope(_ path: String) -> Bool {
-            rules.sources.isEmpty || rules.sources.contains { PackageResources.isAtOrUnder(path, $0) }
-        }
-
-        let everyFile = files(under: "")
+        let isExcluded = rules.isExcluded
+        let isInScope  = rules.isInScope
+        let everyFile  = Self.files(in: targetFolder, manifests: manifests)
         let sourceFiles = everyFile.filter { isInScope($0) && !isExcluded($0) }
         guard !sourceFiles.contains(where: { Self.fileExtension($0).lowercased() == "swift" }) else {
             return nil
