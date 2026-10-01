@@ -182,6 +182,37 @@ any node is selected — the subtree manifests' own folds do not appear in the s
 the thirty package readers' `swift package dump-package`; then the compiles. On NetNewsWire,
 with a third of the files, the push is 9 s and the build is the compiles.
 
+Measured 2026-10-01: a cold `push` of a tree of 4,708 files in 1,505 folders (174 MB: this
+repository, NetNewsWire's Mac checkout, the IceCubes app and the C1 IceCubes packages, side
+by side) into a fresh home, release binaries, `main` at `929fbbb` against several files to a
+request (`pushFiles`). The server never went above one core: `ps` peaked at 93–99%. A
+`sample` of the server during the push put the request queue busy 95% of the time, the rest
+waiting for the client's next request; of the queue's time, 82% was GRDB and SQLite — a
+sixth preparing statements, a sixth opening a read transaction per read, a tenth committing
+and checkpointing the log, the rest the graph's own queries and inserts, most of them making
+the 1,505 folders (`ensureEntirePathExistsAsFolders`, 46%) and the files' nodes (28%) —
+then 12% writing the object store and 1% SHA-256. After: the bytes are hashed and stored on
+every core before the queue, and the queue records 64 files in one transaction, each file's
+own transactions kept as savepoints inside it. The machine was shared (load average 5–20,
+another agent's end-to-end run), so the two were run alternately, six rounds each:
+
+| cold push, 4,708 files | `main` | `pushFiles` |
+|---|---|---|
+| wall time, median of six (best) | 18.8 s (17.6 s) | 14.4 s (13.8 s) |
+| wall time, the two quietest rounds (load 5–7) | 15.3 s, 15.3 s | 11.3 s, 11.7 s |
+| server CPU, average over the push (peak) | 92% (99%) | 117% (138%) |
+| files per second, median (quietest) | 250 (308) | 327 (417) |
+
+What the queue does now is the graph: the commits and the read transactions are gone from
+the samples (checkpointing 0.5%, from 6%), and the interning is 4% of its time, spent
+waiting on the cores that do it. Of what remains, a fifth is SQLite preparing the same few
+statements again — GRDB's query interface and `Row.fetchAll(sql:)` prepare per call, where a
+cached statement would not — and a quarter is a new folder's first fold, its manifest and
+content root read over children it does not have yet (`Folder.didCreate`). The queue also
+waits about a tenth of the push for the client, which reads a batch's files before it sends
+them and sends the next only after the answer; a client that read the next batch while the
+server records this one would take most of that.
+
 
 ## Design, correctness and code quality
 
