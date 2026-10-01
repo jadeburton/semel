@@ -840,6 +840,18 @@ One binary, three modes, sharing a wire protocol:
 
 ### Command line
 
+**B-136** `done` — **The base is remembered across launches.**
+Done 2026-10-01: `base <path>` sets the session's base and writes it to `semel.base` in
+the Semel home — a heading comment, then one `base <absolute path>` line, read strictly
+(`RememberedBase`, in `SemelCLI`: only the prompt reads it). `semel` starts from it while
+the directory exists, and the banner says so under the graph's line: `Base: /repo
+(remembered)`, or `Base: /cwd`. A remembered directory that is gone, or a file that does
+not read, is reported on one line and passed over, the file left as it is. `base --forget`
+removes the file and keeps the session's base. A scripted run starts from it too; its own
+`base` overrides and is remembered, and `base .` is how a script asks for where it runs.
+`semel-watch` and `semel-swift prepare` take their directory as an argument and never
+read it.
+
 **B-126** `open` — **A file watcher that pushes as you save.**
 Designed 2026-09-28: `docs/superpowers/specs/2026-09-28-semel-file-watcher-design.md`.
 `semel-watch <base> [<folder> ...]`, a fourth client of `semelserv` in its own executable

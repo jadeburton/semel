@@ -558,8 +558,9 @@ public final class CommandInterpreter: CommandContext {
             HelpEntry(verbs: ["pwd"], usage: "pwd", description: "where you are"),
         ]),
         ("Session", [
-            HelpEntry(verbs: ["base"], usage: "base [<path>]",
-                      description: "show or set the tree pushes are read from; the current directory unless set"),
+            HelpEntry(verbs: ["base"], usage: "base [<path> | --forget]",
+                      description: "show or set the tree pushes are read from, remembered for the next launch; "
+                                 + "--forget stops remembering it, and semel then starts in the current directory"),
             HelpEntry(verbs: ["begin", "commit"], usage: "begin … commit",
                       description: "hold the engine across several pushes, so it settles once"),
             HelpEntry(verbs: ["quit", "q", "exit"], usage: "quit", description: "leave the prompt, stopping its watcher"),

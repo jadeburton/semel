@@ -73,17 +73,23 @@ In the **prompt** terminal, start the prompt:
 .build/debug/semel
 ```
 
-It prints its version and the graph it is talking to, and then waits. There is no `>`: you
-type a command and press return. Tell it where your files are — `semel` expands the `~`
-itself, and the setting lasts as long as the session, so you type it once:
+It prints its version, the graph it is talking to and its base — the directory it reads
+your files from, the one you started it in, on a line of its own as `Base:` — and then
+waits. There is no `>`: you type a command and press return. Tell it where your files are —
+`semel` expands the `~` itself, and remembers the setting for the next launch, so you type
+it once:
 
 ```
 base ~/semel-playground
 ```
 
 ```
-Base directory set to /Users/you/semel-playground
+Base directory set to /Users/you/semel-playground and remembered
 ```
+
+The next `semel` you start says `Base: /Users/you/semel-playground (remembered)` under the
+graph's line. `base --forget` stops that, and a `semel` started after it begins in the
+current directory again.
 
 ### The config
 
@@ -201,7 +207,8 @@ the file exists, so the engine's report named the one source the formula needs t
 has pushed, and `build` pushed it, saying which formula asked, and waited again. The second
 settle is the build. That is the whole rule: *build follows the formula's inputs within your
 tree*. It never pushes anything the formula did not name, and never anything outside the
-base directory, which is where you ran `semel` unless `base` says otherwise. `--no-follow`
+base directory, which is the one `base` last set — remembered from one launch to the
+next — or where you ran `semel` if none is remembered. `--no-follow`
 turns it off.
 
 The line with the tick is the *settle summary*, saying what the engine did. A `build` prints

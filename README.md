@@ -49,7 +49,8 @@ and does the work. When no engine is running, `semel` starts one — the `semels
 its own executable — and leaves it running for the next `semel`; `semel stop` ends it. Its
 log is `semelserv.log` beside the graph. Everything the engine persists — the graph
 database and the object store — lives under `~/Library/Application Support/semel`,
-whatever directory it was launched from; the banner prints the database path.
+whatever directory it was launched from; the banner prints the database path, and the base
+directory the session reads the disk from (`base`).
 `SEMEL_HOME` moves that root and `SEMEL_SOCKET` the daemon's socket, which is how the
 tests give each server a home of its own; `SEMEL_JOBS` is how many nodes it computes at
 once — every running tool is a process — and is the core count unless set. The banner
@@ -113,7 +114,7 @@ rm build/**
 
 | Command | Description |
 |---------|-------------|
-| `base [path]` | Show or set the external base directory for `push` |
+| `base [path]` / `base --forget` | Show or set the external base directory `push`, `build` and `export` read the disk from. A base that is set is remembered in `semel.base` in the Semel home, and the next `semel` starts from it while the directory exists — the banner's `Base:` line says `(remembered)`; otherwise it starts from the current directory. `--forget` removes the file and leaves this session's base as it is |
 | `begin` … `commit` | Hold the engine between several pushes so it settles once, on the `commit`, which also waits for that settle. Every `push` already does this for its own files; this is for a script whose tree arrives over several commands. `wait` refuses while a batch is open |
 | `q` / `quit` / `exit` | Exit, stopping the watcher `watch <folder>` started |
 
@@ -129,6 +130,10 @@ against a graph already broken the same way prints nothing) — which makes it a
 .build/release/semel 'base /path/to/repo' 'build Packages --into ./out'
 ```
 
+A scripted run starts from the remembered base as the prompt does, and its own `base`
+replaces it and is remembered in turn; a script that means the directory it runs in says
+`base .` first.
+
 To build as you save, watch the tree instead. `semel-watch` takes the base and the folders
 `build` would take, pushes them once, and from then on waits for two quiet seconds after
 each burst of saves — an editor's save, a `git checkout`, a generator's output — and runs
@@ -142,6 +147,7 @@ one for the session's base; `unwatch` or `quit` stops it.
 ```sh
 .build/release/semel-watch /path/to/repo Packages --into ./out --except 'Packages/**/Tests/**'
 ```
+
 ### Formulae
 
 A .fmla, or formula file, declaratively describes one or more products and what each product comprises. Formula files describe build graph structure and identity but should avoid containing too much configuration; compiler arguments for example. Such configuration is kept in separate configuration files and referenced from formula files.
