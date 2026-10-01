@@ -3,9 +3,10 @@
 //
 // SemelConnection over a Unix-domain socket. `send` is synchronous: it registers a waiter
 // under the correlation ID, writes the frame, and parks on a semaphore until the reader
-// delivers that ID's reply. Several threads may be parked at once, each on its own
-// waiter, which is the shape the engine's cache role will need. Events go to `onEvent`
-// on the reader's queue, as the in-process connection delivers them.
+// delivers that ID's reply — each part of a streamed one, then the last. Several threads
+// may be parked at once, each on its own waiter, which is the shape the engine's cache
+// role will need. Events go to `onEvent` on the reader's queue, as the in-process
+// connection delivers them.
 
 import Foundation
 import Network
@@ -45,9 +46,24 @@ public final class SocketConnection: SemelConnection {
         set { lock.withLock { eventHandler = newValue } }
     }
 
+    /// One request in flight. The reader puts what arrives on `arrivals` and signals once
+    /// per arrival; the sender takes them in order, so a streamed reply's parts reach
+    /// `onPart` on the sending thread, one at a time, and the waiter is released only by
+    /// the last frame or the connection closing (B-137). Both fields are guarded by the
+    /// connection's lock.
     private final class Waiter {
+        enum Arrival {
+            case part(Result<Response, Error>)
+            case last(Result<(Response, Data?), Error>)
+        }
+
         let semaphore = DispatchSemaphore(value: 0)
-        var reply: Result<(Response, Data?), Error>?
+        var arrivals: [Arrival] = []
+        var reply: IncomingReply
+
+        init(correlationID: UInt64) {
+            reply = IncomingReply(correlationID: correlationID)
+        }
     }
 
     private let stream: FrameStream
@@ -131,18 +147,18 @@ public final class SocketConnection: SemelConnection {
 
     // MARK: - SemelConnection
 
-    public func send(_ request: Request, body: Data?) throws -> (Response, Data?) {
+    public func send(_ request: Request, body: Data?, onPart: (Response) throws -> Void) throws -> (Response, Data?) {
         // Encoded before the waiter is registered: a request that cannot be encoded must
         // leave no waiter behind for a reply that will never come.
-        let json   = try MessageCoder.encode(request)
-        let waiter = Waiter()
-        let correlationID: UInt64 = try lock.withLock { () throws -> UInt64 in
+        let json = try MessageCoder.encode(request)
+        let (correlationID, waiter) = try lock.withLock { () throws -> (UInt64, Waiter) in
             guard !isClosed else {
                 throw ConnectionError.closed
             }
             defer { nextCorrelationID += 1 }
+            let waiter = Waiter(correlationID: nextCorrelationID)
             waiters[nextCorrelationID] = waiter
-            return nextCorrelationID
+            return (nextCorrelationID, waiter)
         }
 
         // A request too large to frame leaves no waiter behind for a reply that will never
@@ -153,12 +169,28 @@ public final class SocketConnection: SemelConnection {
             lock.withLock { _ = waiters.removeValue(forKey: correlationID) }
             throw error
         }
-        waiter.semaphore.wait()
 
-        guard let reply = waiter.reply else {
-            throw ConnectionError.closed
+        var heldFailure: Error?
+        while true {
+            waiter.semaphore.wait()
+            let arrival = lock.withLock { waiter.arrivals.removeFirst() }
+            switch arrival {
+            case .part(let part):
+                guard heldFailure == nil else {
+                    continue
+                }
+                do {
+                    try onPart(try part.get())
+                } catch {
+                    heldFailure = error
+                }
+            case .last(let reply):
+                if let heldFailure {
+                    throw heldFailure
+                }
+                return try reply.get()
+            }
         }
-        return try reply.get()
     }
 
     // MARK: - Receiving
@@ -166,23 +198,38 @@ public final class SocketConnection: SemelConnection {
     private func receive(_ frame: Frame) {
         switch frame.kind {
         case .response:
-            let waiter = lock.withLock { waiters.removeValue(forKey: frame.correlationID) }
+            // A part leaves its waiter registered for the frames still to come; the last
+            // frame releases it. Read under the lock, so a close arriving from another
+            // thread sees how many parts came.
+            let waiter: Waiter? = lock.withLock {
+                guard let waiter = frame.continues ? waiters[frame.correlationID]
+                                                   : waiters.removeValue(forKey: frame.correlationID) else {
+                    return nil
+                }
+                let arrival: Waiter.Arrival
+                do {
+                    switch try waiter.reply.receive(frame) {
+                    case .part(let part):            arrival = .part(.success(part))
+                    case .last(let last, let body):  arrival = .last(.success((last, body)))
+                    }
+                } catch {
+                    arrival = frame.continues ? .part(.failure(error)) : .last(.failure(error))
+                }
+                waiter.arrivals.append(arrival)
+                return waiter
+            }
             guard let waiter else {
                 // A reply nobody is waiting for: dropped, but said, because it means the
                 // two sides disagree about what is in flight.
                 FileHandle.standardError.write(Data("semel: dropped a reply for unknown request \(frame.correlationID)\n".utf8))
                 return
             }
-            do {
-                let response = try frame.response()
-                waiter.reply = .success((response, frame.body.isEmpty ? nil : frame.body))
-            } catch {
-                waiter.reply = .failure(error)
-            }
             waiter.semaphore.signal()
 
         case .event:
-            guard let event = try? frame.event() else {
+            // An event is one frame; a continuing one is the server's framing bug, read
+            // as an event that cannot be decoded is.
+            guard !frame.continues, let event = try? frame.event() else {
                 return
             }
             onEvent?(event)
@@ -193,16 +240,21 @@ public final class SocketConnection: SemelConnection {
         }
     }
 
-    /// Fails every waiter and refuses later sends. Idempotent.
+    /// Fails every waiter and refuses later sends. Idempotent. A waiter whose reply had
+    /// begun to stream is told it was cut short, not that nothing came: its caller may
+    /// already have acted on the parts.
     private func closeAll() {
         let orphans: [Waiter] = lock.withLock {
             isClosed = true
             let all = Array(waiters.values)
             waiters.removeAll()
+            for waiter in all {
+                let failure: Error = waiter.reply.truncation ?? ConnectionError.closed
+                waiter.arrivals.append(.last(.failure(failure)))
+            }
             return all
         }
         for waiter in orphans {
-            waiter.reply = .failure(ConnectionError.closed)
             waiter.semaphore.signal()
         }
     }

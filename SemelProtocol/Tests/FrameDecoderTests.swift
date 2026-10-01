@@ -36,6 +36,23 @@ final class FrameDecoderTests: XCTestCase {
         XCTAssertEqual(try decoder.next(), empty)
     }
 
+    /// The continue flag survives the trip, and two frames of one stream stay two frames
+    /// with one correlation ID, the first marked and the second not.
+    func test_roundTripsTheContinueFlag() throws {
+        let part = Frame(kind: .response, correlationID: 7, json: Data("{}".utf8), continues: true)
+        let last = Frame(kind: .response, correlationID: 7, json: Data("{}".utf8))
+        var decoder = FrameDecoder()
+        decoder.append(try FrameEncoder.encode(part) + FrameEncoder.encode(last))
+
+        let first  = try XCTUnwrap(try decoder.next())
+        let second = try XCTUnwrap(try decoder.next())
+
+        XCTAssertEqual(first, part)
+        XCTAssertTrue(first.continues)
+        XCTAssertEqual(second, last)
+        XCTAssertFalse(second.continues)
+    }
+
     func test_yieldsTwoFramesFromOneAppend() throws {
         let second = Frame(kind: .response, correlationID: 43, json: Data("{}".utf8))
         var decoder = FrameDecoder()
@@ -97,14 +114,26 @@ final class FrameDecoderTests: XCTestCase {
         }
     }
 
+    /// Bit 0 of the flags is the continue flag; the seven above it are still reserved.
     func test_rejectsReservedBitsSet() throws {
         var bytes = try FrameEncoder.encode(sample)
-        bytes[2] = 0x01
+        bytes[2] = 0x03
         var decoder = FrameDecoder()
         decoder.append(bytes)
 
         XCTAssertThrowsError(try decoder.next()) { error in
-            XCTAssertEqual(error as? FrameError, .reservedBitsSet(flags: 1, reserved: 0))
+            XCTAssertEqual(error as? FrameError, .reservedBitsSet(flags: 3, reserved: 0))
+        }
+    }
+
+    func test_rejectsTheReservedByteSet() throws {
+        var bytes = try FrameEncoder.encode(sample)
+        bytes[3] = 0x01
+        var decoder = FrameDecoder()
+        decoder.append(bytes)
+
+        XCTAssertThrowsError(try decoder.next()) { error in
+            XCTAssertEqual(error as? FrameError, .reservedBitsSet(flags: 0, reserved: 1))
         }
     }
 

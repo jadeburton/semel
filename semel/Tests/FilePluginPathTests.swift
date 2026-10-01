@@ -118,6 +118,27 @@ final class FilePluginPathTests: XCTestCase {
                         "'..' should resolve before matching")
     }
 
+    // MARK: - rm
+
+    /// The owner's case (B-137): an `rm` of more paths than one frame's JSON can name, which
+    /// was refused as a reply too large. The reply streams, and `rm` counts what it took.
+    func test_rm_ofMorePathsThanOneFrameHoldsReportsTheCount() throws {
+        let padding = String(repeating: "x", count: 4_000)
+        let count   = Int(Frame.maximumJSONLength) / padding.count + 40
+        _ = try connection.send(.daemon(.beginBatch), body: nil)
+        for index in 0..<count {
+            _ = try connection.send(.daemon(.pushFile(path: "many/\(index)-\(padding).c", mode: 0o644)),
+                                    body: Data("int x;".utf8))
+        }
+        _ = try connection.send(.daemon(.endBatch), body: nil)
+
+        try run("rm", ["many/*"])
+
+        XCTAssertEqual(context.errors, [])
+        XCTAssertTrue(context.messages.contains("Removed \(count) files"),
+                      "got:\n\(context.messages.joined(separator: "\n"))")
+    }
+
     // MARK: - cp
 
     // Was silent: the default destination resolved under baseDirectory/<internal cwd>,

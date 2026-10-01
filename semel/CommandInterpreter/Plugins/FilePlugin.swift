@@ -622,22 +622,31 @@ final class FilePlugin: CommandPlugin {
         _ = try context.request(.beginBatch)
         defer { _ = try? context.request(.endBatch) }
 
-        var removedFiles:   [String] = []
-        var removedFolders: [String] = []
+        // The reply to a removal of a whole tree streams (B-137): each part is counted as it
+        // comes and says how far the removal has got, and no more paths are kept than the
+        // report can name.
+        var removal = RemovalTally()
         for pathOrWildcard in pathsOrWildcards {
             let fullPattern: Path = base.isEmpty ? Path(pathOrWildcard) : base / pathOrWildcard
-            guard case .remove(let files, let folders)
-                    = try context.request(.remove(pattern: fullPattern.string)).0 else {
+            let takenBefore = removal.count
+            let (last, _) = try context.request(.remove(pattern: fullPattern.string)) { part in
+                guard case .remove(let files, let folders) = part else {
+                    return
+                }
+                removal.add(files: files, folders: folders)
+                if let counts = Self.countedTogether(files: removal.fileCount, folders: removal.folderCount) {
+                    context.outputMessage("Removing: \(counts) so far")
+                }
+            }
+            guard case .remove(let files, let folders) = last else {
                 continue
             }
-            guard !files.isEmpty || !folders.isEmpty else {
+            removal.add(files: files, folders: folders)
+            if removal.count == takenBefore {
                 context.outputError("rm: \(pathOrWildcard): no such file or directory")
-                continue
             }
-            removedFiles.append(contentsOf: files)
-            removedFolders.append(contentsOf: folders)
         }
-        guard !removedFiles.isEmpty || !removedFolders.isEmpty else {
+        guard !removal.isEmpty else {
             return
         }
 
@@ -645,7 +654,27 @@ final class FilePlugin: CommandPlugin {
         // matches within one segment and `*.*` needs a literal dot, as in a shell, so a
         // pattern can take every file of a folder and leave the folder standing, and the
         // report then names files and no folder.
-        reportRemoval(files: removedFiles, folders: removedFolders, context: context)
+        reportRemoval(removal, context: context)
+    }
+
+    /// What one `rm` took, gathered part by part: how many of each kind, and the first
+    /// paths of each, as many as a report ever names. A removal of a whole tree is
+    /// counted, never held.
+    struct RemovalTally {
+        private(set) var fileCount   = 0
+        private(set) var folderCount = 0
+        private(set) var firstFiles:   [String] = []
+        private(set) var firstFolders: [String] = []
+
+        var count:   Int  { fileCount + folderCount }
+        var isEmpty: Bool { fileCount + folderCount == 0 }
+
+        mutating func add(files: [String], folders: [String]) {
+            fileCount   += files.count
+            folderCount += folders.count
+            firstFiles.append(contentsOf: files.prefix(PathList.namedIndividually - firstFiles.count))
+            firstFolders.append(contentsOf: folders.prefix(PathList.namedIndividually - firstFolders.count))
+        }
     }
 
     // MARK: - Reporting what a verb touched
@@ -653,19 +682,19 @@ final class FilePlugin: CommandPlugin {
     /// What `rm` says when it succeeds: a line per path while the list is short enough to
     /// read, and a count once it is not — the folders first, since a folder is the shape of
     /// what happened and the files are what fill the screen.
-    private func reportRemoval(files: [String], folders: [String], context: any CommandContext) {
-        guard files.count + folders.count > PathList.namedIndividually else {
-            folders.forEach { context.outputMessage("Removed folder: \($0)") }
-            files.forEach { context.outputMessage("Removed file: \($0)") }
+    private func reportRemoval(_ removal: RemovalTally, context: any CommandContext) {
+        guard removal.count > PathList.namedIndividually else {
+            removal.firstFolders.forEach { context.outputMessage("Removed folder: \($0)") }
+            removal.firstFiles.forEach { context.outputMessage("Removed file: \($0)") }
             return
         }
-        guard let counts = Self.countedTogether(files: files.count, folders: folders.count) else {
+        guard let counts = Self.countedTogether(files: removal.fileCount, folders: removal.folderCount) else {
             return
         }
 
         var line = "Removed \(counts)"
-        if !folders.isEmpty {
-            line += ": \(Self.named(folders))"
+        if removal.folderCount > 0 {
+            line += ": \(Self.named(removal.firstFolders, of: removal.folderCount))"
         }
         context.outputMessage(line)
     }
@@ -687,8 +716,14 @@ final class FilePlugin: CommandPlugin {
     /// out: a wildcard can match folders by the hundred, and a line naming all of them is
     /// the wall of text the count exists to replace.
     private static func named(_ paths: [String]) -> String {
-        let named = paths.prefix(PathList.namedIndividually)
-        let rest  = paths.count - named.count
+        named(Array(paths.prefix(PathList.namedIndividually)), of: paths.count)
+    }
+
+    /// The same, for a list of which only the first paths were kept: `total` is how many
+    /// there were.
+    private static func named(_ firstPaths: [String], of total: Int) -> String {
+        let named = firstPaths.prefix(PathList.namedIndividually)
+        let rest  = total - named.count
         return named.joined(separator: ", ") + (rest > 0 ? ", and \(rest) more" : "")
     }
 

@@ -278,7 +278,10 @@ SemelNodeKit/    Node-authoring API — no dependency on the engine
   ToolSandbox          What a tool is allowed to know about the directory it runs in
   SemelPaths           Where the home, database, object store and socket live
 SemelProtocol/   The wire protocol between semel and semelserv: typed requests and
-                 responses, frames, and the connection a client holds
+                 responses, frames, and the connection a client holds. A frame's JSON is
+                 capped at 1 MiB, so the replies that grow with the graph — `list`,
+                 `remove`, `errors` — stream: several frames for one request, every one
+                 but the last carrying flag bit 0, "more follows"
 SemelSwift/      Swift toolchain node types
   SwiftCompiler          Compiles .swift → .o + .swiftmodule
   SwiftLinker            Links object files into an executable or library

@@ -152,6 +152,98 @@ final class SocketConnectionTests: XCTestCase {
         XCTAssertEqual(events, [.daemon(.notice(line: "built"))])
     }
 
+    // MARK: - Streamed replies (B-137)
+
+    /// Frames for a streamed `remove`: a part per path in `parts`, then `last` unmarked.
+    private func streamedRemoval(parts: [String], last: [String], correlationID: UInt64) -> [Frame] {
+        let partFrames = parts.compactMap { path in
+            try? Frame.response(.daemon(.remove(removedFiles: [path], removedFolders: [])),
+                                correlationID: correlationID, continues: true)
+        }
+        let lastFrame = try? Frame.response(.daemon(.remove(removedFiles: last, removedFolders: [])),
+                                            correlationID: correlationID)
+        return partFrames + [lastFrame].compactMap { $0 }
+    }
+
+    /// Parts reach `onPart` in order, the waiter is released only by the last frame, and
+    /// the whole-reply `send` joins them.
+    func test_partsReachTheCallerInOrderAndTheLastFrameEndsTheReply() throws {
+        startServer { frame in
+            for reply in self.streamedRemoval(parts: ["a", "b", "c"], last: ["d"], correlationID: frame.correlationID) {
+                try? self.serverStream?.send(reply)
+            }
+            return nil
+        }
+        let connection = try SocketConnection.connect(to: socketPath)
+        var parts: [Response] = []
+
+        let (last, _) = try connection.send(.daemon(.remove(pattern: "*")), body: nil) { parts.append($0) }
+        let (whole, _) = try connection.send(.daemon(.remove(pattern: "*")), body: nil)
+
+        XCTAssertEqual(parts, ["a", "b", "c"].map { .daemon(.remove(removedFiles: [$0], removedFolders: [])) })
+        XCTAssertEqual(last, .daemon(.remove(removedFiles: ["d"], removedFolders: [])))
+        XCTAssertEqual(whole, .daemon(.remove(removedFiles: ["a", "b", "c", "d"], removedFolders: [])))
+    }
+
+    /// Two streams in flight at once, their frames interleaved on the wire: each caller
+    /// gets its own parts, in its own order.
+    func test_interleavedStreamsReachTheirOwnCallers() throws {
+        var pending: [Frame] = []
+        startServer { frame in
+            pending.append(frame)
+            guard pending.count == 2 else {
+                return nil
+            }
+            let first  = self.streamedRemoval(parts: ["1a", "1b"], last: ["1c"], correlationID: pending[0].correlationID)
+            let second = self.streamedRemoval(parts: ["2a", "2b"], last: ["2c"], correlationID: pending[1].correlationID)
+            for (fromFirst, fromSecond) in zip(first, second) {
+                try? self.serverStream?.send(fromSecond)
+                try? self.serverStream?.send(fromFirst)
+            }
+            return nil
+        }
+        let connection = try SocketConnection.connect(to: socketPath)
+        let group   = DispatchGroup()
+        let lock    = NSLock()
+        var results: [String: Response] = [:]
+
+        for pattern in ["1", "2"] {
+            group.enter()
+            DispatchQueue.global().async {
+                defer { group.leave() }
+                if let (whole, _) = try? connection.send(.daemon(.remove(pattern: pattern)), body: nil) {
+                    lock.withLock { results[pattern] = whole }
+                }
+            }
+            // The server pairs the requests in arrival order.
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+
+        XCTAssertEqual(group.wait(timeout: .now() + 5), .success)
+        XCTAssertEqual(results["1"], .daemon(.remove(removedFiles: ["1a", "1b", "1c"], removedFolders: [])))
+        XCTAssertEqual(results["2"], .daemon(.remove(removedFiles: ["2a", "2b", "2c"], removedFolders: [])))
+    }
+
+    /// A connection that closes after a part and before the last frame: the caller hears
+    /// that the reply was cut short, naming how much came — not that nothing came, and
+    /// never the part as though it were the answer.
+    func test_aStreamCutShortByAClosingConnectionIsReportedAsTruncated() throws {
+        startServer { frame in
+            self.streamedRemoval(parts: ["a"], last: [], correlationID: frame.correlationID).first
+        }
+        let connection = try SocketConnection.connect(to: socketPath)
+
+        // Closed once the part has arrived, so the part cannot be lost to the close.
+        XCTAssertThrowsError(try connection.send(.daemon(.remove(pattern: "*")), body: nil) { _ in
+            self.serverStream?.close()
+        }) { error in
+            guard case .truncated(_, let partsReceived)? = error as? ReplyStreamError else {
+                return XCTFail("expected a truncated stream, got \(error)")
+            }
+            XCTAssertEqual(partsReceived, 1)
+        }
+    }
+
     func test_aClosedSocketFailsTheWaiterAndLaterSends() throws {
         startServer { _ in
             self.serverStream?.close()

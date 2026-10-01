@@ -35,11 +35,11 @@ private final class CountingConnection: SemelConnection {
         set { underlying.onEvent = newValue }
     }
 
-    func send(_ request: Request, body: Data?) throws -> (Response, Data?) {
+    func send(_ request: Request, body: Data?, onPart: (Response) throws -> Void) throws -> (Response, Data?) {
         if case .daemon(let daemonRequest) = request {
             lock.withLock { sent.append(daemonRequest) }
         }
-        return try underlying.send(request, body: body)
+        return try underlying.send(request, body: body, onPart: onPart)
     }
 
     /// What was sent since the last call, and forget it.

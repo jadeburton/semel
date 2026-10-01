@@ -56,8 +56,9 @@ final class ServerConnection {
     // MARK: - Requests
 
     private func receive(_ frame: Frame) {
-        guard frame.kind == .request else {
-            // A client sends requests only; anything else is a framing bug on its side.
+        guard frame.kind == .request, !frame.continues else {
+            // A client sends requests only, each one frame; anything else is a framing bug
+            // on its side.
             return
         }
         let request: Request
@@ -79,9 +80,10 @@ final class ServerConnection {
         // cooperative pool's, whose threads the engine's loop needs (see the handler).
         // The client sends one request at a time, so a reply leaving from another thread
         // still leaves in request order.
+        let parts = PartSender(stream: stream, correlationID: frame.correlationID)
         if case .daemon(.wait) = request {
             let thread = Thread { [self] in
-                let (response, replyBody) = handler.handle(request, body: body, session: session)
+                let (response, replyBody) = handler.handle(request, body: body, session: session, replyStream: parts)
                 reply(response, body: replyBody, to: frame, request: request)
             }
             thread.name = "semel.wait"
@@ -89,8 +91,25 @@ final class ServerConnection {
             return
         }
 
-        let (response, replyBody) = handler.handle(request, body: body, session: session)
+        let (response, replyBody) = handler.handle(request, body: body, session: session, replyStream: parts)
         reply(response, body: replyBody, to: frame, request: request)
+    }
+
+    /// The parts of one request's reply (B-137): frames with the continue flag, on the same
+    /// stream as the last, so they leave ahead of it and in the order they were sent.
+    private final class PartSender: ReplyStream {
+        private let stream:        FrameStream
+        private let correlationID: UInt64
+
+        init(stream: FrameStream, correlationID: UInt64) {
+            self.stream        = stream
+            self.correlationID = correlationID
+        }
+
+        func send(part: Response) throws {
+            assert(part.mayStream, "only list, remove and errors stream; \(part) is one frame")
+            try stream.send(try Frame.response(part, correlationID: correlationID, continues: true))
+        }
     }
 
     /// One reply frame back on the stream, from whichever thread handled the request;

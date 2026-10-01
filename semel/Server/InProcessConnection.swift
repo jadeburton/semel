@@ -34,17 +34,58 @@ public final class InProcessConnection: SemelConnection, EventSink {
 
     // MARK: - SemelConnection
 
-    public func send(_ request: Request, body: Data?) throws -> (Response, Data?) {
+    public func send(_ request: Request, body: Data?, onPart: (Response) throws -> Void) throws -> (Response, Data?) {
         let correlationID = lock.withLock { () -> UInt64 in
             defer { nextCorrelationID += 1 }
             return nextCorrelationID
         }
 
-        let requestFrame  = try roundTrip(try Frame.request(request, correlationID: correlationID, body: body ?? Data()))
-        let (response, replyBody) = handler.handle(try requestFrame.request(), body: requestFrame.body, session: session)
-        let responseFrame = try roundTrip(try Frame.response(response, correlationID: correlationID, body: replyBody ?? Data()))
+        let requestFrame = try roundTrip(try Frame.request(request, correlationID: correlationID, body: body ?? Data()))
+        return try withoutActuallyEscaping(onPart) { onPart in
+            // The handler runs on this thread and calls the delivery as it sends each part,
+            // so `onPart` runs on the caller's thread, in order, as a socket's would.
+            let delivery = PartDelivery(connection: self, correlationID: correlationID, onPart: onPart)
+            let (response, replyBody) = handler.handle(try requestFrame.request(), body: requestFrame.body,
+                                                       session: session, replyStream: delivery)
+            let responseFrame = try roundTrip(try Frame.response(response, correlationID: correlationID,
+                                                                 body: replyBody ?? Data()))
+            if let failure = delivery.heldFailure {
+                throw failure
+            }
+            return (try responseFrame.response(), responseFrame.body.isEmpty ? nil : responseFrame.body)
+        }
+    }
 
-        return (try responseFrame.response(), responseFrame.body.isEmpty ? nil : responseFrame.body)
+    /// One request's parts (B-137), each put through the codec as a frame with the
+    /// continue flag and read back by the same rule a socket client reads them with.
+    private final class PartDelivery: ReplyStream {
+        private unowned let connection: InProcessConnection
+        private let onPart: (Response) throws -> Void
+        private var reply: IncomingReply
+        /// The first error `onPart` threw. Kept and thrown once the handler is done, as a
+        /// socket client keeps reading to the last frame: the handler is mid-request, and
+        /// a removal it is making stands whatever the caller did with the news.
+        private(set) var heldFailure: Error?
+
+        init(connection: InProcessConnection, correlationID: UInt64, onPart: @escaping (Response) throws -> Void) {
+            self.connection = connection
+            self.onPart     = onPart
+            self.reply      = IncomingReply(correlationID: correlationID)
+        }
+
+        func send(part: Response) throws {
+            assert(part.mayStream, "only list, remove and errors stream; \(part) is one frame")
+            let frame = try connection.roundTrip(try Frame.response(part, correlationID: reply.correlationID,
+                                                                    continues: true))
+            guard case .part(let arrived) = try reply.receive(frame), heldFailure == nil else {
+                return
+            }
+            do {
+                try onPart(arrived)
+            } catch {
+                heldFailure = error
+            }
+        }
     }
 
     // MARK: - EventSink

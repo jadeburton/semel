@@ -23,7 +23,7 @@ public enum FrameEncoder {
 
         bytes.append(Frame.version)
         bytes.append(frame.kind.rawValue)
-        bytes.append(0)     // flags
+        bytes.append(frame.continues ? Frame.continuesFlag : 0)
         bytes.append(0)     // reserved
         bytes.appendBigEndian(frame.correlationID)
         bytes.appendBigEndian(UInt32(frame.json.count))

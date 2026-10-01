@@ -192,10 +192,10 @@ private final class WaitCountingConnection: SemelConnection {
         set { inner.onEvent = newValue }
     }
 
-    func send(_ request: Request, body: Data?) throws -> (Response, Data?) {
+    func send(_ request: Request, body: Data?, onPart: (Response) throws -> Void) throws -> (Response, Data?) {
         if case .daemon(.wait) = request {
             lock.withLock { waits += 1 }
         }
-        return try inner.send(request, body: body)
+        return try inner.send(request, body: body, onPart: onPart)
     }
 }

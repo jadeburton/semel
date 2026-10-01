@@ -300,6 +300,40 @@ final class FilePluginTests: XCTestCase {
                                           + ", and 5 more"])
     }
 
+    /// A removal whose reply streams (B-137) says how far it has got at each part, then
+    /// reports the whole as one removal would: the count, and the folders named across
+    /// every part, up to the cap.
+    func test_aStreamedRmSaysHowFarItHasGotAndReportsTheWhole() throws {
+        connection.reply(.ok)
+        connection.reply(.remove(removedFiles: (20..<30).map { "pkg/file\($0).c" }, removedFolders: ["pkg"]),
+                         afterParts: [.remove(removedFiles: (0..<10).map { "pkg/file\($0).c" }, removedFolders: []),
+                                      .remove(removedFiles: (10..<20).map { "pkg/file\($0).c" },
+                                              removedFolders: (0..<25).map { "pkg/sub\($0)" })])
+        connection.reply(.ok)
+
+        try run("rm", ["pkg"])
+
+        XCTAssertEqual(context.errors, [])
+        XCTAssertEqual(context.messages, ["Removing: 10 files so far",
+                                          "Removing: 20 files and 25 folders so far",
+                                          "Removed 30 files and 26 folders: "
+                                          + (0..<20).map { "pkg/sub\($0)" }.joined(separator: ", ")
+                                          + ", and 6 more"])
+    }
+
+    /// A streamed reply whose last slice is empty still took what its parts named.
+    func test_aStreamedRmEndingInAnEmptySliceIsNotANoOp() throws {
+        connection.reply(.ok)
+        connection.reply(.remove(removedFiles: [], removedFolders: []),
+                         afterParts: [.remove(removedFiles: ["a.c"], removedFolders: [])])
+        connection.reply(.ok)
+
+        try run("rm", ["a.c"])
+
+        XCTAssertEqual(context.errors, [])
+        XCTAssertEqual(context.messages, ["Removing: 1 file so far", "Removed file: a.c"])
+    }
+
     func test_rmOfNothingIsAnError() throws {
         connection.reply(.ok)
         connection.reply(.remove(removedFiles: [], removedFolders: []))
