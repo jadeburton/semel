@@ -42,13 +42,13 @@ public struct SymbolDataAccess: DataAccessType {
 
     public func select(symbolID: ObjectID) throws -> Symbol? {
         try read { db in
-            try Symbol.filter(Symbol.Columns.id == symbolID).fetchOne(db)
+            try db.cachedRecord("SELECT * FROM Symbol WHERE id = ?", arguments: [symbolID])
         }
     }
 
     public func selectID(name: String) throws -> ObjectID? {
         try read { db in
-            try Symbol.filter(Symbol.Columns.name == name).fetchOne(db)?.id
+            try db.cachedValue("SELECT id FROM Symbol WHERE name = ?", arguments: [name])
         }
     }
 
@@ -67,10 +67,8 @@ public struct SymbolDataAccess: DataAccessType {
         try write { db in
             // INSERT OR IGNORE is a no-op when the name already exists (UNIQUE constraint),
             // so the subsequent SELECT always finds exactly one row.
-            try db.execute(sql: "INSERT OR IGNORE INTO Symbol (name) VALUES (?)",
-                           arguments: [name])
-            guard let id = try Int64.fetchOne(db, sql: "SELECT id FROM Symbol WHERE name = ?",
-                                              arguments: [name]) else {
+            try db.cachedExecute("INSERT OR IGNORE INTO Symbol (name) VALUES (?)", arguments: [name])
+            guard let id: Int64 = try db.cachedValue("SELECT id FROM Symbol WHERE name = ?", arguments: [name]) else {
                 throw SymbolError.nameMissingAfterInsert(name: name)
             }
             return id

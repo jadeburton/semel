@@ -73,7 +73,7 @@ public struct OutputPortDataAccess: DataAccessType {
 
     public func selectAll(nodeID: ObjectID) throws -> [OutputPort] {
         try read { db in
-            try OutputPort.filter(OutputPort.Columns.nodeID == nodeID).fetchAll(db)
+            try db.cachedRecords("SELECT * FROM OutputPort WHERE nodeID = ?", arguments: [nodeID])
         }
     }
 
@@ -101,8 +101,8 @@ public struct OutputPortDataAccess: DataAccessType {
     public func select(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> OutputPort? {
         Self.selectCount.increment()
         return try read { db in
-            try OutputPort.filter(OutputPort.Columns.nodeID == nodeID &&
-                                  OutputPort.Columns.nameSymbolID == nameSymbolID).fetchOne(db)
+            try db.cachedRecord("SELECT * FROM OutputPort WHERE nodeID = ? AND nameSymbolID = ?",
+                                arguments: [nodeID, nameSymbolID])
         }
     }
 
@@ -122,7 +122,7 @@ public struct OutputPortDataAccess: DataAccessType {
         Self.selectCount.increment()
         WireDataAccess.selectCount.increment()
         let rows = try read { db in
-            try Row.fetchAll(db, sql: """
+            try db.cachedRows("""
                 SELECT w.name AS wireName, p.nodeID, p.nameSymbolID, p.valueKind, p.dataObjectHash
                 FROM Wire w
                 LEFT JOIN OutputPort p ON p.nodeID = w.fromNodeID AND p.nameSymbolID = w.fromSymbolID
@@ -140,20 +140,30 @@ public struct OutputPortDataAccess: DataAccessType {
         }
     }
 
+    /// One statement where `save` is two — an update and, for a port written the first
+    /// time, an insert after it — and every node made writes each of its ports twice.
     public func insertOrUpdate(_ port: OutputPort) throws {
-        try write { db in try port.save(db) }
+        try write { db in
+            try db.cachedExecute("""
+                INSERT INTO OutputPort (nodeID, nameSymbolID, valueKind, dataObjectHash) VALUES (?, ?, ?, ?)
+                ON CONFLICT (nodeID, nameSymbolID) DO UPDATE
+                SET valueKind = excluded.valueKind, dataObjectHash = excluded.dataObjectHash
+                """, arguments: [port.nodeID, port.nameSymbolID, port.valueKind.rawValue, port.dataObjectHash])
+        }
     }
 
     public func delete(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> Bool {
         try write { db in
-            try OutputPort.filter(OutputPort.Columns.nodeID == nodeID &&
-                                  OutputPort.Columns.nameSymbolID == nameSymbolID).deleteAll(db) > 0
+            try db.cachedExecute("DELETE FROM OutputPort WHERE nodeID = ? AND nameSymbolID = ?",
+                                 arguments: [nodeID, nameSymbolID])
+            return db.changesCount > 0
         }
     }
 
     public func deleteAll(nodeID: ObjectID) throws -> Int {
         try write { db in
-            try OutputPort.filter(OutputPort.Columns.nodeID == nodeID).deleteAll(db)
+            try db.cachedExecute("DELETE FROM OutputPort WHERE nodeID = ?", arguments: [nodeID])
+            return db.changesCount
         }
     }
 

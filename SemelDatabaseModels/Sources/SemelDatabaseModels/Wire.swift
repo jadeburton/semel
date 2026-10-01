@@ -116,14 +116,14 @@ public struct WireDataAccess: DataAccessType {
 
     public func select(goingToNodeID: ObjectID) throws -> [Wire] {
         try read(countingRows: { db in
-            try Wire.filter(Wire.Columns.toNodeID == goingToNodeID).fetchAll(db)
+            try db.cachedRecords("SELECT * FROM Wire WHERE toNodeID = ?", arguments: [goingToNodeID])
         })
     }
 
     public func select(goingToNodeID: ObjectID, toSymbolID: ObjectID) throws -> [Wire] {
         try read(countingRows: { db in
-            try Wire.filter(Wire.Columns.toNodeID == goingToNodeID &&
-                            Wire.Columns.toSymbolID == toSymbolID).fetchAll(db)
+            try db.cachedRecords("SELECT * FROM Wire WHERE toNodeID = ? AND toSymbolID = ?",
+                                 arguments: [goingToNodeID, toSymbolID])
         })
     }
 
@@ -134,22 +134,21 @@ public struct WireDataAccess: DataAccessType {
     /// judge rather than this method's to hide.
     public func select(goingToNodeID: ObjectID, toSymbolID: ObjectID, name: ObjectID) throws -> [Wire] {
         try read(countingRows: { db in
-            try Wire.filter(Wire.Columns.toNodeID == goingToNodeID &&
-                            Wire.Columns.toSymbolID == toSymbolID &&
-                            Wire.Columns.name == name).fetchAll(db)
+            try db.cachedRecords("SELECT * FROM Wire WHERE toNodeID = ? AND toSymbolID = ? AND name = ?",
+                                 arguments: [goingToNodeID, toSymbolID, name])
         })
     }
 
     public func select(comingFromNodeID: ObjectID) throws -> [Wire] {
         try read(countingRows: { db in
-            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID).fetchAll(db)
+            try db.cachedRecords("SELECT * FROM Wire WHERE fromNodeID = ?", arguments: [comingFromNodeID])
         })
     }
 
     public func select(comingFromNodeID: ObjectID, fromSymbolID: ObjectID) throws -> [Wire] {
         try read(countingRows: { db in
-            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
-                            Wire.Columns.fromSymbolID == fromSymbolID).fetchAll(db)
+            try db.cachedRecords("SELECT * FROM Wire WHERE fromNodeID = ? AND fromSymbolID = ?",
+                                 arguments: [comingFromNodeID, fromSymbolID])
         })
     }
 
@@ -160,13 +159,10 @@ public struct WireDataAccess: DataAccessType {
                        goingToNodeID: ObjectID,
                        toSymbolID: ObjectID,
                        name: ObjectID) throws -> Wire? {
-        let wire = try counted {
+        let wire: Wire? = try counted {
             try read { db in
-                try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
-                                Wire.Columns.fromSymbolID == fromSymbolID &&
-                                Wire.Columns.toNodeID == goingToNodeID &&
-                                Wire.Columns.toSymbolID == toSymbolID &&
-                                Wire.Columns.name == name).fetchOne(db)
+                try db.cachedRecord("SELECT * FROM Wire WHERE \(Self.wholeKey)",
+                                    arguments: [comingFromNodeID, fromSymbolID, goingToNodeID, toSymbolID, name])
             }
         }
         Self.rowsRead.add(wire == nil ? 0 : 1)
@@ -188,13 +184,14 @@ public struct WireDataAccess: DataAccessType {
                        toSymbolID: ObjectID,
                        name: ObjectID) throws -> Bool {
         try write { db in
-            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
-                            Wire.Columns.fromSymbolID == fromSymbolID &&
-                            Wire.Columns.toNodeID == goingToNodeID &&
-                            Wire.Columns.toSymbolID == toSymbolID &&
-                            Wire.Columns.name == name).deleteAll(db) > 0
+            try db.cachedExecute("DELETE FROM Wire WHERE \(Self.wholeKey)",
+                                 arguments: [comingFromNodeID, fromSymbolID, goingToNodeID, toSymbolID, name])
+            return db.changesCount > 0
         }
     }
+
+    /// One wire by its whole identity: the primary key, in its order.
+    private static let wholeKey = "fromNodeID = ? AND fromSymbolID = ? AND toNodeID = ? AND toSymbolID = ? AND name = ?"
 
     public func delete(wire: Wire) throws -> Bool {
         try delete(comingFromNodeID: wire.fromNodeID,

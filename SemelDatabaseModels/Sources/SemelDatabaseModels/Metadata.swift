@@ -44,7 +44,7 @@ public struct MetadataDataAccess: DataAccessType {
 
     public func select(key: String) throws -> String? {
         try read { db in
-            try Metadata.filter(Metadata.Columns.key == key).fetchOne(db)?.value
+            try db.cachedValue("SELECT value FROM Metadata WHERE key = ?", arguments: [key])
         }
     }
 
@@ -52,20 +52,24 @@ public struct MetadataDataAccess: DataAccessType {
     /// walked in one query.
     public func selectKeys(withPrefix prefix: String) throws -> [String] {
         try read { db in
-            try String.fetchAll(db, sql: "SELECT key FROM Metadata WHERE key LIKE ? ORDER BY key",
-                                arguments: [prefix + "%"])
+            try db.cachedValues("SELECT key FROM Metadata WHERE key LIKE ? ORDER BY key", arguments: [prefix + "%"])
         }
     }
 
+    /// One statement where `save` is an update and then, for a new key, an insert: a push
+    /// marks the folder of every file it records, most of them for the first time.
     public func upsert(key: String, value: String) throws {
         try write { db in
-            try Metadata(key: key, value: value).save(db)
+            try db.cachedExecute("""
+                INSERT INTO Metadata (key, value) VALUES (?, ?)
+                ON CONFLICT (key) DO UPDATE SET value = excluded.value
+                """, arguments: [key, value])
         }
     }
 
     public func delete(key: String) throws {
-        _ = try write { db in
-            try Metadata.filter(Metadata.Columns.key == key).deleteAll(db)
+        try write { db in
+            try db.cachedExecute("DELETE FROM Metadata WHERE key = ?", arguments: [key])
         }
     }
 }
