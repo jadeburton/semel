@@ -59,7 +59,9 @@ public enum ProtocolVersion {
     /// (B-77).
     /// Version 20 adds `contentRoots` and `folderChildren` and their replies, what a push
     /// compares with the disk before it sends (B-132).
-    public static let current = 20
+    /// Version 21 gives a `HeldFolderRoot` the dot-named files its folder holds, which a
+    /// client folds into its root of the disk (B-77).
+    public static let current = 21
 }
 
 public struct Hello: Codable, Equatable, Sendable {

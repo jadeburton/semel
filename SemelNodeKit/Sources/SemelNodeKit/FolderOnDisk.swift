@@ -13,9 +13,10 @@ import SemelDatabaseModels
 /// A folder below the tree a push reads, walked as `ExternalFileSystemLister` lists it.
 ///
 /// What is here is what a push sends and nothing else: every name starting with a dot is
-/// left out, a link inside its own folder is the link it is, any other link is followed
-/// unless it points at a folder above it, and a subfolder holding nothing a push would push
-/// is left out — a push creates a folder only on the way to a file, or when it is a link.
+/// left out but a file the server already holds under it (`hiddenFiles`), a link inside its
+/// own folder is the link it is, any other link is followed unless it points at a folder
+/// above it, and a subfolder holding nothing a push would push is left out — a push creates
+/// a folder only on the way to a file, or when it is a link.
 public struct FolderOnDisk {
     /// Where the folder is, relative to the directory the walk was rooted at: the path a
     /// push sends it under.
@@ -138,7 +139,13 @@ extension FolderOnDisk {
     /// The folder at `relativePath` below `baseDirectory`, leaving out every path
     /// `isExcluded` names — the export folder a build writes into the tree it pushes.
     /// `symbolicLinkTarget` is what the folder holds when it is itself a link pushed as one.
+    ///
+    /// `hiddenFiles` names, by the path of their folder relative to `baseDirectory`, the
+    /// dot-named files the server holds there (B-77 item 5): each one still on disk is
+    /// walked and folded as any file is, since the engine folds it into its folder's root.
+    /// Empty for `prepare`'s fold of a vendored folder, which leaves every dot-name out.
     public static func read(_ relativePath: Path, under baseDirectory: String, symbolicLinkTarget: String? = nil,
+                            hiddenFiles: [String: [String]] = [:],
                             excluding isExcluded: (Path) -> Bool = { _ in false }) -> FolderOnDisk {
         let lister = ExternalFileSystemLister(rootDirectoryPath: baseDirectory)
         let absolutePath = relativePath.isEmpty ? baseDirectory
@@ -149,7 +156,7 @@ extension FolderOnDisk {
         // independent of one another.
         var pending: [(entry: FileWildcardEntry, absolutePath: String)] = []
         let listed = list(absolutePath: absolutePath, relativePath: relativePath, symbolicLinkTarget: symbolicLinkTarget,
-                          lister: lister, isExcluded: isExcluded, pending: &pending)
+                          lister: lister, hiddenFiles: hiddenFiles, isExcluded: isExcluded, pending: &pending)
         var files = [FileOnDisk?](repeating: nil, count: pending.count)
         files.withUnsafeMutableBufferPointer { slots in
             DispatchQueue.concurrentPerform(iterations: pending.count) { index in
@@ -179,10 +186,17 @@ extension FolderOnDisk {
     }
 
     private static func list(absolutePath: String, relativePath: Path, symbolicLinkTarget: String?,
-                             lister: ExternalFileSystemLister, isExcluded: (Path) -> Bool,
+                             lister: ExternalFileSystemLister, hiddenFiles: [String: [String]], isExcluded: (Path) -> Bool,
                              pending: inout [(entry: FileWildcardEntry, absolutePath: String)]) -> ListedFolder {
         var folder = ListedFolder(path: relativePath, symbolicLinkTarget: symbolicLinkTarget, children: [])
-        for listed in lister.allFiles(inDirectoryPath: absolutePath) {
+        var entries = lister.allFiles(inDirectoryPath: absolutePath)
+        let hidden = (hiddenFiles[relativePath.string] ?? []).compactMap {
+            lister.hiddenFile(named: $0, inDirectoryPath: absolutePath)
+        }
+        if !hidden.isEmpty {
+            entries = (entries + hidden).sorted { $0.path.string < $1.path.string }
+        }
+        for listed in entries {
             let name          = listed.path.string
             let childRelative = relativePath / name
             guard !isExcluded(childRelative) else {
@@ -197,8 +211,8 @@ extension FolderOnDisk {
                 pending.append((entry, childAbsolute))
             case .folder:
                 let subfolder = list(absolutePath: childAbsolute, relativePath: childRelative,
-                                     symbolicLinkTarget: listed.symbolicLinkTarget, lister: lister, isExcluded: isExcluded,
-                                     pending: &pending)
+                                     symbolicLinkTarget: listed.symbolicLinkTarget, lister: lister,
+                                     hiddenFiles: hiddenFiles, isExcluded: isExcluded, pending: &pending)
                 folder.children.append(.folder(subfolder))
             }
         }

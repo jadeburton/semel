@@ -58,7 +58,8 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(formula.contains("extraSourceFiles: [\n"
                                        + "        'App/App.swift': StaticFile(path: 'input:/repo/App/App.swift').output,\n"
                                        + "        'App/Views/Home.swift': StaticFile(path: 'input:/repo/App/Views/Home.swift').output,\n"
-                                       + "        'Shared/Sources/Util.swift': StaticFile(path: 'input:/repo/Shared/Sources/Util.swift').output\n"
+                                       + "        'Shared/Sources/Util.swift': StaticFile(path: 'input:/repo/Shared/Sources/Util.swift').output,\n"
+                                       + "        'GeneratedAssetSymbols.swift': assets_Food_Truck().swiftAssetSymbols\n"
                                        + "        ]"), formula)
         XCTAssertTrue(formula.contains("'FoodKit': modules_FoodKit().files"), formula)
     }
@@ -75,6 +76,19 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(formula.contains("product 'Food Truck.app/LICENSE.txt' = StaticFile(path: 'input:/repo/LICENSE.txt').output"), formula)
         XCTAssertTrue(formula.contains("base: ['base': StaticFile(path: 'input:/repo/App/Food-Info.plist').output]"), formula)
         XCTAssertFalse(formula.contains("product 'Food Truck.app/Food-Info.plist'"), formula)
+    }
+
+    /// A dot-named file the resources phase lists — CodeEdit's `.all-contributorsrc`, which
+    /// its About window reads from the bundle — is a resource by its exact path, copied
+    /// under its own name: the `StaticFile` that a build follows and a push of its path
+    /// sends, though a walk of the folder passes it over (B-77 item 5).
+    func test_aListedDotNamedResourceIsCopiedByItsPath() throws {
+        let pbxproj = XcodeProjectTests.groupedFixture
+            .replacingOccurrences(of: "path = LICENSE.txt;", with: "path = .all-contributorsrc;")
+        let formula = try groupedFormula(pbxproj: pbxproj)
+
+        XCTAssertTrue(formula.contains("product 'Food Truck.app/.all-contributorsrc' = StaticFile(path: 'input:/repo/.all-contributorsrc').output"),
+                      formula)
     }
 
     /// A listed source that is neither Swift nor C-family is a build this converter cannot
@@ -170,8 +184,10 @@ final class XcodeFormulaEmitterTests: XCTestCase {
     }
 
     /// Every package product's binary frameworks (B-77): compiled and linked against, found
-    /// at run time under `Contents/Frameworks`, and embedded there — named for every product,
-    /// since `frameworks_P()` is empty for one that reaches none.
+    /// at run time under `Contents/Frameworks`, and the dynamic ones embedded there —
+    /// `embedded_P()`, so a static framework is linked and neither embedded nor signed
+    /// (B-77 item 12) — named for every product, since both are empty for one that reaches
+    /// none.
     func test_aMacBundleEmbedsThePackagesFrameworksUnderContentsFrameworks() throws {
         let formula = try macFormula()
 
@@ -184,8 +200,10 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(bundle.contains(linkerTrees), bundle)
         XCTAssertTrue(bundle.contains("frameworksRunpath: '@executable_path/../Frameworks'"), bundle)
         XCTAssertTrue(bundle.contains("    'Contents/Frameworks': TreeMerger(under: 'Contents/Frameworks', input: [\n"
-                                      + "        'KeychainSwift': frameworks_KeychainSwift().files,\n"
-                                      + "        'Timeline': frameworks_Timeline().files\n    ]).files"), bundle)
+                                      + "        'KeychainSwift': embedded_KeychainSwift().files,\n"
+                                      + "        'Timeline': embedded_Timeline().files\n    ]).files"), bundle)
+        XCTAssertFalse(bundle.contains("'Contents/Frameworks': TreeMerger(under: 'Contents/Frameworks', input: [\n        'KeychainSwift': frameworks_"),
+                       "what is linked against is not what is embedded: \(bundle)")
     }
 
     // MARK: - Signing a Mac bundle (B-77)
@@ -282,7 +300,8 @@ final class XcodeFormulaEmitterTests: XCTestCase {
     func test_anIOSBundleEmbedsThePackagesFrameworksUnderFrameworks() throws {
         let formula = try formula()
 
-        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Frameworks/' = TreeMerger(input: ["), formula)
+        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Frameworks/' = TreeMerger(input: [\n"
+                                       + "        'KeychainSwift': embedded_KeychainSwift().files,"), formula)
         XCTAssertTrue(formula.contains("frameworksRunpath: '@executable_path/Frameworks'"), formula)
     }
 
@@ -509,6 +528,55 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(formula.contains("catalog: ['Localizable.xcstrings': StaticFile(path: 'input:/repo/IceCubesApp/Resources/Localizable.xcstrings').output]"), formula)
         XCTAssertTrue(formula.contains("product 'Ice Cubes.app/' = TreeMerger(input: ['assets': assets_IceCubesApp().files, 'strings0': strings_IceCubesApp_0().files, "
                                        + "'bundles_KeychainSwift': bundles_KeychainSwift().files, 'bundles_Timeline': bundles_Timeline().files]).files"), formula)
+    }
+
+    // MARK: - Generated asset symbols (B-77 item 10)
+
+    /// By Xcode's default a target's catalogs write their Swift symbols, which the target
+    /// compiles as `GeneratedAssetSymbols.swift`: the same actool run, told the target's
+    /// bundle identifier, with the extensions off and every framework, unless the settings
+    /// say otherwise.
+    func test_theCatalogsSymbolsAreCompiledWithTheTargetsSources() throws {
+        let formula = try formula()
+
+        let assets = try block("func assets_IceCubesApp() =", in: formula)
+        XCTAssertTrue(assets.contains("swiftAssetSymbols: 'YES'"), assets)
+        XCTAssertTrue(assets.contains("swiftAssetSymbolExtensions: 'NO'"), assets)
+        XCTAssertTrue(assets.contains("assetSymbolFrameworks: 'SwiftUI UIKit AppKit'"), assets)
+        XCTAssertTrue(assets.contains("assetSymbolBundleIdentifier: 'com.example.IceCubesApp'"), assets)
+        let compiler = try block("func compiler_IceCubesApp() =", in: formula)
+        XCTAssertTrue(compiler.contains("extraSourceFiles: [\n        'GeneratedAssetSymbols.swift': assets_IceCubesApp().swiftAssetSymbols\n        ]"),
+                      compiler)
+        XCTAssertLessThan(try XCTUnwrap(formula.range(of: "func assets_IceCubesApp()")).lowerBound,
+                          try XCTUnwrap(formula.range(of: "func compiler_IceCubesApp()")).lowerBound,
+                          "a func is defined before the funcs that name it")
+    }
+
+    /// CodeEdit's settings: the extensions on, one framework, its own identifier for the
+    /// catalog; and a target that turns symbols off compiles none.
+    func test_theSymbolSettingsReachActoolAndOffMeansNone() throws {
+        let symbols = try formula(xcconfig: "ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES\n"
+                                          + "ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOL_FRAMEWORKS = SwiftUI\n"
+                                          + "ASSETCATALOG_COMPILER_BUNDLE_IDENTIFIER = app.codeedit.CodeEdit\n")
+        let assets = try block("func assets_IceCubesApp() =", in: symbols)
+        XCTAssertTrue(assets.contains("swiftAssetSymbolExtensions: 'YES'"), assets)
+        XCTAssertTrue(assets.contains("assetSymbolFrameworks: 'SwiftUI'"), assets)
+        XCTAssertTrue(assets.contains("assetSymbolBundleIdentifier: 'app.codeedit.CodeEdit'"), assets)
+
+        let none = try formula(xcconfig: "ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO\n")
+        XCTAssertFalse(none.contains("swiftAssetSymbols"), none)
+        XCTAssertFalse(none.contains("GeneratedAssetSymbols.swift"), none)
+    }
+
+    func test_theSymbolSettingsReadBackFromTheLiteralsTheyWrite() {
+        let symbols = AssetSymbolSettings(bundleIdentifier: "app.codeedit.CodeEdit", generatesExtensions: true, frameworks: "SwiftUI AppKit")
+
+        XCTAssertEqual(AssetSymbolSettings(literals: symbols.literals), symbols)
+        XCTAssertNil(AssetSymbolSettings(literals: ["appIcon": "AppIcon"]))
+        XCTAssertEqual(symbols.arguments(writingTo: "GeneratedAssetSymbols.swift"),
+                       ["--bundle-identifier", "app.codeedit.CodeEdit", "--generate-swift-asset-symbol-extensions", "YES",
+                        "--generate-asset-symbol-framework-support", "SwiftUI AppKit",
+                        "--generate-swift-asset-symbols", "GeneratedAssetSymbols.swift"])
     }
 
     /// A file that is neither source nor compiled is copied into the bundle root, as

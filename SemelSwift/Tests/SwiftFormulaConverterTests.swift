@@ -1107,6 +1107,9 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertTrue(slice.contains("infoPlist: ['Info.plist': StaticFile(path: 'input:/pkg/semel-artifacts/Sparkle/Sparkle.xcframework/Info.plist').output]"), slice)
         XCTAssertEqual(try funcDefinition("frameworks_Sparkle", in: formula),
                        "func frameworks_Sparkle() =\n    TreeMerger(input: [\n        'Sparkle': sliceSparkle().frameworks\n    ]).files")
+        XCTAssertEqual(try funcDefinition("embedded_Sparkle", in: formula),
+                       "func embedded_Sparkle() =\n    TreeMerger(input: [\n        'Sparkle': sliceSparkle().embeddedFrameworks\n    ]).files",
+                       "what an app embeds is the dynamic frameworks alone, which the selector decides (B-77 item 12)")
         XCTAssertTrue(try funcDefinition("objects_Sparkle", in: formula).contains("'Sparkle': sliceSparkle().libraries"), formula)
         XCTAssertTrue(try funcDefinition("modules_Sparkle", in: formula)
                         .contains("'Sparkle': TreeMerger(under: 'Sparkle', input: ['headers': sliceSparkle().headers]).files"), formula)

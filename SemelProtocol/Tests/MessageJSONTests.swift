@@ -47,9 +47,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsTwenty() {
-        XCTAssertEqual(ProtocolVersion.current, 20)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 20,
+    func test_currentProtocolVersionIsTwentyOne() {
+        XCTAssertEqual(ProtocolVersion.current, 21)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 21,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -150,15 +150,15 @@ final class MessageJSONTests: XCTestCase {
     /// The records travel in a reply's body, typed: a folder's root and pin, and a child's
     /// hash, mode and link target, each under its own key and absent where it has none.
     func test_encodesWhatAPushComparesAsRecords() throws {
-        let root   = HeldFolderRoot(path: "src/lib", contentRoot: "9f86d0", isPinned: true)
-        let marked = HeldFolderRoot(path: "src", contentRoot: nil, isPinned: true)
+        let root   = HeldFolderRoot(path: "src/lib", contentRoot: "9f86d0", isPinned: true, hiddenFiles: [".env"])
+        let marked = HeldFolderRoot(path: "src", contentRoot: nil, isPinned: true, hiddenFiles: [])
         let file   = HeldChild(name: "run.sh", kind: .file, contentHash: "abc", mode: 0o755, symbolicLinkTarget: nil,
                                isPinned: true)
         let link   = HeldChild(name: "Current", kind: .folder, contentHash: nil, mode: nil, symbolicLinkTarget: "A",
                                isPinned: true)
 
-        XCTAssertEqual(try json(root), #"{"contentRoot":"9f86d0","isPinned":true,"path":"src\/lib"}"#)
-        XCTAssertEqual(try json(marked), #"{"isPinned":true,"path":"src"}"#)
+        XCTAssertEqual(try json(root), #"{"contentRoot":"9f86d0","hiddenFiles":[".env"],"isPinned":true,"path":"src\/lib"}"#)
+        XCTAssertEqual(try json(marked), #"{"hiddenFiles":[],"isPinned":true,"path":"src"}"#)
         XCTAssertEqual(try json(file), #"{"contentHash":"abc","isPinned":true,"kind":"file","mode":493,"name":"run.sh"}"#)
         XCTAssertEqual(try json(link), #"{"isPinned":true,"kind":"folder","name":"Current","symbolicLinkTarget":"A"}"#)
 

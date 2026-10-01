@@ -56,10 +56,14 @@ enum BinaryTargetFixture {
 
     /// What the app prints: the framework's greeting, then what the plist and the JSON
     /// file of its synchronized folder say, each read from the bundle's resources at
-    /// launch (B-77 item 2).
+    /// launch (B-77 item 2); then its catalog's color, read through the symbol actool
+    /// generated for it (B-77 item 10); then the hidden file its resources phase lists,
+    /// which the build followed by its path (B-77 item 5).
     static let printedLines = [greeting,
                                "Goodbye from a plist in the synchronized folder",
-                               "A JSON file two folders down, copied flat"]
+                               "A JSON file two folders down, copied flat",
+                               "Amber is 0.90 0.60 0.10",
+                               "A hidden file the resources phase lists, copied by its path"]
 
     /// The exported app loads the framework by its install name, finds it through the
     /// runpath the emitter gave it, and — the framework embedded under

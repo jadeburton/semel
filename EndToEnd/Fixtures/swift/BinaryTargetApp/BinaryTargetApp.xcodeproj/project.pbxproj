@@ -8,6 +8,7 @@
 
 /* Begin PBXFileReference section */
 		A10000000000000000000001 /* Greeter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Greeter.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000010 /* .greeterrc */ = {isa = PBXFileReference; lastKnownFileType = text; path = .greeterrc; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -27,12 +28,25 @@
 
 /* Begin PBXBuildFile section */
 		A10000000000000000000004 /* Greeting in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000005 /* Greeting */; };
+		A10000000000000000000011 /* .greeterrc in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000010 /* .greeterrc */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000000000000000000012 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000011 /* .greeterrc in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXGroup section */
 		A10000000000000000000006 = {
 			isa = PBXGroup;
 			children = (
+				A10000000000000000000010 /* .greeterrc */,
 				A10000000000000000000002 /* App */,
 				A10000000000000000000007 /* Products */,
 			);
@@ -55,6 +69,7 @@
 			buildPhases = (
 				A1000000000000000000000A /* Sources */,
 				A10000000000000000000003 /* Frameworks */,
+				A10000000000000000000012 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -126,6 +141,7 @@
 		A1000000000000000000000F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

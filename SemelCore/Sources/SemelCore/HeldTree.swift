@@ -24,14 +24,29 @@ public enum HeldTree {
         /// A root is only compared on a pinned folder: an unpinned one is one a push still
         /// has to pin, and a ghost's root folds what nobody pushed.
         public let isPinned: Bool
+        /// The dot-named files the folder holds a value for, by name (B-77 item 5). A push
+        /// walking a folder leaves every dot-name out, so these are in the engine's root and
+        /// not in a fold of the disk unless the client is told: a file a formula named
+        /// exactly, which `push` of its path and `build`'s follow of a missing source push
+        /// whatever its name. The client folds each one it finds on disk, so the two roots
+        /// agree, and a push of the folder sends it again when it changes.
+        public let hiddenFiles: [String]
+
+        public init(path: Path, contentRoot: DataObjectHash?, isPinned: Bool, hiddenFiles: [String] = []) {
+            self.path        = path
+            self.contentRoot = contentRoot
+            self.isPinned    = isPinned
+            self.hiddenFiles = hiddenFiles
+        }
     }
 
     /// The folder at `relativePath` in the input file system and every folder below it, in
     /// one read of the graph: parents before their children, nothing when there is no
     /// folder at the path.
     ///
-    /// Two queries, however large the tree: the folders with their roots and pins, and the
-    /// marks that say which roots are waiting to be folded again. Both are read in one
+    /// Three queries, however large the tree: the folders with their roots and pins, the
+    /// dot-named files they hold, and the marks that say which roots are waiting to be
+    /// folded again. All are read in one
     /// snapshot, and each fold clears its mark and marks the folder above in one
     /// transaction (`Folder.refreshMarkedContentRoot`), so a root that is not marked is
     /// current as of this read — which is what lets a client skip a whole subtree on it.
@@ -46,6 +61,12 @@ public enum HeldTree {
                                                        portSymbolIDs: [contentRootPort, pinnedPort])
             let marked = try database.metadata.selectKeys(withPrefix: markPrefix)
                 .compactMap { ObjectID($0.dropFirst(markPrefix.count)) }
+            var hiddenFilesByFolder: [ObjectID: [String]] = [:]
+            for hidden in try database.node.selectDotNamedChildren(below: folderID, folderKind: Folder.kind,
+                                                                   childKind: StaticFile.kind,
+                                                                   withValueOn: StaticFile.outputPort.asSymbolID()) {
+                hiddenFilesByFolder[hidden.parentNodeID, default: []].append(hidden.name)
+            }
 
             var pathByID:   [ObjectID: Path]     = [:]
             var parentByID: [ObjectID: ObjectID] = [:]
@@ -79,7 +100,8 @@ public enum HeldTree {
                     contentRoot = port.dataObjectHash
                 }
                 return FolderRoot(path: path, contentRoot: contentRoot,
-                                  isPinned: row.ports[pinnedPort]?.valueKind == .value)
+                                  isPinned: row.ports[pinnedPort]?.valueKind == .value,
+                                  hiddenFiles: hiddenFilesByFolder[row.id] ?? [])
             }
         }
     }

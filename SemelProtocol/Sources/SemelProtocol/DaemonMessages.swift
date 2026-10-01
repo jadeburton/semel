@@ -289,11 +289,16 @@ public struct HeldFolderRoot: Codable, Equatable, Sendable {
     /// Whether the folder is pinned, as a push leaves it. A client compares no root on a
     /// folder that is not, and pushes the folder to pin it.
     public let isPinned: Bool
+    /// The dot-named files the folder holds a value for, by name (B-77 item 5): a walk of
+    /// the disk leaves dot-names out, so a client folds these in where it finds them, as
+    /// the server's root does.
+    public let hiddenFiles: [String]
 
-    public init(path: String, contentRoot: String?, isPinned: Bool) {
+    public init(path: String, contentRoot: String?, isPinned: Bool, hiddenFiles: [String]) {
         self.path        = path
         self.contentRoot = contentRoot
         self.isPinned    = isPinned
+        self.hiddenFiles = hiddenFiles
     }
 }
 

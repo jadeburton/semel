@@ -78,6 +78,29 @@ final class ExternalFileSystemListerTests: XCTestCase {
         XCTAssertEqual(entries.first { $0.path.string == "fw/Tiny.framework/Tiny" }?.kind, .file)
     }
 
+    // MARK: - A dot-named file named exactly (B-77 item 5)
+
+    /// A path naming a dot-named file exactly finds it — what a formula's `StaticFile`
+    /// names, and so what `push` and `build`'s follow of a missing source push — while a
+    /// wildcard, `**` and a dot-named folder named exactly still find no dot-name.
+    func test_aDotNamedFileIsFoundOnlyWhenItsPathNamesIt() throws {
+        let fileManager = FileManager.default
+        try "{}".write(to: root.appendingPathComponent("pkg/.all-contributorsrc"), atomically: true, encoding: .utf8)
+        try fileManager.createDirectory(at: root.appendingPathComponent("pkg/.github/workflows"), withIntermediateDirectories: true)
+        try "on: push".write(to: root.appendingPathComponent("pkg/.github/workflows/ci.yml"), atomically: true, encoding: .utf8)
+        let matcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: root.path))
+
+        let named = try matcher.findAllMatching(pathOrWildcard: "pkg/.all-contributorsrc")
+        XCTAssertEqual(named.map(\.path.string), ["pkg/.all-contributorsrc"])
+        XCTAssertEqual(named.first?.kind, .file)
+
+        for pattern in ["pkg/*", "pkg/.*", "pkg/**/*", "pkg/.all-contributors?c", "pkg/.github",
+                        "pkg/.github/workflows/ci.yml", "pkg/.missing"] {
+            let found = try matcher.findAllMatching(pathOrWildcard: pattern).map(\.path.string)
+            XCTAssertFalse(found.contains { $0.split(separator: "/").contains { $0.hasPrefix(".") } }, "\(pattern): \(found)")
+        }
+    }
+
     /// Inside its own folder means a relative target that never climbs above that folder,
     /// names no dot-named component a push would leave out, and names something below it.
     func test_whichTargetsStayInsideTheirFolder() {

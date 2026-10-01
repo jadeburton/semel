@@ -42,6 +42,17 @@ final class DataObjectStoreTests: SemelCoreTestCase {
         XCTAssertNil(try store.read(hash: String(repeating: "a", count: 64)))
     }
 
+    /// A range of an object reads what is there and no further — a framework's binary is
+    /// read for its header where a fat file puts it (B-77) — and a missing object is nil.
+    func test_aRangeOfAnObjectReadsWhatIsThere() throws {
+        let hash = try [UInt8]("the quick brown fox jumps over the lazy dog".utf8).intern()
+
+        XCTAssertEqual(store.bytes(ofHash: hash, at: 4, count: 5), Data("quick".utf8))
+        XCTAssertEqual(store.bytes(ofHash: hash, at: 40, count: 10), Data("dog".utf8))
+        XCTAssertEqual(store.bytes(ofHash: hash, at: 100, count: 4), Data())
+        XCTAssertNil(store.bytes(ofHash: String(repeating: "a", count: 64), at: 0, count: 4))
+    }
+
     // MARK: - Storing a file where it lies (B-116)
 
     private func temporaryFile(holding bytes: [UInt8]) throws -> URL {

@@ -6,7 +6,8 @@
 //  Icon Composer writes — for a platform. What comes out is decided by the catalogs: an
 //  `Assets.car`, and one PNG per app-icon size the platform wants, so the result is a
 //  tree, not a file. The partial Info.plist actool writes (the icon keys) is a value of
-//  its own, for `InfoPlistBuilder` to merge.
+//  its own, for `InfoPlistBuilder` to merge, and so is the Swift a second run writes for
+//  the catalogs' colors and images when the target asks for it (`AssetSymbolSettings`).
 //
 //  actool is not a function of its inputs, so the `Assets.car` in the tree is not the file
 //  it wrote but that file's canonical form, checked by `assetutil` to read as the same
@@ -32,6 +33,9 @@ struct AssetCatalogCompilerConfiguration {
     /// The `assetutil` that checks the canonical `Assets.car` reads as the one actool wrote
     /// (B-89): a fact about the machine, written by `semel-swift prepare`.
     let assetutilPath: String
+    /// The Swift a second run writes for the catalogs' symbols, when the target's settings
+    /// ask for it (B-77 item 10); formula literals, as `appIcon` is.
+    let swiftAssetSymbols: AssetSymbolSettings?
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
@@ -44,6 +48,7 @@ struct AssetCatalogCompilerConfiguration {
 
         targetDevices = devices.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         appIcon = properties["appIcon"]
+        swiftAssetSymbols = AssetSymbolSettings(literals: properties)
     }
 
     /// Pinned rather than derived from the type name: the derivation would make the
@@ -53,13 +58,97 @@ struct AssetCatalogCompilerConfiguration {
     static let machineSettingKeys: Set<String> = ["assetutilPath"]
 }
 
+// MARK: - Asset symbols (B-77 item 10)
+
+/// What a target's settings ask actool to write for its catalogs' colors and images: the
+/// Swift Xcode compiles as `GeneratedAssetSymbols.swift`, which declares
+/// `ColorResource.amber` and, with the extensions, `Color.amber` and `NSColor.amber`.
+///
+/// Xcode writes it whenever `ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS` holds, which is
+/// its default (`AssetCatalogCompiler.xcspec`), so every Xcode project with a catalog gets
+/// one; the extensions are off unless `…_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS` turns them
+/// on, as CodeEdit's settings do. The node writes it in a second actool run over the same
+/// catalogs, as Xcode's `GenerateAssetSymbols` step does: given `--bundle-identifier`,
+/// actool writes the Swift and compiles nothing. The text is a function of the catalogs and
+/// these settings: checked on Xcode 26.6 over two runs with the colors made in opposite
+/// orders, each symbol is written in order of its name and no path is in it, so it is
+/// published as actool writes it — it is the `Assets.car` that wants putting in canonical
+/// form (B-89), and when that fails neither is published.
+struct AssetSymbolSettings: Equatable {
+    /// `--bundle-identifier`, which Xcode passes: `ASSETCATALOG_COMPILER_BUNDLE_IDENTIFIER`,
+    /// by default the target's bundle identifier.
+    let bundleIdentifier: String
+    /// Whether the symbols extend SwiftUI's, UIKit's and AppKit's own types as well.
+    let generatesExtensions: Bool
+    /// The frameworks extended, as the setting lists them. Passed as one argument: actool
+    /// 26.6 honours one framework by itself and reads any longer list as all three, as the
+    /// default `SwiftUI UIKit AppKit` is.
+    let frameworks: String
+
+    static let enabledLiteral    = "swiftAssetSymbols"
+    static let bundleLiteral     = "assetSymbolBundleIdentifier"
+    static let extensionsLiteral = "swiftAssetSymbolExtensions"
+    static let frameworksLiteral = "assetSymbolFrameworks"
+
+    init(bundleIdentifier: String, generatesExtensions: Bool, frameworks: String) {
+        self.bundleIdentifier    = bundleIdentifier
+        self.generatesExtensions = generatesExtensions
+        self.frameworks          = frameworks
+    }
+
+    /// From a target's evaluated settings, with Xcode's defaults where it sets none; nil
+    /// when the target turns symbols off.
+    init?(settings: XcodeBuildSettings, bundleIdentifier: String) {
+        guard Self.isYes(settings["ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS"] ?? "YES") else {
+            return nil
+        }
+        let frameworks = (settings["ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOL_FRAMEWORKS"] ?? "SwiftUI UIKit AppKit")
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        self.init(bundleIdentifier:    settings["ASSETCATALOG_COMPILER_BUNDLE_IDENTIFIER"] ?? bundleIdentifier,
+                  generatesExtensions: Self.isYes(settings["ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS"] ?? "NO"),
+                  frameworks:          frameworks.isEmpty ? "SwiftUI UIKit AppKit" : frameworks)
+    }
+
+    /// From the literals `literals` wrote; nil when they do not ask for symbols.
+    init?(literals properties: [String: String]) {
+        guard properties[Self.enabledLiteral] == "YES", let bundleIdentifier = properties[Self.bundleLiteral] else {
+            return nil
+        }
+        self.init(bundleIdentifier:    bundleIdentifier,
+                  generatesExtensions: properties[Self.extensionsLiteral] == "YES",
+                  frameworks:          properties[Self.frameworksLiteral] ?? "SwiftUI UIKit AppKit")
+    }
+
+    /// What the emitter writes for the asset catalog compiler.
+    var literals: [String: String] {
+        [Self.enabledLiteral:    "YES",
+         Self.bundleLiteral:     bundleIdentifier,
+         Self.extensionsLiteral: generatesExtensions ? "YES" : "NO",
+         Self.frameworksLiteral: frameworks]
+    }
+
+    /// actool's arguments for the file it writes at `path`.
+    func arguments(writingTo path: String) -> [String] {
+        ["--bundle-identifier", bundleIdentifier,
+         "--generate-swift-asset-symbol-extensions", generatesExtensions ? "YES" : "NO",
+         "--generate-asset-symbol-framework-support", frameworks,
+         "--generate-swift-asset-symbols", path]
+    }
+
+    private static func isYes(_ value: String) -> Bool {
+        ["YES", "TRUE", "1"].contains(value.trimmingCharacters(in: .whitespaces).uppercased())
+    }
+}
+
 // MARK: - Node
 
 public struct AssetCatalogCompiler: Node {
     public static let kind: UInt = 29
     /// 2: `Assets.car` is published in canonical form (B-89).
     /// 3: a catalog's tree is asked for, where its folders were walked (B-135).
-    public static let implementationVersion = 3
+    /// 4: a second run writes the catalogs' Swift symbols when the literals ask, published
+    /// on the new `swiftAssetSymbols` (B-77 item 10).
+    public static let implementationVersion = 4
 
     // MARK: Ports
 
@@ -74,11 +163,16 @@ public struct AssetCatalogCompiler: Node {
     /// The tree actool wrote: `Assets.car` and the icon PNGs.
     static let output = "files"
     static let partialInfoPlist = "partialInfoPlist"
+    /// The Swift actool writes for the catalogs' colors and images (`AssetSymbolSettings`):
+    /// empty when the literals ask for none.
+    static let swiftAssetSymbols = "swiftAssetSymbols"
     static let infoLog = "infoLog"
     static let errorLog = "errorLog"
 
     static let outputFolder = "out"
     static let partialInfoPlistFile = "partial.plist"
+    /// Xcode's name for the file, which a compiler keys it by.
+    static let swiftAssetSymbolsFile = "GeneratedAssetSymbols.swift"
 
     public var thisNode: NodeRecord
 
@@ -88,7 +182,7 @@ public struct AssetCatalogCompiler: Node {
 
     public static let descriptor = NodeDescriptor(
         inputPorts: [.required(configuration), .optional(catalogs), .dynamic(catalogTrees), .dynamic(catalogFiles)],
-        outputPorts: [output, partialInfoPlist, infoLog, errorLog]
+        outputPorts: [output, partialInfoPlist, swiftAssetSymbols, infoLog, errorLog]
     )
 
     // MARK: Processing
@@ -143,13 +237,15 @@ public struct AssetCatalogCompiler: Node {
         }
         let inputFiles = try FolderTreeWalk.files(in: input, port: Self.catalogFiles, relativeTo: sandboxPath(forFile:))
 
-        var arguments: [String] = catalogRoots.compactMap(\.lastComponent)
-        arguments += ["--compile", Self.outputFolder]
-        arguments += ["--platform", configuration.platform]
-        arguments += ["--minimum-deployment-target", configuration.minimumDeploymentTarget]
+        // What both runs are given: the catalogs, for the platform.
+        var common: [String] = catalogRoots.compactMap(\.lastComponent)
+        common += ["--compile", Self.outputFolder]
+        common += ["--platform", configuration.platform]
+        common += ["--minimum-deployment-target", configuration.minimumDeploymentTarget]
         for device in configuration.targetDevices {
-            arguments += ["--target-device", device]
+            common += ["--target-device", device]
         }
+        var arguments = common
         if let appIcon = configuration.appIcon {
             arguments += ["--app-icon", appIcon]
         }
@@ -164,16 +260,41 @@ public struct AssetCatalogCompiler: Node {
                                       expectedOutputFileNames: [Self.partialInfoPlistFile],
                                       expectedOutputFolders: [Self.outputFolder])
 
+        // The symbols are a run of their own over the same catalogs, as Xcode's
+        // `GenerateAssetSymbols` step is: actool told `--bundle-identifier` writes the Swift
+        // and compiles nothing, and told nothing of it compiles and writes no Swift — on
+        // Xcode 26.6, one run asked for both writes only the Swift. Made once the catalog
+        // has compiled, since symbols for a catalog that does not are of no use.
+        var symbolsResult: SimplifiedToolExecuteResult?
+        if let symbols = configuration.swiftAssetSymbols, result.exitCode == 0 {
+            symbolsResult = try tool.execute(arguments: common + symbols.arguments(writingTo: Self.swiftAssetSymbolsFile)
+                                                      + ["--output-format", "human-readable-text"],
+                                             environment: [:],
+                                             inputFiles: inputFiles,
+                                             expectedOutputFileNames: [Self.swiftAssetSymbolsFile],
+                                             expectedOutputFolders: [])
+        }
+
         let tree: NodeValue
         var partialPlist: NodeValue
+        var symbols: NodeValue = .value(try [UInt8]().intern())
         if result.exitCode == 0, let plist = result.outputFiles[Self.partialInfoPlistFile] {
             partialPlist = .value(plist)
         } else {
             partialPlist = .noValue(reason: .error(messageDataObjectHash: try Self.failureMessage(for: result).intern()))
         }
+        if configuration.swiftAssetSymbols != nil {
+            let run = symbolsResult ?? result
+            if symbolsResult != nil, run.exitCode == 0, let source = run.outputFiles[Self.swiftAssetSymbolsFile] {
+                symbols = .value(source)
+            } else {
+                symbols = .noValue(reason: .error(messageDataObjectHash: try Self.failureMessage(for: run,
+                                                                                                   expecting: Self.swiftAssetSymbolsFile).intern()))
+            }
+        }
         if result.exitCode == 0 {
             // A catalog that cannot be shown canonical is not published at all, so neither is
-            // the plist that names its icon.
+            // the plist that names its icon, nor the symbols that name its colors.
             do {
                 let assetutil = try LocalFileSystemTool(localPath: configuration.assetutilPath)
                 tree = .value(try Self.canonicalTree(of: result.outputTrees[Self.outputFolder] ?? [],
@@ -181,15 +302,19 @@ public struct AssetCatalogCompiler: Node {
             } catch let failure where failure is AssetCatalogCanonicaliserError || failure is AssetCatalogGuardError {
                 tree = .noValue(reason: .error(messageDataObjectHash: try Self.notCanonicalMessage(failure).intern()))
                 partialPlist = tree
+                symbols = tree
             }
         } else {
             tree = try result.asTreeNodeValue(folder: Self.outputFolder)
         }
 
-        return .init(outputValues: [Self.output:           tree,
-                                    Self.partialInfoPlist: partialPlist,
-                                    Self.infoLog:          .value(try result.infoOutput.intern()),
-                                    Self.errorLog:         .value(try result.errorOutput.intern())],
+        let infoLog  = [result.infoOutput, symbolsResult?.infoOutput ?? ""].filter { !$0.isEmpty }.joined(separator: "\n")
+        let errorLog = [result.errorOutput, symbolsResult?.errorOutput ?? ""].filter { !$0.isEmpty }.joined(separator: "\n")
+        return .init(outputValues: [Self.output:            tree,
+                                    Self.partialInfoPlist:  partialPlist,
+                                    Self.swiftAssetSymbols: symbols,
+                                    Self.infoLog:           .value(try infoLog.intern()),
+                                    Self.errorLog:          .value(try errorLog.intern())],
                      inputWireSpecs: specs)
     }
 
@@ -217,15 +342,16 @@ public struct AssetCatalogCompiler: Node {
 
     /// What a failed run says: the tool's own failure message, naming actool, or, for a run
     /// that exits cleanly and writes no partial plist, that.
-    static func failureMessage(for result: SimplifiedToolExecuteResult) -> String {
+    static func failureMessage(for result: SimplifiedToolExecuteResult, expecting file: String = partialInfoPlistFile) -> String {
         result.exitCode == 0
-            ? "actool exited with status 0 and wrote no '\(partialInfoPlistFile)'"
+            ? "actool exited with status 0 and wrote no '\(file)'"
             : result.failureMessage(tool: "actool")
     }
 
     private static func pending(inputWireSpecs: [String: [String: GraphSpecNode]]) -> ProcessOutput {
         let pending = NodeValue.noValue(reason: .pending)
-        return .init(outputValues: [output: pending, partialInfoPlist: pending, infoLog: pending, errorLog: pending],
+        return .init(outputValues: [output: pending, partialInfoPlist: pending, swiftAssetSymbols: pending,
+                                    infoLog: pending, errorLog: pending],
                      inputWireSpecs: inputWireSpecs)
     }
 }

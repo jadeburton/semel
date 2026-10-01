@@ -104,9 +104,9 @@ final class HeldTreeTests: SemelCoreTestCase {
         }
     }
 
-    /// Two queries of the graph for the roots, whatever the size of the tree: a folder's
-    /// path, and the folders below it with their ports.
-    func test_theRootsCostTwoNodeSelectsHoweverLargeTheTree() throws {
+    /// Three queries of the graph for the roots, whatever the size of the tree: a folder's
+    /// path, the folders below it with their ports, and the dot-named files they hold.
+    func test_theRootsCostThreeNodeSelectsHoweverLargeTheTree() throws {
         for folder in 0..<12 {
             for file in 0..<5 {
                 try write("big/folder\(folder)/nested/file\(file).txt", "\(folder) \(file)")
@@ -118,7 +118,7 @@ final class HeldTreeTests: SemelCoreTestCase {
         let held = try HeldTree.folderRoots(below: Path("big"))
 
         XCTAssertEqual(held.count, 1 + 12 * 2)
-        XCTAssertEqual(NodeDataAccess.selectCount.value - before, 2)
+        XCTAssertEqual(NodeDataAccess.selectCount.value - before, 3)
     }
 
     /// A root the engine has not folded again since a push is not offered as current, and
@@ -134,6 +134,43 @@ final class HeldTreeTests: SemelCoreTestCase {
         XCTAssertNil(held["app/Sources"]?.contentRoot)
         XCTAssertNil(held["app"]?.contentRoot)
         XCTAssertNotNil(held["app/tools"]?.contentRoot, "a folder the change is not below keeps its root")
+    }
+
+    // MARK: - A dot-named file a formula names (B-77 item 5)
+
+    /// A dot-named file pushed by its path is in its folder's root, so the roots name it,
+    /// and the disk folded with it agrees with the engine; folded without it, as a walk
+    /// leaves dot-names out, the folder differs. A dot-name nobody pushed — a file only on
+    /// disk, or one a formula names and nobody pushed — is named by no root.
+    func test_aPushedDotNamedFileIsNamedByItsFolderAndFoldedOnBothSides() throws {
+        try frameworkTree()
+        try write("app/.all-contributorsrc", "{\"contributors\": []}\n")
+        try write("app/Sources/.hidden", "never pushed")
+        try push("app")
+        let hiddenPath = disk.appendingPathComponent("app/.all-contributorsrc").path
+        let entry = try XCTUnwrap(ExternalFileSystemLister(rootDirectoryPath: disk.path)
+            .hiddenFile(named: ".all-contributorsrc", inDirectoryPath: disk.appendingPathComponent("app").path))
+        let content = try PushedContent(ofFileAt: hiddenPath, listedAs: entry)
+        _ = try StaticFile.push([UInt8](content.bytes), mode: content.mode, at: Path("app/.all-contributorsrc"))
+        try Folder.flushDirtyManifests()
+
+        let held = Dictionary(uniqueKeysWithValues: try HeldTree.folderRoots(below: Path("app")).map { ($0.path.string, $0) })
+        XCTAssertEqual(held["app"]?.hiddenFiles, [".all-contributorsrc"])
+        XCTAssertEqual(held["app/Sources"]?.hiddenFiles, [], "a dot-named file only on disk is named by no root")
+
+        let told = FolderOnDisk.read(Path("app"), under: disk.path, hiddenFiles: ["app": [".all-contributorsrc"]])
+        XCTAssertNotNil(told.contentRoot)
+        XCTAssertEqual(told.contentRoot, held["app"]?.contentRoot)
+        XCTAssertTrue(told.entriesToPush.contains { $0.path.string == "app/.all-contributorsrc" })
+        let untold = FolderOnDisk.read(Path("app"), under: disk.path)
+        XCTAssertNotEqual(untold.contentRoot, held["app"]?.contentRoot)
+        XCTAssertFalse(untold.entriesToPush.contains { $0.path.lastComponent?.hasPrefix(".") == true })
+
+        let ghost = Path(Folder.inputFileSystemName) / Path("app/Sources/.gitignore")
+        _ = try GraphSpecNode.parse("StaticFile(path: '\(ghost.string)')").findOrCreateMatchingNode()
+        try Folder.flushDirtyManifests()
+        let withGhost = try HeldTree.folderRoots(below: Path("app")).first { $0.path.string == "app/Sources" }
+        XCTAssertEqual(withGhost?.hiddenFiles, [], "a dot-named file a formula names and nobody pushed is named by no root")
     }
 
     func test_noFolderAtThePathHoldsNoRoots() throws {

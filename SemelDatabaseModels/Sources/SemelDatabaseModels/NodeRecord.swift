@@ -531,6 +531,46 @@ public struct NodeDataAccess: DataAccessType {
         return result
     }
 
+    /// Every child of `childKind` whose name starts with a dot, in `ancestorNodeID` or in any
+    /// folder below it reached through nodes of `folderKind`, that carries a value on the
+    /// port `portSymbolID`: each with its parent and its name, ordered by both.
+    ///
+    /// What a push needs to fold the disk as the engine folds what it holds (B-77 item 5):
+    /// a push walking a folder leaves dot-names out, but one a formula named exactly is
+    /// pushed, and from then on it is in its folder's root. A range on the name rather than
+    /// `LIKE`, so each folder's step is a lookup on the index over `(parentNodeID, name)`
+    /// and never a read of every file in the tree: `.` is followed by `/` in byte order,
+    /// and no name holds a `/`.
+    public func selectDotNamedChildren(below ancestorNodeID: ObjectID,
+                                       folderKind: UInt,
+                                       childKind: UInt,
+                                       withValueOn portSymbolID: ObjectID) throws -> [(parentNodeID: ObjectID, name: String)] {
+        try selecting { db in
+            let rows = try Row.fetchAll(db, sql: """
+                WITH RECURSIVE
+                    subtree(nodeID) AS (
+                        SELECT ?
+                        UNION ALL
+                        SELECT child.id
+                        FROM subtree
+                        CROSS JOIN Node child ON child.parentNodeID = subtree.nodeID AND child.kind = ?
+                    )
+                SELECT hidden.parentNodeID AS parentNodeID, hidden.name AS name
+                FROM subtree
+                CROSS JOIN Node hidden ON hidden.parentNodeID = subtree.nodeID AND hidden.name >= '.' AND hidden.name < '/'
+                CROSS JOIN OutputPort p ON p.nodeID = hidden.id AND p.nameSymbolID = ? AND p.valueKind = ?
+                WHERE hidden.kind = ?
+                ORDER BY hidden.parentNodeID, hidden.name
+                """, arguments: [ancestorNodeID, folderKind, portSymbolID, OutputPort.ValueKind.value.rawValue, childKind])
+            return rows.compactMap { row in
+                guard let parentNodeID: ObjectID = row["parentNodeID"], let name: String = row["name"] else {
+                    return nil
+                }
+                return (parentNodeID, name)
+            }
+        }
+    }
+
     public func select(identity: String) throws -> [NodeRecord] {
         try selecting { db in
             try NodeRecord.filter(NodeRecord.Columns.identity == identity).fetchAll(db)

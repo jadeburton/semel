@@ -93,6 +93,31 @@ final class FolderOnDiskTests: XCTestCase {
         XCTAssertFalse(excluding.entriesToPush.contains { $0.path.string.hasPrefix("tree/semel-out") })
     }
 
+    /// A dot-named file the server holds is walked and folded where the disk has it, in
+    /// the order the folder's other files are, and the folders above it fold it in; one it
+    /// does not hold, or a name that is not on disk, leaves the walk as it was. The lock's
+    /// fold of the same folder is told of none, so it leaves every dot-name out (B-77 item 5).
+    func test_aDotNamedFileTheServerHoldsIsWalkedAndFolded() throws {
+        try frameworkTree()
+        let untold = FolderOnDisk.read(Path("tree"), under: root.path)
+
+        let told = FolderOnDisk.read(Path("tree"), under: root.path, hiddenFiles: ["tree/a": [".hidden", ".gone"]])
+
+        XCTAssertEqual(told.entriesToPush.map(\.path.string).filter { $0.hasPrefix("tree/a/") },
+                       ["tree/a/.hidden", "tree/a/one.txt"])
+        XCTAssertNotEqual(told.contentRoot, untold.contentRoot)
+        let folder = try XCTUnwrap(subfolder(named: "a", of: told))
+        let hiddenHash = Sha256.hash(Data("hidden".utf8))
+        let oneHash    = Sha256.hash(Data("one".utf8))
+        let expected = FolderContentRoot.document(of: [
+            (".hidden", .file, .file(hash: hiddenHash, mode: PushedContent.mode(ofFileAt: root.appendingPathComponent("tree/a/.hidden").path))),
+            ("one.txt", .file, .file(hash: oneHash, mode: PushedContent.mode(ofFileAt: root.appendingPathComponent("tree/a/one.txt").path))),
+        ])
+        XCTAssertEqual(folder.contentRoot, Sha256.hash(Data(expected.utf8)))
+        XCTAssertEqual(untold.contentRoot, try FolderContentRoot.root(ofFolderAt: root.appendingPathComponent("tree")),
+                       "the lock's fold leaves dot-names out")
+    }
+
     private func subfolder(named name: String, of folder: FolderOnDisk) -> FolderOnDisk? {
         for case .folder(let subfolder) in folder.children where subfolder.path.lastComponent == name {
             return subfolder

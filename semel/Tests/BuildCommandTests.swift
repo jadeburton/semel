@@ -139,6 +139,26 @@ final class BuildCommandTests: XCTestCase {
         XCTAssertEqual(interpreter.errorsReported, 0)
     }
 
+    /// A dot-named file the formula names — a resource such as CodeEdit's
+    /// `.all-contributorsrc` — is followed by its path as any source is, though the push of
+    /// the folder passed it over (B-77 item 5).
+    func test_buildPushesADotNamedSourceTheFormulaNames() throws {
+        try FileManager.default.createDirectory(at: externalRoot.appendingPathComponent("hello"),
+                                                withIntermediateDirectories: true)
+        try "include 'clang'".write(to: externalRoot.appendingPathComponent("hello/hello.fmla"),
+                                    atomically: true, encoding: .utf8)
+        try "{}".write(to: externalRoot.appendingPathComponent("hello/.all-contributorsrc"), atomically: true, encoding: .utf8)
+        _ = try GraphSpecNode.configFilter(prefix: "clang.compiler",
+                                           input: ["config": .staticFile(at: "input:/hello/.all-contributorsrc")])
+            .findOrCreateMatchingNode()
+
+        interpreter.handleCommand("build hello")
+
+        let node = try XCTUnwrap(try BuildEngine.shared.inputFileSystem.childNode(path: "hello/.all-contributorsrc"))
+        XCTAssertTrue(try XCTUnwrap(node.nodeAsAny() as? StaticFile).isPinned)
+        XCTAssertEqual(interpreter.errorsReported, 0)
+    }
+
     func test_noFollowPushesTheNamedFolderAlone() throws {
         try nameConfigBesideTheBuildFolder()
 

@@ -100,7 +100,10 @@ enum Projects {
     /// export verifies deep and strict, and the exported app loads the framework through its
     /// runpath and prints its greeting. The app's synchronized folder also
     /// holds a plist and, two folders down, a JSON file, which Xcode copies flat into
-    /// `Contents/Resources` (B-77 item 2); the app reads both at launch and prints them.
+    /// `Contents/Resources` (B-77 item 2); the app reads both at launch and prints them. It
+    /// also prints a color of its catalog through the symbol actool generates (item 10),
+    /// and a hidden file its resources phase lists, which only the build's follow of the
+    /// file by its path pushes (item 5).
     static let swiftBinaryTargetApp = Project(
         name: "swift-binary-target-app",
         source: .fixture(folder: "."),
@@ -110,6 +113,8 @@ enum Projects {
                            "Greeter.app/Contents/Info.plist",
                            "Greeter.app/Contents/Resources/Messages.plist",
                            "Greeter.app/Contents/Resources/Settings.json",
+                           "Greeter.app/Contents/Resources/Assets.car",
+                           "Greeter.app/Contents/Resources/.greeterrc",
                            "Greeter.app/Contents/Frameworks/Tiny.framework/Versions/A/Tiny",
                            "Greeter.app/Contents/Frameworks/Tiny.framework/Versions/A/Resources/Info.plist"],
         buildTimeout: fixtureTimeout,

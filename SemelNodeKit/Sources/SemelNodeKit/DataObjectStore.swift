@@ -107,6 +107,26 @@ public final class DataObjectStore {
         return try? handle.read(upToCount: count)
     }
 
+    /// Up to `count` bytes of an object from `offset` — fewer at its end, none past it — or
+    /// nil when it is not there: a header read where a fat binary says one is, without
+    /// reading the 375 MB of archives behind it (B-77).
+    ///
+    /// Not checked against the hash, as `read(hash:)` is: that would read the whole object,
+    /// which is what this exists not to do. A caller deciding something from a few bytes
+    /// decides it from what the store holds, as `prefix(ofHash:count:)` does.
+    public func bytes(ofHash hash: String, at offset: UInt64, count: Int) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: objectURL(hash: hash)) else {
+            return nil
+        }
+        defer { try? handle.close() }
+        do {
+            try handle.seek(toOffset: offset)
+            return try handle.read(upToCount: count) ?? Data()
+        } catch {
+            return nil
+        }
+    }
+
     /// Deletes an object. Only the collector calls this, and only for an object nothing
     /// refers to; an object already gone is not an error.
     public func remove(hash: String) throws {
