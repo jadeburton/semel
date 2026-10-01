@@ -127,10 +127,11 @@ final class IndicatorLineTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        terminal  = Terminal()
+        let terminal = Terminal()
+        self.terminal = terminal
         indicator = IndicatorLine(mode: .line,
-                                  write:        { [terminal] text in terminal!.writes.append(text) },
-                                  now:          { [terminal] in terminal!.now },
+                                  write:        { text in terminal.writes.append(text) },
+                                  now:          { terminal.now },
                                   terminalSize: { .fallback })
     }
 
@@ -204,8 +205,9 @@ final class IndicatorLineTests: XCTestCase {
 
     /// Disabled — a pipe, `SEMEL_PROGRESS=0` — nothing is ever written but what the
     /// interrupting body writes itself.
-    func test_aDisabledIndicatorWritesNothing() {
-        let quiet = IndicatorLine(mode: .off, write: { [terminal] text in terminal!.writes.append(text) })
+    func test_aDisabledIndicatorWritesNothing() throws {
+        let terminal = try XCTUnwrap(self.terminal)
+        let quiet = IndicatorLine(mode: .off, write: { text in terminal.writes.append(text) })
         quiet.begin()
         quiet.update(record(running: 3, pending: 3))
         quiet.tick()
@@ -237,10 +239,11 @@ final class IndicatorLineTests: XCTestCase {
 
     /// A line wider than the terminal would wrap onto a second row the erase does not
     /// reach, and every redraw would leave its first row behind; it is cut to fit instead.
-    func test_theLineIsCutToTheTerminalsWidth() {
+    func test_theLineIsCutToTheTerminalsWidth() throws {
+        let terminal = try XCTUnwrap(self.terminal)
         let narrow = IndicatorLine(mode: .line,
-                                   write:        { [terminal] text in terminal!.writes.append(text) },
-                                   now:          { [terminal] in terminal!.now },
+                                   write:        { text in terminal.writes.append(text) },
+                                   now:          { terminal.now },
                                    terminalSize: { TerminalSize(columns: 30, rows: 24) })
         narrow.begin(showing: record(running: 10, pending: 340))
         narrow.end()
@@ -387,10 +390,11 @@ final class DashboardIndicatorTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        terminal  = Terminal()
+        let terminal = Terminal()
+        self.terminal = terminal
         indicator = IndicatorLine(mode: .dashboard,
-                                  write:        { [terminal] text in terminal!.writes.append(text) },
-                                  now:          { [terminal] in terminal!.now },
+                                  write:        { text in terminal.writes.append(text) },
+                                  now:          { terminal.now },
                                   terminalSize: { .fallback })
     }
 

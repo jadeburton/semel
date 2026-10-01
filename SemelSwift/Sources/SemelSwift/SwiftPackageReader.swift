@@ -67,12 +67,12 @@ struct SwiftPackageReader: Node {
         let packageFile: FileNameAndContent
 
         init(input: ProcessInput) throws {
-            let configString = try input.inputValues[SwiftPackageReader.configuration]!
-                .values.first!.expectValue().resolveAsString()
+            let configString = try input.firstWire(onRequiredPort: SwiftPackageReader.configuration)
+                .value.expectValue().resolveAsString()
 
             configuration = try .init(properties: [String: String](plainText: configString))
 
-            let packageFileNodeValues = input.inputValues[SwiftPackageReader.packageFile]!.values.first!
+            let packageFileNodeValues = try input.firstWire(onRequiredPort: SwiftPackageReader.packageFile).value
 
             let fileEntry = try packageFileNodeValues.expectValue()
 

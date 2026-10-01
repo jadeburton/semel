@@ -41,9 +41,9 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         }
     }
 
-    func canBePinned() -> Bool {
+    func canBePinned() throws -> Bool {
         // HACK
-        containingPath.hasPrefix(.init(Folder.inputFileSystemName))
+        try containingPath.hasPrefix(.init(Folder.inputFileSystemName))
 //        self.parentNode?.canBePin
     }
 
@@ -65,7 +65,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest().toJSON().intern()),
                              Self.contentRootOutputPort: .value(try buildContentRootDocument().intern()),
                              Self.subtreeManifestOutputPort: .value(try FolderSubtreeManifest(entries: []).toJSON().intern()),
-                             Self.pinnedOutputPort: canBePinned() ? .noValue(reason: .initializing) : .value(""), // HACK
+                             Self.pinnedOutputPort: try canBePinned() ? .noValue(reason: .initializing) : .value(""), // HACK
                              Self.symbolicLinkOutputPort: Self.notASymbolicLink],
               inputWireSpecs: [:])
     }
@@ -94,10 +94,6 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
             try notifyParentOfChildContentChange()
         }
         return changed
-    }
-
-    var path: Path {
-        .init(thisNode.properties[Self.pathProperty]!)
     }
 
     // Ignores the fact that a node that has wires to/from it should never be deleted; that check needs to happen outside this
@@ -134,7 +130,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
 
         // `canBePinned()` asks about the *containing* path, which for every one of these
         // children is this folder's path — so it is one answer, not one per child.
-        let childFolderCanBePinned = path.hasPrefix(.init(Folder.inputFileSystemName))
+        let childFolderCanBePinned = try path.hasPrefix(.init(Folder.inputFileSystemName))
 
         var unpinnedSubfolderIDs: [ObjectID] = []
 
@@ -305,14 +301,14 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// parent's id in hand: building the parent to mark it would read a row and construct a
     /// node per level of every walk up the tree.
     static func markContentRootDirty(nodeID: ObjectID) throws {
-        try DatabaseLayer.shared!.metadata.upsert(key: contentRootDirtyKey(nodeID), value: "1")
+        try DatabaseLayer.shared.metadata.upsert(key: contentRootDirtyKey(nodeID), value: "1")
         BuildEngine.shared?.signalWorkAvailable()
     }
 
     /// The subtree manifest alone, for a folder whose descendant's names moved; by node id
     /// for the reason `markContentRootDirty` is.
     static func markSubtreeManifestDirty(nodeID: ObjectID) throws {
-        try DatabaseLayer.shared!.metadata.upsert(key: subtreeManifestDirtyKey(nodeID), value: "1")
+        try DatabaseLayer.shared.metadata.upsert(key: subtreeManifestDirtyKey(nodeID), value: "1")
         BuildEngine.shared?.signalWorkAvailable()
     }
 
@@ -326,7 +322,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// rounds walk up the tree and there are at most as many as it is deep.
     @discardableResult
     static func flushDirtyManifests() throws -> Int {
-        let database = DatabaseLayer.shared!
+        let database: DatabaseLayer = DatabaseLayer.shared
         var flushed = 0
         while true {
             let manifestKeys    = try database.metadata.selectKeys(withPrefix: manifestDirtyKeyPrefix)
@@ -373,7 +369,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// folder has been collected since it was marked: then there is nothing to rebuild and
     /// the row was all that was left of it.
     private static func markedFolder(nodeID: ObjectID, clearing key: String) throws -> Folder? {
-        let database = DatabaseLayer.shared!
+        let database: DatabaseLayer = DatabaseLayer.shared
         try database.metadata.delete(key: key)
         guard let nodeRecord = try database.node.find(nodeID: nodeID) else {
             return nil
@@ -388,7 +384,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// the node it would delete. A folder whose last child has gone is marked again
     /// instead, and the next pass collects it.
     static func flushManifestIfDirty(nodeID: ObjectID) throws {
-        let database = DatabaseLayer.shared!
+        let database: DatabaseLayer = DatabaseLayer.shared
         let key = manifestDirtyKey(nodeID)
         guard try database.metadata.select(key: key) != nil else {
             return
@@ -408,7 +404,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// down would be O(tree), which is the cost the marks exist to avoid.
     static func flushContentRootIfDirty(nodeID: ObjectID) throws {
         let key = contentRootDirtyKey(nodeID)
-        guard try DatabaseLayer.shared!.metadata.select(key: key) != nil else {
+        guard try DatabaseLayer.shared.metadata.select(key: key) != nil else {
             return
         }
         try refreshMarkedContentRoot(nodeID: nodeID, clearing: key)
@@ -420,7 +416,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// stale root with nothing saying so, and a push comparing roots (B-132) would take it
     /// for current and send nothing for a change the graph has not folded in yet.
     private static func refreshMarkedContentRoot(nodeID: ObjectID, clearing key: String) throws {
-        try DatabaseLayer.shared!.withTransaction {
+        try DatabaseLayer.shared.withTransaction {
             guard let folder = try markedFolder(nodeID: nodeID, clearing: key) else {
                 return
             }
@@ -432,7 +428,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// of that port: the folder's own children, as `flushContentRootIfDirty` reads, and for
     /// the same reason.
     static func flushSubtreeManifestIfDirty(nodeID: ObjectID) throws {
-        let database = DatabaseLayer.shared!
+        let database: DatabaseLayer = DatabaseLayer.shared
         let key = subtreeManifestDirtyKey(nodeID)
         guard try database.metadata.select(key: key) != nil else {
             return
@@ -469,7 +465,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// gone — a `nodeNotFound` mid-cascade and orphaned nodes behind it.
     private func isAbandoned() throws -> Bool {
         try thisNode.allChildren.isEmpty
-            && !(canBePinned() && isPinned)
+            && !(try canBePinned() && isPinned)
             && hasNoOutputWires()
             && hasNoInputWires()
     }
@@ -491,7 +487,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// would leave it saying it was deleted, in a report line naming a path the reader
     /// never pushed.
     func setPinned(_ pinned: Bool) throws {
-        guard canBePinned() else {
+        guard try canBePinned() else {
             return
         }
         // Unpinning is the user taking the folder back out of the input file system, which
@@ -529,13 +525,13 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
 
         var folderManifestEntries = [FolderManifestEntry]()
         for child in children {
-            folderManifestEntries.append(.init(name: child.name!,
+            folderManifestEntries.append(.init(name: try child.requireName(),
                                                isFolder: child.kind == Folder.kind,
                                                isPinned: pinned[child.id] ?? false,
                                                symbolicLinkTarget: links[child.id]))
         }
 
-        return .init(baseFolderPath: path.string, entries: folderManifestEntries)
+        return .init(baseFolderPath: try path.string, entries: folderManifestEntries)
     }
 
     /// The document this folder's content root is the hash of: one line per child, carrying
@@ -550,6 +546,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
 
         var lines = [(name: String, kind: FolderChildKind, content: FolderChildContent)]()
         for child in children {
+            let childName = try child.requireName()
             switch child.kind {
             // A child of a kind the fold reads, with no row for the port its content is on,
             // has had nothing produced on it — the same reading `asNodeValue` gives.
@@ -558,35 +555,35 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
                 guard let target = links[child.id] else {
                     // A file's bytes carry its mode on the line; a state has no mode to carry.
                     guard case .hash(let hash) = fileContent else {
-                        lines.append((child.name!, .file, fileContent))
+                        lines.append((childName, .file, fileContent))
                         continue
                     }
-                    lines.append((child.name!, .file, .file(hash: hash, mode: modes[child.id] ?? FileMetadata.defaultMode)))
+                    lines.append((childName, .file, .file(hash: hash, mode: modes[child.id] ?? FileMetadata.defaultMode)))
                     continue
                 }
                 // A link is its target while it stands; removed, it says so as a file does,
                 // and stays a link: the metadata a removal leaves is the one it was pushed with.
                 guard case .hash = fileContent else {
-                    lines.append((child.name!, .link, fileContent))
+                    lines.append((childName, .link, fileContent))
                     continue
                 }
-                lines.append((child.name!, .link, .symbolicLinkTarget(target)))
+                lines.append((childName, .link, .symbolicLinkTarget(target)))
 
             case Folder.kind:
                 // A folder that is a link is what the link holds, whatever the copy of what
                 // it names below it holds: that is folded where it is.
                 if let target = links[child.id] {
-                    lines.append((child.name!, .link, .symbolicLinkTarget(target)))
+                    lines.append((childName, .link, .symbolicLinkTarget(target)))
                     continue
                 }
-                lines.append((child.name!, .folder, content[child.id] ?? .notProduced))
+                lines.append((childName, .folder, content[child.id] ?? .notProduced))
 
             default:
                 // Every other kind under a folder is a product, whose content the fold does
                 // not reach. `FolderChildContent.notFolded` says why, and saying it here by
                 // `kind` rather than by absence from a dictionary means a node kind that
                 // becomes a folder's child cannot acquire the answer by accident.
-                lines.append((child.name!, .other, .notFolded))
+                lines.append((childName, .other, .notFolded))
             }
         }
 
@@ -606,7 +603,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         Self.subtreeManifestRebuildCount.increment()
         guard case .value(let manifestHash) = try thisNode.readFromOutputPort(Self.folderManifestOutputPort),
               let manifest: FolderManifest = try? TypeRegistry.decodeAndCast(encodedJSON: try manifestHash.resolveAsString()) else {
-            throw NodeError.other(message: "the manifest of \(path) cannot be read to fold its subtree manifest")
+            throw NodeError.other(message: "the manifest of \(try path) cannot be read to fold its subtree manifest")
         }
         let subtrees = try database.node.selectChildPortsByName(parentNodeID: try thisNode.requireID(),
                                                                 nameSymbolID: Self.subtreeManifestOutputPort.asSymbolID())

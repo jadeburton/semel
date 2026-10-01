@@ -119,7 +119,7 @@ final class GraphSpecTableTests: XCTestCase {
         let trees = demands(sources: 5)
         let table = try GraphSpecTable(trees: trees)
 
-        for (wireName, tree) in trees["objects"]!.sorted(by: { $0.key < $1.key }) {
+        for (wireName, tree) in try XCTUnwrap(trees["objects"]).sorted(by: { $0.key < $1.key }) {
             XCTAssertEqual(table.inputWireSpecs["objects"]?[wireName],
                            GraphSpecTable.Reference(identity: try tree.identity(), outputPort: "object"))
             for occurrence in occurrences(of: tree) {
@@ -196,7 +196,7 @@ final class GraphSpecTableTests: XCTestCase {
         let table = try GraphSpecTable(trees: demands(sources: 3))
         let unfolded = try table.trees()
 
-        for (wireName, reference) in table.inputWireSpecs["objects"]!.sorted(by: { $0.key < $1.key }) {
+        for (wireName, reference) in try XCTUnwrap(table.inputWireSpecs["objects"]).sorted(by: { $0.key < $1.key }) {
             XCTAssertEqual(try unfolded["objects"]?[wireName]?.identity(), reference.identity)
         }
     }
@@ -318,7 +318,7 @@ final class GraphSpecTableTests: XCTestCase {
     /// compared, diffed and hashed as bytes.
     func test_equalTreesEncodeToTheSameBytes() throws {
         let trees = demands(sources: 20)
-        let rebuilt = ["objects": Dictionary(uniqueKeysWithValues: trees["objects"]!.sorted { $0.key > $1.key }.map { ($0.key, $0.value) })]
+        let rebuilt = ["objects": Dictionary(uniqueKeysWithValues: try XCTUnwrap(trees["objects"]).sorted { $0.key > $1.key }.map { ($0.key, $0.value) })]
 
         let first  = try GraphSpecTable(trees: trees).toJSON()
         let second = try GraphSpecTable(trees: rebuilt).toJSON()

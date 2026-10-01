@@ -196,7 +196,7 @@ extension Node {
         let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues,
                                            specTable: output.specTable,
                                            keyMaterial: keyMaterial)
-        let cacheEntryData = try cacheEntry.toJSON().data(using: .utf8)!
+        let cacheEntryData = Data(try cacheEntry.toJSON().utf8)
 
         // Replaces rather than refuses: a key whose row this Semel could not read is a key
         // it just missed on, and the build that missed is the one thing that can put a

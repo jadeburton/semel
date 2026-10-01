@@ -49,7 +49,7 @@ extension NodeRecord {
     }
 
     func makeNode() throws -> any Node {
-        try (TypeRegistry.type(kind: kind) as! Node.Type).init(thisNode: self)
+        try TypeRegistry.nodeType(kind: kind).init(thisNode: self)
     }
 
     /// Returns the node as `Any` so app-layer callers can pattern-match

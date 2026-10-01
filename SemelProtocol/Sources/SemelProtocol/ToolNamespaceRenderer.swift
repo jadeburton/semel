@@ -28,8 +28,8 @@ public enum ToolNamespaceRenderer {
                     "\(namespace.namespace).toolDescriptor.platform=\(descriptor.platform)",
                     "\(namespace.namespace).toolDescriptor.architecture=\(descriptor.architecture)",
                 ]
-                for key in descriptor.machineSettings.keys.sorted() {
-                    lines.append("\(namespace.namespace).\(key)=\(descriptor.machineSettings[key]!)")
+                for (key, value) in descriptor.machineSettings.sorted(by: { $0.key < $1.key }) {
+                    lines.append("\(namespace.namespace).\(key)=\(value)")
                 }
                 blocks.append(lines.joined(separator: "\n"))
             }

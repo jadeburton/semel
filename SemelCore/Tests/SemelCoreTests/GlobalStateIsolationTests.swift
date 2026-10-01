@@ -14,8 +14,8 @@ import SemelNodeKit
 final class GlobalStateIsolationTests: SemelCoreTestCase {
 
     func test_internedContentDoesNotReachTheUsersObjectStore() throws {
-        let appSupport = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupport = try XCTUnwrap(FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first)
 
         let token = try "isolation probe \(UUID().uuidString)".intern()
         let storedAt = DataObjectStore.shared.objectURL(hash: token).path

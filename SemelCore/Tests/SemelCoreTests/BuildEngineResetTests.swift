@@ -265,7 +265,7 @@ final class BuildEngineResetTests: SemelCoreTestCase {
 
         try engine.reset()
 
-        let projectFinder = try XCTUnwrap(engine.database.node.select(nodeID: try engine.projectFinder.id!))
+        let projectFinder = try XCTUnwrap(engine.database.node.select(nodeID: try engine.projectFinder.requireID()))
         XCTAssertTrue(projectFinder.scheduled,
                       "reset must reschedule ProjectFinder even when it deleted nothing")
     }
@@ -274,14 +274,14 @@ final class BuildEngineResetTests: SemelCoreTestCase {
     // A reset in that window must not resurrect the file.
     func test_reset_keepsPendingDeletionMarkOnPreservedInputNode() throws {
         let inputChild = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)
-        try engine.database.node.updatePendingDeletion(nodeID: inputChild.id!, pendingDeletion: true)
+        try engine.database.node.updatePendingDeletion(nodeID: try inputChild.requireID(), pendingDeletion: true)
 
         // Give reset something to delete, so it reaches the bulk-delete transaction.
         _ = try GraphSpecNode.parse("SettingsLiteral(role: 'doomed').output").findOrCreateMatchingNode()
 
         try engine.reset()
 
-        let after = try XCTUnwrap(engine.database.node.select(nodeID: inputChild.id!))
+        let after = try XCTUnwrap(engine.database.node.select(nodeID: try inputChild.requireID()))
         XCTAssertTrue(after.pendingDeletion,
                       "reset must not clear a pending deletion the user asked for")
     }

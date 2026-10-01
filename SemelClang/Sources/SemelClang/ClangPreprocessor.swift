@@ -232,13 +232,13 @@ public struct ClangPreprocessor: Node {
                 .map { ($0.key, $0.manifest) }
             headerFolderTrees = FolderTreeWalk.trees(in: input, port: ClangPreprocessor.headerFolderTrees)
 
-            let configurationString = try input.inputValues[ClangCompiler.configuration]!.values.first!.expectValue().resolveAsString()
+            let configurationString = try input.firstWire(onRequiredPort: ClangCompiler.configuration).value.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
-            let sourceFileInput = input.inputValues[ClangPreprocessor.sourceFileInput]!.first!
+            let sourceFileInput = try input.firstWire(onRequiredPort: ClangPreprocessor.sourceFileInput)
             inputSourceFile = .init(filePath: sourceFileInput.key, hash: try sourceFileInput.value.expectValue())
 
-            let headerInputFiles = input.inputValues[ClangPreprocessor.headerInputFiles]!
+            let headerInputFiles = try input.wires(on: ClangPreprocessor.headerInputFiles)
 
             var headerFiles: [FileNameAndContent] = []
             var absentHeaderPaths: [String] = []
@@ -254,7 +254,7 @@ public struct ClangPreprocessor: Node {
             self.headerFiles = headerFiles
             self.absentHeaderPaths = absentHeaderPaths
 
-            includePathLists = try Dictionary(uniqueKeysWithValues: input.inputValues[ClangPreprocessor.includeFileLists]!.map { includeFilesValue in
+            includePathLists = try Dictionary(uniqueKeysWithValues: input.wires(on: ClangPreprocessor.includeFileLists).map { includeFilesValue in
                 let wireName = includeFilesValue.key
                 let list = try includeFilesValue.value
                     .expectValue()

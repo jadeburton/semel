@@ -7,18 +7,36 @@
 
 import SemelNodeKit
 
+/// A node standing at a path in the file-system tree: `Folder`, `StaticFile`, `OutputFile`.
 protocol HasPath {
-    var path: Path { get }
+    /// The property every node of the type is created with, holding its path.
+    static var pathProperty: String { get }
 }
 
-extension HasPath {
+extension HasPath where Self: Node {
+    /// The node's path, from the property its type is always created with. Throws for a
+    /// row without one, which nothing makes — a damaged graph, reported against the node
+    /// that reads it rather than crashing the server that does.
+    var path: Path {
+        get throws {
+            guard let path = thisNode.properties[Self.pathProperty] else {
+                throw NodeError.propertyMissing(kind: Self.kind, nodeID: thisNode.id, property: Self.pathProperty)
+            }
+            return Path(path)
+        }
+    }
+
     var name: String {
-        path.lastComponent ?? ""
+        get throws {
+            try path.lastComponent ?? ""
+        }
     }
 
     /// The parent path (everything except the last component), or `.empty` if at root.
     var containingPath: Path {
-        path.deletingLastComponent ?? .empty
+        get throws {
+            try path.deletingLastComponent ?? .empty
+        }
     }
 
     func resolveFolderID(path: Path) throws -> ObjectID? {
@@ -64,7 +82,7 @@ extension HasPath where Self: Node {
     /// database arrives with its parent set, and resolving again would walk a tree that
     /// exists to create folders that exist.
     mutating func placeInFileSystem() throws {
-        thisNode.name = name
+        thisNode.name = try name
         if thisNode.parentNodeID == nil {
             thisNode.parentNodeID = try resolveFolderID(path: containingPath)
         }
@@ -83,13 +101,10 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
 
     public var thisNode: NodeRecord
 
-    var path: Path {
-        Path(thisNode.properties[Self.pathProperty]!)
-    }
-
     public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
-        assert(!path.string.contains(Folder.inputFileSystemName))
+        let outputPath = try self.path
+        assert(!outputPath.string.contains(Folder.inputFileSystemName))
         try placeInFileSystem()
     }
 
@@ -138,7 +153,7 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
     /// engine writes the state that follows from what stood in the way, rather than this
     /// node repeating the failure of another.
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        _ = try input.inputValues[Self.inputPort]!.first!.value.expectValue()
+        _ = try input.firstWire(onRequiredPort: Self.inputPort).value.expectValue()
 
         return .init(outputValues: [Self.statusOutputPort: .value(try "Product is up to date".intern())],
                      inputWireSpecs: [:])

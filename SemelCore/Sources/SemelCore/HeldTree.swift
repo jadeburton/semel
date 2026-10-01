@@ -36,10 +36,10 @@ public enum HeldTree {
     /// transaction (`Folder.refreshMarkedContentRoot`), so a root that is not marked is
     /// current as of this read — which is what lets a client skip a whole subtree on it.
     public static func folderRoots(below relativePath: Path) throws -> [FolderRoot] {
-        let database         = DatabaseLayer.shared!
-        let contentRootPort  = Folder.contentRootOutputPort.asSymbolID()
-        let pinnedPort       = Folder.pinnedOutputPort.asSymbolID()
-        let markPrefix       = Folder.contentRootDirtyKeyPrefix
+        let database: DatabaseLayer = DatabaseLayer.shared
+        let contentRootPort         = Folder.contentRootOutputPort.asSymbolID()
+        let pinnedPort              = Folder.pinnedOutputPort.asSymbolID()
+        let markPrefix              = Folder.contentRootDirtyKeyPrefix
 
         return try readingFolder(at: relativePath, orElse: []) { folderID in
             let rows = try database.node.selectSubtree(below: folderID, kind: Folder.kind,
@@ -108,11 +108,11 @@ public enum HeldTree {
     /// of the graph, or nil when there is no folder there. A query per port, whatever the
     /// number of children, and each distinct metadata document read once.
     public static func children(ofFolderAt relativePath: Path) throws -> [Child]? {
-        let database     = DatabaseLayer.shared!
-        let contentPort  = StaticFile.outputPort.asSymbolID()
-        let metadataPort = StaticFile.fileMetadataOutputPort.asSymbolID()
-        let pinnedPort   = Folder.pinnedOutputPort.asSymbolID()
-        let linkPort     = Folder.symbolicLinkOutputPort.asSymbolID()
+        let database: DatabaseLayer = DatabaseLayer.shared
+        let contentPort             = StaticFile.outputPort.asSymbolID()
+        let metadataPort            = StaticFile.fileMetadataOutputPort.asSymbolID()
+        let pinnedPort              = Folder.pinnedOutputPort.asSymbolID()
+        let linkPort                = Folder.symbolicLinkOutputPort.asSymbolID()
 
         return try readingFolder(at: relativePath, orElse: nil) { folderID -> [Child]? in
             let summaries = try database.node.selectChildSummaries(parentNodeID: folderID)
@@ -177,8 +177,8 @@ public enum HeldTree {
     /// may have to create it and so happens outside any snapshot.
     private static func readingFolder<Result>(at relativePath: Path, orElse absent: Result,
                                               _ read: (ObjectID) throws -> Result) throws -> Result {
-        let database = DatabaseLayer.shared!
-        var rootID   = try Folder.cachedInputFileSystemID ?? Folder.inputFileSystem.requireID()
+        let database: DatabaseLayer = DatabaseLayer.shared
+        var rootID                  = try Folder.cachedInputFileSystemID ?? Folder.inputFileSystem.requireID()
         for attempt in 0..<2 {
             if attempt > 0 {
                 rootID = try Folder.inputFileSystem.requireID()

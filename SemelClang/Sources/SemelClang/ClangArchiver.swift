@@ -64,13 +64,13 @@ public struct ClangArchiver: Node {
         let objectFiles: [FileNameAndContent]
 
         init(input: ProcessInput) throws {
-            let configurationString = try input.inputValues[ClangArchiver.configuration]!.values.first!.expectValue().resolveAsString()
+            let configurationString = try input.firstWire(onRequiredPort: ClangArchiver.configuration).value.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
             // Sorted, not straight out of the dictionary: the members' order is the
             // archive's bytes, and a Swift Dictionary iterates differently per process.
             var objectFiles: [FileNameAndContent] = []
-            for (objectFileName, nodeValue) in input.inputValues[ClangArchiver.input]!.sorted(by: { $0.key < $1.key }) {
+            for (objectFileName, nodeValue) in try input.wires(on: ClangArchiver.input).sorted(by: { $0.key < $1.key }) {
                 objectFiles.append(.init(filePath: objectFileName, hash: try nodeValue.expectValue()))
             }
             self.objectFiles = objectFiles

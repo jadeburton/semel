@@ -179,7 +179,7 @@ extension Node {
     }
 
     func notifyParentOfChildContentChange() throws {
-        try parentNode?.onChildContentChanged(nodeID: (try thisNode.requireID()), name: thisNode.name!)
+        try parentNode?.onChildContentChanged(nodeID: (try thisNode.requireID()), name: try thisNode.requireName())
     }
 
     func notifyParentOfChildDeletion() throws {

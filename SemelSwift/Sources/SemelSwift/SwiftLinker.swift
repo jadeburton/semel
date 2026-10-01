@@ -175,14 +175,14 @@ struct SwiftLinker: Node {
         }
 
         init(input: ProcessInput) throws {
-            let configurationString = try input.inputValues[SwiftLinker.configuration]!.values.first!.expectValue().resolveAsString()
+            let configurationString = try input.firstWire(onRequiredPort: SwiftLinker.configuration).value.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
             // Sorted: these go straight onto the command line, and Swift Dictionary
             // iteration order changes from one process to the next.
             var objectFiles: [FileNameAndContent] = []
 
-            for (fileName, nodeValue) in input.inputValues[SwiftLinker.input]!.sorted(by: { $0.key < $1.key }) {
+            for (fileName, nodeValue) in try input.wires(on: SwiftLinker.input).sorted(by: { $0.key < $1.key }) {
                 objectFiles.append(.init(filePath: fileName, hash: try nodeValue.expectValue()))
             }
             objectFiles += try TreeManifest.mergedInputFiles(in: input, port: SwiftLinker.objectTrees, under: "objects")
@@ -191,7 +191,7 @@ struct SwiftLinker: Node {
 
             var libraryFiles: [FileNameAndContent] = []
 
-            for (fileName, nodeValue) in input.inputValues[SwiftLinker.libraries]!.sorted(by: { $0.key < $1.key }) {
+            for (fileName, nodeValue) in try input.wires(on: SwiftLinker.libraries).sorted(by: { $0.key < $1.key }) {
                 libraryFiles.append(.init(filePath: fileName, hash: try nodeValue.expectValue()))
             }
 

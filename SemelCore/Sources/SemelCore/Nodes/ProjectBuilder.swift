@@ -64,7 +64,7 @@ public struct ProjectBuilder: Node {
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        let inputValue = input.inputValues[Self.projectFileInputPort]!.first!
+        let inputValue = try input.firstWire(onRequiredPort: Self.projectFileInputPort)
         let projectFileName    = inputValue.key
         let projectFileContent = try inputValue.value.expectValue().resolveAsString()
 

@@ -92,10 +92,10 @@ public struct ClangCompiler: Node {
         let inputSourceFile: FileNameAndContent
 
         init(input: ProcessInput) throws {
-            let configurationString = try input.inputValues[ClangCompiler.configuration]!.values.first!.expectValue().resolveAsString()
+            let configurationString = try input.firstWire(onRequiredPort: ClangCompiler.configuration).value.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
-            let input = input.inputValues[ClangCompiler.input]!.first!
+            let input = try input.firstWire(onRequiredPort: ClangCompiler.input)
             inputSourceFile = .init(filePath: input.key, hash: try input.value.expectValue())
         }
     }

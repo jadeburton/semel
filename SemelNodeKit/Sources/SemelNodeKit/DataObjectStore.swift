@@ -258,11 +258,10 @@ public final class DataObjectStore {
             // Not created in advance: the clone, or the copy, makes the file.
             let temporary = temporaryURL(beside: url)
             do {
-                let cloned = source.withUnsafeFileSystemRepresentation { sourcePath in
-                    temporary.withUnsafeFileSystemRepresentation { temporaryPath in
-                        Foundation.clonefileat(AT_FDCWD, sourcePath!, AT_FDCWD, temporaryPath!, 0) == 0
-                    }
-                }
+                // A path with no file-system spelling is not cloned, and the copy says why.
+                let cloned = Self.withFileSystemPaths(source, temporary) { sourcePath, temporaryPath in
+                    Foundation.clonefileat(AT_FDCWD, sourcePath, AT_FDCWD, temporaryPath, 0) == 0
+                } ?? false
                 if !cloned {
                     try FileManager.default.copyItem(at: source, to: temporary)
                 }
@@ -283,16 +282,34 @@ public final class DataObjectStore {
         url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
     }
 
+    /// Runs a system call taking two paths with both URLs as the file system spells them,
+    /// or returns nil when either has no such spelling — which Foundation reports as a nil
+    /// pointer, and which the caller decides the meaning of.
+    private static func withFileSystemPaths<Outcome>(
+        _ first: URL, _ second: URL,
+        _ call: (UnsafePointer<CChar>, UnsafePointer<CChar>) -> Outcome
+    ) -> Outcome? {
+        first.withUnsafeFileSystemRepresentation { firstPath in
+            second.withUnsafeFileSystemRepresentation { secondPath in
+                guard let firstPath, let secondPath else {
+                    return nil
+                }
+                return call(firstPath, secondPath)
+            }
+        }
+    }
+
     /// Makes `temporary` the object at `url`: read-only, then renamed into place. A second
     /// writer of the same object loses the rename and its bytes are dropped — the two are
     /// identical by construction, which is what content addressing means.
     private func place(_ temporary: URL, at url: URL) throws {
         // Mark immutable so nothing can accidentally overwrite the entry.
         try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o444)], ofItemAtPath: temporary.path)
-        let renamed = temporary.withUnsafeFileSystemRepresentation { temporaryPath in
-            url.withUnsafeFileSystemRepresentation { finalPath in
-                Foundation.renamex_np(temporaryPath!, finalPath!, UInt32(RENAME_EXCL)) == 0
-            }
+        guard let renamed = Self.withFileSystemPaths(temporary, url, { temporaryPath, finalPath in
+            Foundation.renamex_np(temporaryPath, finalPath, UInt32(RENAME_EXCL)) == 0
+        }) else {
+            try? FileManager.default.removeItem(at: temporary)
+            throw CocoaError(.fileWriteInvalidFileName, userInfo: [NSFilePathErrorKey: url.path])
         }
         guard renamed else {
             let failure = errno
@@ -336,13 +353,12 @@ public final class DataObjectStore {
 
         try? FileManager.default.removeItem(at: destination)
 
-        let cloneResult = source.withUnsafeFileSystemRepresentation { srcPtr in
-            destination.withUnsafeFileSystemRepresentation { dstPtr in
-                Foundation.clonefileat(AT_FDCWD, srcPtr!, AT_FDCWD, dstPtr!, 0)
-            }
-        }
+        // A path with no file-system spelling is not cloned, and the copy says why.
+        let cloned = Self.withFileSystemPaths(source, destination) { sourcePath, destinationPath in
+            Foundation.clonefileat(AT_FDCWD, sourcePath, AT_FDCWD, destinationPath, 0) == 0
+        } ?? false
 
-        if cloneResult != 0 {
+        if !cloned {
             // The clone is an APFS optimisation; this is the path taken on HFS+, network
             // mounts and Docker bind mounts. Failing here means the destination volume is
             // full or unwritable, not that anything is wrong with the object — same class as

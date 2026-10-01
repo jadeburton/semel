@@ -87,7 +87,7 @@ public struct ClangIncludeFinder: Node {
         let inputSourceFiles: [FileNameAndContent]
 
         init(input: ProcessInput) throws {
-            let sourceFiles = input.inputValues[ClangIncludeFinder.sourceFileInputPort]!
+            let sourceFiles = try input.wires(on: ClangIncludeFinder.sourceFileInputPort)
 
             var inputSourceFiles: [FileNameAndContent] = []
 

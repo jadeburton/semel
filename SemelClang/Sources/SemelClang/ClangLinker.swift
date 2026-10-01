@@ -83,11 +83,11 @@ public struct ClangLinker: Node {
         let objectFiles: [FileNameAndContent]
 
         init(input: ProcessInput) throws {
-            let configurationString = try input.inputValues[ClangCompiler.configuration]!.values.first!.expectValue().resolveAsString()
+            let configurationString = try input.firstWire(onRequiredPort: ClangCompiler.configuration).value.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
-            let inputValues = input.inputValues[ClangLinker.input]!
-            let libraryValues = input.inputValues[ClangLinker.libraries]!
+            let inputValues = try input.wires(on: ClangLinker.input)
+            let libraryValues = try input.wires(on: ClangLinker.libraries)
 
             // Sorted, not straight out of the dictionary: iteration order for a Swift
             // Dictionary varies from one process to the next, which would put the object

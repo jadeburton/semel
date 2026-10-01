@@ -15,11 +15,20 @@ public protocol DataAccessType {
 
 public extension DataAccessType {
     func read<T>(_ block: (Database) throws -> T) throws -> T {
-        try databaseLayer!.read(block)
+        try requireDatabaseLayer().read(block)
     }
 
     func write<T>(_ block: (Database) throws -> T) throws -> T {
-        try databaseLayer!.write(block)
+        try requireDatabaseLayer().write(block)
+    }
+
+    /// The layer this accessor reads and writes through. Held weakly, because the layer
+    /// holds its accessors, so an accessor kept past its layer finds nothing here.
+    private func requireDatabaseLayer() throws -> DatabaseLayer {
+        guard let databaseLayer else {
+            throw DatabaseLayer.DatabaseError.layerReleased(accessor: String(describing: Self.self))
+        }
+        return databaseLayer
     }
 }
 
@@ -108,6 +117,9 @@ public final class DatabaseLayer {
         case nodeNotFound
         case nodePortNotFound
         case wireNotFound
+        /// A data accessor used after the `DatabaseLayer` that made it was released, named
+        /// by its type.
+        case layerReleased(accessor: String)
     }
 
     /// Execute `work` inside a single GRDB write transaction.

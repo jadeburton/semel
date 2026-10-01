@@ -192,51 +192,54 @@ final class DictionaryOrderTests: XCTestCase {
             .sorted { $0.path < $1.path }
     }
 
+    // The patterns are compiled once and held as a `Result`, so that one which does not
+    // compile fails the test reading it rather than the whole test process.
+
     /// The dictionary view a line turns into a sequence — `specs.keys` of
     /// `specs.keys.filter { … }`, `merged.values` of `Array(merged.values)`. `first` is
     /// not among the consumers: it picks one element rather than ordering them.
-    private static let viewRegex = try! NSRegularExpression(
-        pattern: #"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\.(?:keys|values))\s*(?:\)|\.(?:map|filter|compactMap|flatMap|joined|reduce)\b)"#)
+    private static let viewRegex = Result { try NSRegularExpression(
+        pattern: #"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\.(?:keys|values))\s*(?:\)|\.(?:map|filter|compactMap|flatMap|joined|reduce)\b)"#) }
 
     /// A call whose closure takes two bindings — `byNode.map { nodeID, ports in … }` — which
     /// is how a dictionary is walked without naming `keys` or `values` at all. Group 1 is
     /// the receiver when the line carries it, group 2 the bindings.
-    private static let pairClosureRegex = try! NSRegularExpression(
-        pattern: #"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)?\.(?:map|compactMap|flatMap|forEach|filter|reduce)\s*\{\s*\(?\s*([A-Za-z_][A-Za-z0-9_]*\s*,\s*[A-Za-z_][A-Za-z0-9_]*)\s*\)?\s+in\b"#)
+    private static let pairClosureRegex = Result { try NSRegularExpression(
+        pattern: #"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)?\.(?:map|compactMap|flatMap|forEach|filter|reduce)\s*\{\s*\(?\s*([A-Za-z_][A-Za-z0-9_]*\s*,\s*[A-Za-z_][A-Za-z0-9_]*)\s*\)?\s+in\b"#) }
 
     /// A name declared as a `Set`: `let names: Set<String> = []`, the parameter of
     /// `func f(paths: Set<String>)` or of `f(into set: inout Set<String>)`. Group 1 is
     /// the name.
-    private static let setDeclarationRegex = try! NSRegularExpression(
-        pattern: #"(?:let\s+|var\s+|[(,]\s*|^\s*)(?:[A-Za-z_][A-Za-z0-9_]*\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(?:inout\s+)?Set<"#)
+    private static let setDeclarationRegex = Result { try NSRegularExpression(
+        pattern: #"(?:let\s+|var\s+|[(,]\s*|^\s*)(?:[A-Za-z_][A-Za-z0-9_]*\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(?:inout\s+)?Set<"#) }
 
     /// A name bound to a set: `var visited = Set<ObjectID>()`, `let arrived = Set(keys)`.
     /// Group 1 is the name.
-    private static let setBindingRegex = try! NSRegularExpression(
-        pattern: #"(?:let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=]*)?=\s*Set[(<]"#)
+    private static let setBindingRegex = Result { try NSRegularExpression(
+        pattern: #"(?:let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=]*)?=\s*Set[(<]"#) }
 
     /// A set handed to an initialiser that keeps an order — `Array(names)`, or
     /// `.init(names)` where the annotation says array. Group 1 is the set.
-    private static let setInitialiserRegex = try! NSRegularExpression(
-        pattern: #"(?:Array|\.init)\(\s*(Set\([^()]*\)|[A-Za-z_][A-Za-z0-9_]*)\s*\)"#)
+    private static let setInitialiserRegex = Result { try NSRegularExpression(
+        pattern: #"(?:Array|\.init)\(\s*(Set\([^()]*\)|[A-Za-z_][A-Za-z0-9_]*)\s*\)"#) }
 
     /// A set walked as a sequence — `names.map { … }`, `Set(paths).joined()`. Group 1 is
     /// the set. `sorted` is not among the consumers: it states its order.
-    private static let setSequenceRegex = try! NSRegularExpression(
-        pattern: #"(Set\([^()]*\)|[A-Za-z_][A-Za-z0-9_]*)\.(?:map|filter|compactMap|flatMap|joined|reduce|forEach)\b"#)
+    private static let setSequenceRegex = Result { try NSRegularExpression(
+        pattern: #"(Set\([^()]*\)|[A-Za-z_][A-Za-z0-9_]*)\.(?:map|filter|compactMap|flatMap|joined|reduce|forEach)\b"#) }
 
     /// A `.sorted` applied to what the text before it produced, across any brackets the
     /// conversion closes: the `.sorted()` of `Array(Set(folders)).sorted()`.
-    private static let sortedResultRegex = try! NSRegularExpression(
-        pattern: #"^[)\]\s]*\.sorted\b"#)
+    private static let sortedResultRegex = Result { try NSRegularExpression(
+        pattern: #"^[)\]\s]*\.sorted\b"#) }
 
     /// The names `lines` declare as a `Set`. A file's own declarations are what tells a
     /// walk of a set from a walk of an array.
-    static func setNames(inLines lines: [String]) -> Set<String> {
+    static func setNames(inLines lines: [String]) throws -> Set<String> {
         var names: Set<String> = []
         for line in lines {
             let range = NSRange(line.startIndex..., in: line)
-            for regex in [setDeclarationRegex, setBindingRegex] {
+            for regex in [try setDeclarationRegex.get(), try setBindingRegex.get()] {
                 for match in regex.matches(in: line, range: range) {
                     guard let nameRange = Range(match.range(at: 1), in: line) else { continue }
                     names.insert(String(line[nameRange]))
@@ -371,16 +374,16 @@ final class DictionaryOrderTests: XCTestCase {
     /// The set `code` turns into a sequence, or nil: `Array(names)`, `names.flatMap { … }`
     /// — a `for` loop over one is read where the other `for` shapes are. A conversion the
     /// same expression sorts on the spot, `Array(Set(folders)).sorted()`, is not one.
-    private static func convertedSet(inCode code: String, setNames: Set<String>) -> String? {
+    private static func convertedSet(inCode code: String, setNames: Set<String>) throws -> String? {
         let range = NSRange(code.startIndex..., in: code)
-        for regex in [setInitialiserRegex, setSequenceRegex] {
+        for regex in [try setInitialiserRegex.get(), try setSequenceRegex.get()] {
             for match in regex.matches(in: code, range: range) {
                 guard let subjectRange = Range(match.range(at: 1), in: code),
                       let matchRange = Range(match.range, in: code) else { continue }
                 let subject = String(code[subjectRange])
                 guard isSet(subject, setNames: setNames) else { continue }
                 let tail = String(code[matchRange.upperBound...])
-                guard sortedResultRegex.firstMatch(in: tail, range: NSRange(tail.startIndex..., in: tail)) == nil else {
+                guard try sortedResultRegex.get().firstMatch(in: tail, range: NSRange(tail.startIndex..., in: tail)) == nil else {
                     continue
                 }
                 return subject
@@ -403,7 +406,7 @@ final class DictionaryOrderTests: XCTestCase {
     static func walkedText(inLine line: String,
                            previous: String = "",
                            continuation: String = "",
-                           setNames: Set<String> = []) -> String? {
+                           setNames: Set<String> = []) throws -> String? {
         let code = line.trimmingCharacters(in: .whitespaces)
         guard !code.hasPrefix("//"), !code.hasPrefix("///") else { return nil }
 
@@ -432,19 +435,19 @@ final class DictionaryOrderTests: XCTestCase {
         }
 
         let range = NSRange(code.startIndex..., in: code)
-        if let match = viewRegex.firstMatch(in: code, range: range),
+        if let match = try viewRegex.get().firstMatch(in: code, range: range),
            let viewRange = Range(match.range(at: 1), in: code) {
             let view = String(code[viewRange])
             // `Set(dict.keys)` asks what is in the dictionary, not in what order.
             return code.contains("Set(\(view))") || statementSorts(view, in: statement) ? nil : view
         }
 
-        if let convertedSet = convertedSet(inCode: code, setNames: setNames),
+        if let convertedSet = try convertedSet(inCode: code, setNames: setNames),
            !statementSorts(convertedSet, in: statement) {
             return convertedSet
         }
 
-        guard let match = pairClosureRegex.firstMatch(in: code, range: range),
+        guard let match = try pairClosureRegex.get().firstMatch(in: code, range: range),
               let bindingRange = Range(match.range(at: 2), in: code),
               let callRange = Range(match.range, in: code) else {
             return nil
@@ -477,9 +480,9 @@ final class DictionaryOrderTests: XCTestCase {
             for file in sources {
                 let relativePath = file.path.replacingOccurrences(of: repositoryRoot.path + "/", with: "")
                 let lines = try String(contentsOf: file, encoding: .utf8).components(separatedBy: "\n")
-                let sets = setNames(inLines: lines)
+                let sets = try setNames(inLines: lines)
                 for (index, line) in lines.enumerated() {
-                    guard let walked = walkedText(inLine: line,
+                    guard let walked = try walkedText(inLine: line,
                                                   previous: index > 0 ? lines[index - 1] : "",
                                                   continuation: index + 1 < lines.count ? lines[index + 1] : "",
                                                   setNames: sets) else {
@@ -518,92 +521,92 @@ final class DictionaryOrderTests: XCTestCase {
 
     /// What the scan reads and what it passes over, stated on examples rather than left to
     /// the codebase to demonstrate.
-    func test_theScanReadsTheShapesItClaimsTo() {
-        XCTAssertEqual(Self.walkedText(inLine: "for (key, value) in settings {"), "settings")
-        XCTAssertEqual(Self.walkedText(inLine: "for (key, value) in settings where key.isEmpty {"), "settings")
-        XCTAssertEqual(Self.walkedText(inLine: "for value in table.values where value.isEmpty {"), "table.values")
-        XCTAssertEqual(Self.walkedText(inLine: "for key in table.keys {"), "table.keys")
-        XCTAssertEqual(Self.walkedText(inLine: "let names = Array(byName.keys)"), "byName.keys")
-        XCTAssertEqual(Self.walkedText(inLine: "let all = table.values.map(\\.name)"), "table.values")
-        XCTAssertEqual(Self.walkedText(inLine: "let entries = byNode.map { nodeID, ports in"), "byNode")
-        XCTAssertEqual(Self.walkedText(inLine: ".map { key, value in one(key, value) }",
+    func test_theScanReadsTheShapesItClaimsTo() throws {
+        XCTAssertEqual(try Self.walkedText(inLine: "for (key, value) in settings {"), "settings")
+        XCTAssertEqual(try Self.walkedText(inLine: "for (key, value) in settings where key.isEmpty {"), "settings")
+        XCTAssertEqual(try Self.walkedText(inLine: "for value in table.values where value.isEmpty {"), "table.values")
+        XCTAssertEqual(try Self.walkedText(inLine: "for key in table.keys {"), "table.keys")
+        XCTAssertEqual(try Self.walkedText(inLine: "let names = Array(byName.keys)"), "byName.keys")
+        XCTAssertEqual(try Self.walkedText(inLine: "let all = table.values.map(\\.name)"), "table.values")
+        XCTAssertEqual(try Self.walkedText(inLine: "let entries = byNode.map { nodeID, ports in"), "byNode")
+        XCTAssertEqual(try Self.walkedText(inLine: ".map { key, value in one(key, value) }",
                                        previous: "let files = table"), "{ key, value in")
 
-        XCTAssertNil(Self.walkedText(inLine: "for (key, value) in settings.sorted(by: { $0.key < $1.key }) {"))
-        XCTAssertNil(Self.walkedText(inLine: "for (index, item) in items.enumerated() {"))
-        XCTAssertNil(Self.walkedText(inLine: "for case .remote(_, let url) in targets.flatMap(\\.products) {"))
-        XCTAssertNil(Self.walkedText(inLine: "for item in items {"))
-        XCTAssertNil(Self.walkedText(inLine: "// for (key, value) in settings {"))
-        XCTAssertNil(Self.walkedText(inLine: "let one = table.values.first"))
-        XCTAssertNil(Self.walkedText(inLine: "guard Set(specs.keys).isSubset(of: arrived) else {"))
-        XCTAssertNil(Self.walkedText(inLine: "for (key, value) in settings",
+        XCTAssertNil(try Self.walkedText(inLine: "for (key, value) in settings.sorted(by: { $0.key < $1.key }) {"))
+        XCTAssertNil(try Self.walkedText(inLine: "for (index, item) in items.enumerated() {"))
+        XCTAssertNil(try Self.walkedText(inLine: "for case .remote(_, let url) in targets.flatMap(\\.products) {"))
+        XCTAssertNil(try Self.walkedText(inLine: "for item in items {"))
+        XCTAssertNil(try Self.walkedText(inLine: "// for (key, value) in settings {"))
+        XCTAssertNil(try Self.walkedText(inLine: "let one = table.values.first"))
+        XCTAssertNil(try Self.walkedText(inLine: "guard Set(specs.keys).isSubset(of: arrived) else {"))
+        XCTAssertNil(try Self.walkedText(inLine: "for (key, value) in settings",
                                      continuation: "    .sorted(by: { $0.key < $1.key }) {"))
-        XCTAssertNil(Self.walkedText(inLine: ".map { key, value in one(key, value) }",
+        XCTAssertNil(try Self.walkedText(inLine: ".map { key, value in one(key, value) }",
                                      previous: "let files = table.sorted { $0.key < $1.key }"))
     }
 
     /// A neighbouring `.sorted` covers the walk only where it is the walked subject that
     /// it sorts: a sort of something else on the line above or below leaves the walk in
     /// the dictionary's own order, and the scan says so.
-    func test_theScanReadsOnlyASortOfTheWalkedSubject() {
-        XCTAssertEqual(Self.walkedText(inLine: "let entries = byNode.map { nodeID, ports in ports.sorted() }"),
+    func test_theScanReadsOnlyASortOfTheWalkedSubject() throws {
+        XCTAssertEqual(try Self.walkedText(inLine: "let entries = byNode.map { nodeID, ports in ports.sorted() }"),
                        "byNode")
-        XCTAssertEqual(Self.walkedText(inLine: ".map { key, value in one(key, value) }",
+        XCTAssertEqual(try Self.walkedText(inLine: ".map { key, value in one(key, value) }",
                                        previous: "let files = merge(table, extras.sorted())"), "{ key, value in")
-        XCTAssertEqual(Self.walkedText(inLine: "for (key, value) in settings",
+        XCTAssertEqual(try Self.walkedText(inLine: "for (key, value) in settings",
                                        continuation: "    .filter { $0.value.isEmpty } {"), "settings")
-        XCTAssertEqual(Self.walkedText(inLine: "for (key, value) in settings where ordered.sorted().isEmpty {"),
+        XCTAssertEqual(try Self.walkedText(inLine: "for (key, value) in settings where ordered.sorted().isEmpty {"),
                        "settings")
 
         // A sort that ends the statement but belongs to the other side of an operator is
         // a sort of that other operand, and the walk is still a walk.
-        XCTAssertEqual(Self.walkedText(inLine: "let names = byNode.map { key, value in key } + extras.sorted()"),
+        XCTAssertEqual(try Self.walkedText(inLine: "let names = byNode.map { key, value in key } + extras.sorted()"),
                        "byNode")
-        XCTAssertEqual(Self.walkedText(inLine: "let all = specs.keys.map { one($0) } + extras.sorted()"),
+        XCTAssertEqual(try Self.walkedText(inLine: "let all = specs.keys.map { one($0) } + extras.sorted()"),
                        "specs.keys")
-        XCTAssertEqual(Self.walkedText(inLine: "let lines = visited.map { $0.name } + extras.sorted()",
+        XCTAssertEqual(try Self.walkedText(inLine: "let lines = visited.map { $0.name } + extras.sorted()",
                                        setNames: ["visited"]), "visited")
 
         // A bracket inside a string literal is text, not structure: counting it would
         // leave the `+` below at a depth the scan does not read, and the walk would pass
         // as sorted by a sort of `extras`.
-        XCTAssertEqual(Self.walkedText(inLine: #"let names = byNode.map { key, value in "(" } + extras.sorted()"#),
+        XCTAssertEqual(try Self.walkedText(inLine: #"let names = byNode.map { key, value in "(" } + extras.sorted()"#),
                        "byNode")
-        XCTAssertNil(Self.walkedText(inLine: #"let names = byNode.map { key, value in key }.sorted { $0 + ")" < $1 }"#))
+        XCTAssertNil(try Self.walkedText(inLine: #"let names = byNode.map { key, value in key }.sorted { $0 + ")" < $1 }"#))
 
         // The converse: a sort the statement ends in does sort what it walked, however
         // many steps the walk took to reach it.
-        XCTAssertNil(Self.walkedText(inLine: "let missing = specs.keys.filter { absent($0) }.sorted()"))
-        XCTAssertNil(Self.walkedText(inLine: "let entries = byNode.map { nodeID, ports in one(nodeID, ports) }.sorted()"))
-        XCTAssertNil(Self.walkedText(inLine: "let ordered = visited.map { $0.name }.sorted()", setNames: ["visited"]))
-        XCTAssertNil(Self.walkedText(inLine: "let pairs = zip(keys, values).map { key, value in one(key, value) }"))
+        XCTAssertNil(try Self.walkedText(inLine: "let missing = specs.keys.filter { absent($0) }.sorted()"))
+        XCTAssertNil(try Self.walkedText(inLine: "let entries = byNode.map { nodeID, ports in one(nodeID, ports) }.sorted()"))
+        XCTAssertNil(try Self.walkedText(inLine: "let ordered = visited.map { $0.name }.sorted()", setNames: ["visited"]))
+        XCTAssertNil(try Self.walkedText(inLine: "let pairs = zip(keys, values).map { key, value in one(key, value) }"))
     }
 
     /// The set shapes, on examples: a set is seeded per process exactly as a dictionary
     /// is, and a conversion of one into a sequence hands that seed on.
-    func test_theScanReadsSetConversions() {
+    func test_theScanReadsSetConversions() throws {
         let names: Set<String> = ["visited"]
 
-        XCTAssertEqual(Self.walkedText(inLine: "let ordered = Array(visited)", setNames: names), "visited")
-        XCTAssertEqual(Self.walkedText(inLine: "let ordered: [String] = .init(visited)", setNames: names), "visited")
-        XCTAssertEqual(Self.walkedText(inLine: "for path in visited {", setNames: names), "visited")
-        XCTAssertEqual(Self.walkedText(inLine: "let lines = visited.map { $0.name }", setNames: names), "visited")
-        XCTAssertEqual(Self.walkedText(inLine: #"let text = Set(paths).joined(separator: " ")"#, setNames: names),
+        XCTAssertEqual(try Self.walkedText(inLine: "let ordered = Array(visited)", setNames: names), "visited")
+        XCTAssertEqual(try Self.walkedText(inLine: "let ordered: [String] = .init(visited)", setNames: names), "visited")
+        XCTAssertEqual(try Self.walkedText(inLine: "for path in visited {", setNames: names), "visited")
+        XCTAssertEqual(try Self.walkedText(inLine: "let lines = visited.map { $0.name }", setNames: names), "visited")
+        XCTAssertEqual(try Self.walkedText(inLine: #"let text = Set(paths).joined(separator: " ")"#, setNames: names),
                        "Set(paths)")
 
-        XCTAssertNil(Self.walkedText(inLine: "let ordered = visited.sorted()", setNames: names))
-        XCTAssertNil(Self.walkedText(inLine: "let ordered = Array(Set(paths)).sorted().map { $0.name }",
+        XCTAssertNil(try Self.walkedText(inLine: "let ordered = visited.sorted()", setNames: names))
+        XCTAssertNil(try Self.walkedText(inLine: "let ordered = Array(Set(paths)).sorted().map { $0.name }",
                                      setNames: names))
-        XCTAssertNil(Self.walkedText(inLine: "guard visited.contains(path) else {", setNames: names))
-        XCTAssertNil(Self.walkedText(inLine: "visited.insert(path)", setNames: names))
-        XCTAssertNil(Self.walkedText(inLine: "for path in ordered {", setNames: names))
-        XCTAssertNil(Self.walkedText(inLine: "let lines = ordered.map { $0.name }", setNames: names))
+        XCTAssertNil(try Self.walkedText(inLine: "guard visited.contains(path) else {", setNames: names))
+        XCTAssertNil(try Self.walkedText(inLine: "visited.insert(path)", setNames: names))
+        XCTAssertNil(try Self.walkedText(inLine: "for path in ordered {", setNames: names))
+        XCTAssertNil(try Self.walkedText(inLine: "let lines = ordered.map { $0.name }", setNames: names))
     }
 
     /// Which declarations make a name a set, since that is what the set shapes are read
     /// against.
-    func test_theScanFindsTheSetsAFileDeclares() {
-        let declared = Self.setNames(inLines: [
+    func test_theScanFindsTheSetsAFileDeclares() throws {
+        let declared = try Self.setNames(inLines: [
             "        var visited = Set<ObjectID>()",
             #"    let excluded: Set<String> = ["a"]"#,
             "    static func reconcile(existing: Set<String>, into set: inout Set<String>) {",
