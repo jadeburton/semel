@@ -62,7 +62,9 @@ public enum ProtocolVersion {
     /// Version 21 gives a `HeldFolderRoot` the dot-named files its folder holds, which a
     /// client folds into its root of the disk (B-77).
     /// Version 22 adds `pushFiles` and its reply, several files to a request.
-    public static let current = 22
+    /// Version 23 lets `list`, `remove` and `errors` arrive in parts, one frame each, with
+    /// framing version 2's continue flag on all but the last (B-137).
+    public static let current = 23
 }
 
 public struct Hello: Codable, Equatable, Sendable {

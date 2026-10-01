@@ -165,9 +165,10 @@ public enum ErrorResponse: Codable, Equatable, Sendable {
     case malformedRequest(description: String)
     /// The answer to this request does not fit a frame. Sent in place of that answer, so
     /// that a reply too large is something the client can report rather than a socket that
-    /// closes under it. The candidates are the replies whose size follows the graph and
-    /// which carry it in the JSON: `errors(records:)` on a wide failure cascade, and
-    /// `list(entries:)` on a large tree.
+    /// closes under it. The replies whose size follows the graph stream instead (B-137, on
+    /// `DaemonResponse`), so what is left to reach this is one item larger than a frame —
+    /// an error record whose message alone passes the megabyte — or a single-frame reply
+    /// that grew past it, which is a reply that should stream or move to the body.
     case replyTooLarge(request: String, bytes: Int, limit: Int)
     /// The machine, not the request, is broken. The server answers the in-flight request
     /// with this, then exits; every client sees its connection close.

@@ -121,6 +121,92 @@ final class ServerTests: RequestHandlerTestCase {
         XCTAssertEqual(try daemon(client, .wait).0, .ok)
     }
 
+    /// The owner's case (B-137): an `rm` of more paths than one frame's JSON can name. The
+    /// reply streams, and the client's whole-reply `send` hands back every path, in order.
+    func test_aRemoveOfMorePathsThanOneFrameHoldsArrivesWholeOverTheSocket() throws {
+        let paths  = try pushFilesTooManyToNameInOneFrame()
+        let client = try connect()
+
+        let (response, _) = try daemon(client, .remove(pattern: "many/*"))
+
+        // Compared, not asserted equal: a failure would print a megabyte of paths.
+        XCTAssertTrue(response == .remove(removedFiles: paths, removedFolders: []), "the reply is not every path, in order")
+        // And the connection carries the next request.
+        XCTAssertEqual(try daemon(client, .wait).0, .ok)
+    }
+
+    /// The parts reach the caller as they arrive, in the order the server sent them, and
+    /// the last frame is only what came after them.
+    func test_theOtherSendHandsEachPartOverInOrder() throws {
+        let paths  = try pushFilesTooManyToNameInOneFrame()
+        let client = try connect()
+        var parts: [[String]] = []
+
+        let (last, _) = try client.send(.daemon(.remove(pattern: "many/*")), body: nil) { part in
+            guard case .daemon(.remove(let files, _)) = part else {
+                return XCTFail("a part that is not a removal: \(part)")
+            }
+            parts.append(files)
+        }
+
+        guard case .daemon(.remove(let lastFiles, _)) = last else {
+            return XCTFail("the last frame is not a removal: \(last)")
+        }
+        XCTAssertGreaterThan(parts.count, 0, "a reply over the cap streams")
+        XCTAssertTrue(parts.flatMap { $0 } + lastFiles == paths, "the parts and the last are every path, in order")
+    }
+
+    /// A reply that fits one frame is one frame: nothing reaches `onPart`.
+    func test_aSmallReplyIsOneFrame() throws {
+        _ = try daemon(.pushFile(path: "a.c", mode: 0o644), body: Data("int a;".utf8))
+        let client = try connect()
+        var partCount = 0
+
+        let (last, _) = try client.send(.daemon(.remove(pattern: "a.c")), body: nil) { _ in partCount += 1 }
+
+        XCTAssertEqual(partCount, 0)
+        XCTAssertEqual(last, .daemon(.remove(removedFiles: ["a.c"], removedFolders: [])))
+    }
+
+    /// `ls` of a tree too large for one frame streams as `rm` does.
+    func test_aListingOfMorePathsThanOneFrameHoldsArrivesWholeOverTheSocket() throws {
+        let paths  = try pushFilesTooManyToNameInOneFrame()
+        let client = try connect()
+
+        let (response, _) = try daemon(client, .list(fileSystem: .input, pattern: "many/*"))
+
+        guard case .list(let entries) = response else {
+            return XCTFail("expected a listing")
+        }
+        XCTAssertTrue(entries.map(\.path) == paths, "the listing is not every path, in order")
+    }
+
+    /// `errors` on a wide failure cascade: many records, each well under the cap, together
+    /// well over it. They stream, and arrive in the order the report puts them.
+    func test_errorsOfAWideCascadeArriveWholeOverTheSocket() throws {
+        let recordCount = 40
+        for index in 0..<recordCount {
+            let (node, _) = try GraphSpecNode(SettingsLiteral.self, properties: ["role": "wide\(index)"]).findOrCreateMatchingNode()
+            let message = "failure \(index): " + String(repeating: "x", count: Int(Frame.maximumJSONLength) / 20)
+            try node.writeToOutputPort(SettingsLiteral.outputPort,
+                                       value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+        }
+        let expected = daemonInParts(.errors)
+        let client   = try connect()
+        var partCount = 0
+
+        let (last, _) = try client.send(.daemon(.errors), body: nil) { _ in partCount += 1 }
+        let (whole, _) = try daemon(client, .errors)
+
+        guard case .errors(let records) = whole else {
+            return XCTFail("expected the error records")
+        }
+        XCTAssertEqual(records.count, recordCount)
+        XCTAssertGreaterThan(partCount, 0, "a report over the cap streams")
+        XCTAssertEqual(partCount, expected.parts.count, "the client hears every part the handler sent")
+        XCTAssertTrue(last == expected.last, "the last frame is the handler's last slice")
+    }
+
     /// One node carrying an error message of a megabyte and a half: the same volume of
     /// `debug` text a few hundred real nodes produce, without the few hundred nodes.
     private func describeSomethingLargerThanTheJSONCap(marker: String) throws {

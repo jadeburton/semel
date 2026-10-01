@@ -25,8 +25,12 @@ extension Frame {
         Frame(kind: .request, correlationID: correlationID, json: try MessageCoder.encode(request), body: body)
     }
 
-    public static func response(_ response: Response, correlationID: UInt64, body: Data = Data()) throws -> Frame {
-        Frame(kind: .response, correlationID: correlationID, json: try MessageCoder.encode(response), body: body)
+    /// `continues` marks a part of a streamed reply: a frame that more frames for this
+    /// correlation ID follow.
+    public static func response(_ response: Response, correlationID: UInt64, body: Data = Data(),
+                                continues: Bool = false) throws -> Frame {
+        Frame(kind: .response, correlationID: correlationID, json: try MessageCoder.encode(response), body: body,
+              continues: continues)
     }
 
     /// Events answer nothing, so they carry correlation ID zero.

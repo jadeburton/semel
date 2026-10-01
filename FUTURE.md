@@ -838,6 +838,29 @@ One binary, three modes, sharing a wire protocol:
    subscriber. What remains of B-30 is roles 1 and 2, the `.cache` and `.runner` roles a
    hello is refused today, and role 3's per-subscriber narrowing.
 
+**B-137** `done` — **A reply too large for one frame was refused.**
+Done 2026-10-01. Found when the owner removed a large tree with `rm` and was answered
+`replyTooLarge`: a frame's JSON section is capped at 1 MiB, the cap is checked on the
+declared length before anything is allocated and is not a number to raise, and `remove`,
+`list` and `errors` carry the graph in their JSON. The decision: replies of unbounded size
+stream — not a bigger limit, and not a move to the body, so that a reply's size is bounded
+by nothing and a long operation shows progress as it runs. Flag bit 0 of the frame header,
+reserved since the first design, now means "more frames follow for this correlation ID"
+(`Frame.continues`, framing version 2, message set version 23). A streamed reply is the same
+response case repeated, every frame but the last carrying the bit, and the lists of the
+parts concatenate; no wrapper type, and the last may be empty or an error. The server's
+`RequestHandler.handle` takes a `ReplyStream` per request; `ReplySlicer` measures each item's
+encoded size — an error record's message has no bound, so a count per item would be unsafe —
+and sends a part when the next item would pass the cap less a kilobyte for the envelope, so
+a reply that fits one frame is the frame it was. `remove` streams as it deletes; `list` as it
+reads its matches; `errors` once its report is folded. `SemelConnection.send(_:body:)` joins
+the parts into one reply for every caller that wants the whole, and
+`send(_:body:onPart:)` hands each part over as it arrives, which `rm` uses to count with
+bounded memory and to say how far it has got. A connection that closes mid-stream reports
+the reply as truncated, naming how many parts came (`IncomingReply`, `ReplyStreamError`).
+`replyTooLarge` remains for one item larger than a frame and for a single-frame reply that
+outgrows one.
+
 ### Command line
 
 **B-136** `done` — **The base is remembered across launches.**

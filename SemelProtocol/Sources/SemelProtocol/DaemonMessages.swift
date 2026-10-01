@@ -424,6 +424,20 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
 
 // MARK: - Responses
 
+/// One reply per request — but three of them may arrive in parts (B-137): `list`, `remove`
+/// and `errors`, the replies that carry the graph in their JSON and so grow with it. A
+/// streamed reply is the same case repeated, one frame each, every frame but the last
+/// marked as continuing (`Frame.continues`); its lists are the parts' lists concatenated,
+/// in the order the frames arrived. The last may carry an empty list, so a server that
+/// learns it is done only after its last item can still end the stream, and it may be an
+/// error instead, when the request failed after some of its answer had gone: what the
+/// parts said stands, as a removal that succeeded stands. A reply that fits one frame is
+/// one frame, as it would be if nothing streamed.
+///
+/// Every other case is one frame. Their size follows something else: a count, a bound of
+/// their own (`explain`), or the body, which carries what grows (`check`, `debug`,
+/// `contentRoots`, `folderChildren`). A server that tries to stream one has a bug, caught
+/// in a debug build where it sends the part.
 public enum DaemonResponse: Codable, Equatable, Sendable {
     case ok
     case list(entries: [ListEntry])
@@ -479,6 +493,36 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     /// bytes are read, so it bounds what a header alone can ask this process to allocate.
     /// The body's own limit is three orders of magnitude higher for exactly this traffic.
     case debug
+}
+
+extension DaemonResponse {
+
+    /// Whether this case may arrive in parts. Case by case, so a case added later is
+    /// single-frame until someone decides otherwise.
+    public var mayStream: Bool {
+        switch self {
+        case .list, .remove, .errors:
+            return true
+        case .ok, .pushFile, .pushFiles, .contentRoots, .folderChildren, .fetch, .symbolicLink, .check, .collected, .tools,
+             .reset, .explain, .debug:
+            return false
+        }
+    }
+
+    /// This part with `later`'s items after its own; nil when the two are not the same
+    /// streamable case, which a client takes for a server that broke the stream.
+    public func appending(_ later: DaemonResponse) -> DaemonResponse? {
+        switch (self, later) {
+        case (.list(let entries), .list(let laterEntries)):
+            return .list(entries: entries + laterEntries)
+        case (.remove(let files, let folders), .remove(let laterFiles, let laterFolders)):
+            return .remove(removedFiles: files + laterFiles, removedFolders: folders + laterFolders)
+        case (.errors(let records), .errors(let laterRecords)):
+            return .errors(records: records + laterRecords)
+        default:
+            return nil
+        }
+    }
 }
 
 // MARK: - Events

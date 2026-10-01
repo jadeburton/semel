@@ -19,7 +19,7 @@ private final class FailingConnection: SemelConnection {
         self.error = error
     }
 
-    func send(_ request: Request, body: Data?) throws -> (Response, Data?) {
+    func send(_ request: Request, body: Data?, onPart: (Response) throws -> Void) throws -> (Response, Data?) {
         throw error
     }
 }

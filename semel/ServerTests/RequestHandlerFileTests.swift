@@ -236,6 +236,65 @@ final class RequestHandlerFileTests: RequestHandlerTestCase {
         XCTAssertEqual(try daemon(.remove(pattern: "nope")).0, .remove(removedFiles: [], removedFolders: []))
     }
 
+    // MARK: - Streamed replies (B-137)
+
+    /// A removal that fits one frame sends no part: its reply is the one frame it always was.
+    func test_aSmallRemovalSendsNoPart() throws {
+        try daemon(.pushFile(path: "a.c", mode: 0o644), body: Data("a".utf8))
+
+        let (parts, last) = daemonInParts(.remove(pattern: "a.c"))
+
+        XCTAssertEqual(parts, [])
+        XCTAssertEqual(last, .daemon(.remove(removedFiles: ["a.c"], removedFolders: [])))
+    }
+
+    /// Every part, and the last, fits a frame's JSON section, and together they are every
+    /// path in the order the removal took them.
+    func test_aRemovalLargerThanAFrameIsSentInPartsThatEachFit() throws {
+        let paths = try pushFilesTooManyToNameInOneFrame()
+
+        let (parts, last) = daemonInParts(.remove(pattern: "many/*"))
+
+        XCTAssertGreaterThan(parts.count, 0)
+        var taken: [String] = []
+        for response in parts + [last] {
+            XCTAssertLessThanOrEqual(try MessageCoder.encode(response).count, Int(Frame.maximumJSONLength))
+            guard case .daemon(.remove(let files, let folders)) = response else {
+                return XCTFail("a part that is not a removal")
+            }
+            XCTAssertEqual(folders, [])
+            taken += files
+        }
+        XCTAssertTrue(taken == paths, "the parts are not every path, in order")
+    }
+
+    /// Files and folders share one budget, and a slice of both still comes back as two
+    /// lists, each in the order it was taken.
+    func test_aSliceOfARemovalKeepsFoldersApartFromFiles() {
+        let slice: [RemovedPath] = [.file("a/x.c"), .folder("a/b"), .file("a/y.c"), .folder("a")]
+
+        XCTAssertEqual(RemovedPath.response(slice),
+                       .remove(removedFiles: ["a/x.c", "a/y.c"], removedFolders: ["a/b", "a"]))
+    }
+
+    /// `ls` of a large tree is sliced the same way.
+    func test_aListingLargerThanAFrameIsSentInPartsThatEachFit() throws {
+        let paths = try pushFilesTooManyToNameInOneFrame()
+
+        let (parts, last) = daemonInParts(.list(fileSystem: .input, pattern: "many/*"))
+
+        XCTAssertGreaterThan(parts.count, 0)
+        var listed: [String] = []
+        for response in parts + [last] {
+            XCTAssertLessThanOrEqual(try MessageCoder.encode(response).count, Int(Frame.maximumJSONLength))
+            guard case .daemon(.list(let entries)) = response else {
+                return XCTFail("a part that is not a listing")
+            }
+            listed += entries.map(\.path)
+        }
+        XCTAssertTrue(listed == paths, "the parts are not every entry, in order")
+    }
+
     // MARK: - fetch
 
     func test_fetchReturnsTheBytesAndMode() throws {

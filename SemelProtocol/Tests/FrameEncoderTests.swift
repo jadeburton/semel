@@ -42,6 +42,16 @@ final class FrameEncoderTests: XCTestCase {
         XCTAssertEqual(try FrameEncoder.encode(frame).count, Frame.headerLength)
     }
 
+    /// A part of a streamed reply says so in flag bit 0 and nowhere else; every other
+    /// frame leaves the byte zero.
+    func test_aContinuingFrameSetsFlagBitZero() throws {
+        let part = Frame(kind: .response, correlationID: 9, json: Data("{}".utf8), continues: true)
+        let last = Frame(kind: .response, correlationID: 9, json: Data("{}".utf8))
+
+        XCTAssertEqual([UInt8](try FrameEncoder.encode(part))[2], 0x01)
+        XCTAssertEqual([UInt8](try FrameEncoder.encode(last))[2], 0x00)
+    }
+
     func test_bodyDefaultsToEmpty() {
         let frame = Frame(kind: .request, correlationID: 7, json: Data("{}".utf8))
 

@@ -45,9 +45,10 @@ public struct FrameDecoder {
         // frame as if the bit were clear would hand up wrong data silently; rejecting is the
         // only safe reading, and it is cheapest to establish now, before any peer exists to
         // depend on the alternative.
-        guard buffer[2] == 0, buffer[3] == 0 else {
+        guard buffer[2] & ~Frame.continuesFlag == 0, buffer[3] == 0 else {
             throw FrameError.reservedBitsSet(flags: buffer[2], reserved: buffer[3])
         }
+        let continues = buffer[2] & Frame.continuesFlag != 0
 
         let correlationID = readBigEndian(UInt64.self, at: 4)
         let jsonLength    = readBigEndian(UInt32.self, at: 12)
@@ -71,7 +72,8 @@ public struct FrameDecoder {
         let frame = Frame(kind:          kind,
                           correlationID: correlationID,
                           json:          Data(buffer[jsonStart..<bodyStart]),
-                          body:          Data(buffer[bodyStart..<frameEnd]))
+                          body:          Data(buffer[bodyStart..<frameEnd]),
+                          continues:     continues)
 
         buffer.removeFirst(frameEnd)
         return frame

@@ -14,12 +14,17 @@ extension RequestHandler {
 
     // MARK: - list
 
-    func list(fileSystem: FileSystemKind, pattern: String) throws -> DaemonResponse {
+    /// Every match, streamed in parts when a large tree's listing passes a frame (B-137).
+    func list(fileSystem: FileSystemKind, pattern: String, replyStream: any ReplyStream) throws -> DaemonResponse {
         let root    = try rootFolder(fileSystem)
         let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: root))
         let matches = try matcher.findAllMatching(pathOrWildcard: Path(pattern))
 
-        return .list(entries: try matches.map { try listEntry(for: $0, in: root) })
+        let slicer = ReplySlicer<ListEntry>(verb: "list", stream: replyStream) { .list(entries: $0) }
+        for match in matches {
+            try slicer.append(try listEntry(for: match, in: root))
+        }
+        return slicer.last
     }
 
     /// The word for one state, by case. The states are not interchangeable — one settles by
@@ -165,19 +170,22 @@ extension RequestHandler {
     // MARK: - remove
 
     /// Deletes every match in the input file system. Deletions that succeed stand even if a
-    /// later one fails; the failures are reported together, and the paths that were removed
-    /// are not repeated back in that case.
+    /// later one fails; the failures are reported together, as the reply's last frame, and
+    /// the paths removed since the last part are not repeated back in that case.
     ///
     /// Files and folders come back apart because the client says each differently: a
     /// wildcard can match every file of a folder without matching the folder.
-    func remove(pattern: String) throws -> DaemonResponse {
+    ///
+    /// Streamed as it deletes (B-137): a part goes out each time the paths taken so far
+    /// fill a frame, so the removal of a whole tree is never refused for its size and a
+    /// long one shows the client how far it has got.
+    func remove(pattern: String, replyStream: any ReplyStream) throws -> DaemonResponse {
         let root    = try engine.inputFileSystem
         let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: root))
         let matches = try matcher.findAllMatching(pathOrWildcard: Path(pattern))
 
-        var removedFiles:   [String] = []
-        var removedFolders: [String] = []
-        var failures:       [String] = []
+        let slicer = ReplySlicer<RemovedPath>(verb: "remove", stream: replyStream, makeResponse: RemovedPath.response)
+        var failures: [String] = []
 
         for match in matches {
             guard let child = try root.childNode(path: match.path) else {
@@ -190,16 +198,16 @@ extension RequestHandler {
             }
             try deletable.deleteInInputFileSystem()
             if case .folder = match.kind {
-                removedFolders.append(match.path.string)
+                try slicer.append(.folder(match.path.string))
             } else {
-                removedFiles.append(match.path.string)
+                try slicer.append(.file(match.path.string))
             }
         }
 
         guard failures.isEmpty else {
             throw HandlerFailure.node(description: failures.joined(separator: "\n"))
         }
-        return .remove(removedFiles: removedFiles, removedFolders: removedFolders)
+        return slicer.last
     }
 
     // MARK: - fetch

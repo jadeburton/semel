@@ -25,19 +25,33 @@ final class RecordingConnection: SemelConnection {
     var onEvent: ((Event) -> Void)?
     var orderLog: OrderLog?
 
-    func send(_ request: Request, body: Data?) throws -> (Response, Data?) {
+    /// The parts scripted ahead of a reply, by the reply's place among all those served.
+    private var partsByReply: [Int: [Response]] = [:]
+    private var repliesServed = 0
+
+    func send(_ request: Request, body: Data?, onPart: (Response) throws -> Void) throws -> (Response, Data?) {
         orderLog?.record("send")
         requests.append((request, body))
         guard !responses.isEmpty else {
             return (.daemon(.ok), nil)
         }
         let scripted = responses.removeFirst()
+        defer { repliesServed += 1 }
+        for part in partsByReply.removeValue(forKey: repliesServed) ?? [] {
+            try onPart(part)
+        }
         return (scripted.response, scripted.body)
     }
 
     /// Queue one daemon reply.
     func reply(_ response: DaemonResponse, body: Data? = nil) {
         responses.append((.daemon(response), body))
+    }
+
+    /// Queue one daemon reply that streams: `parts` arrive first, then `last` (B-137).
+    func reply(_ last: DaemonResponse, afterParts parts: [DaemonResponse]) {
+        partsByReply[repliesServed + responses.count] = parts.map(Response.daemon)
+        reply(last)
     }
 
     var daemonRequests: [DaemonRequest] {

@@ -109,9 +109,30 @@ extension CommandContext {
     /// becomes a thrown `ServerError`; any other kind of reply is a protocol bug.
     func request(_ request: DaemonRequest, body: Data? = nil) throws -> (DaemonResponse, Data?) {
         let (response, replyBody) = try connection.send(.daemon(request), body: body)
+        return (try daemonReply(response), replyBody)
+    }
+
+    /// `request`, for a reply that may stream (B-137): each part is handed to `onPart` as it
+    /// arrives, and what returns is the last part alone — a caller that wants every item
+    /// gathers them from the parts and the last together.
+    func request(_ request: DaemonRequest, body: Data? = nil,
+                 onPart: (DaemonResponse) throws -> Void) throws -> (DaemonResponse, Data?) {
+        let (response, replyBody) = try connection.send(.daemon(request), body: body) { part in
+            // The connection lets only a daemon case that streams through as a part.
+            guard case .daemon(let daemonPart) = part else {
+                return
+            }
+            try onPart(daemonPart)
+        }
+        return (try daemonReply(response), replyBody)
+    }
+
+    /// A server-reported failure becomes a thrown `ServerError`; any other kind of reply is
+    /// a protocol bug.
+    private func daemonReply(_ response: Response) throws -> DaemonResponse {
         switch response {
         case .daemon(let daemonResponse):
-            return (daemonResponse, replyBody)
+            return daemonResponse
         case .error(let error):
             throw ServerError(response: error)
         case .hello:

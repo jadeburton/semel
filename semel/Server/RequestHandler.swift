@@ -40,7 +40,10 @@ public final class RequestHandler {
 
     // MARK: - Entry point
 
-    public func handle(_ request: Request, body: Data?, session: Session) -> (Response, Data?) {
+    /// Answers one request. A reply that streams (`list`, `remove`, `errors`) sends its
+    /// parts through `replyStream` as it goes, and what is returned is its last.
+    public func handle(_ request: Request, body: Data?, session: Session,
+                       replyStream: any ReplyStream) -> (Response, Data?) {
         // A wait observes; it does not mutate. Off the queue so a client waiting for the
         // graph to settle does not hold every other client's commands behind it.
         // It parks the caller's thread, which must therefore not be one of the cooperative pool's — the engine's loop runs there and would have nothing left to settle on.
@@ -67,7 +70,7 @@ public final class RequestHandler {
             case .hello(let hello):
                 return (.hello(answer(hello)), nil)
             case .daemon(let daemonRequest):
-                return handleDaemon(daemonRequest, body: body, session: session)
+                return handleDaemon(daemonRequest, body: body, session: session, replyStream: replyStream)
             }
         }
     }
@@ -97,11 +100,12 @@ public final class RequestHandler {
 
     // MARK: - Daemon dispatch
 
-    private func handleDaemon(_ request: DaemonRequest, body: Data?, session: Session) -> (Response, Data?) {
+    private func handleDaemon(_ request: DaemonRequest, body: Data?, session: Session,
+                              replyStream: any ReplyStream) -> (Response, Data?) {
         answering {
             switch request {
             case .list(let fileSystem, let pattern):
-                return (.daemon(try list(fileSystem: fileSystem, pattern: pattern)), nil)
+                return (.daemon(try list(fileSystem: fileSystem, pattern: pattern, replyStream: replyStream)), nil)
             case .beginBatch:
                 engine.beginBatch()
                 session.batchOpened()
@@ -126,12 +130,16 @@ public final class RequestHandler {
             case .folderChildren(let paths):
                 return (.daemon(.folderChildren), try folderChildren(paths: paths))
             case .remove(let pattern):
-                return (.daemon(try remove(pattern: pattern)), nil)
+                return (.daemon(try remove(pattern: pattern, replyStream: replyStream)), nil)
             case .fetch(let fileSystem, let path):
                 let (response, bytes) = try fetch(fileSystem: fileSystem, path: path)
                 return (.daemon(response), bytes)
             case .errors:
-                return (.daemon(.errors(records: try errorRecords())), nil)
+                // Sliced once the report is whole: `ErrorReport` orders and folds over
+                // every failure at once, so there is nothing to send before it is done.
+                let slicer = ReplySlicer<ErrorRecord>(verb: "errors", stream: replyStream) { .errors(records: $0) }
+                try slicer.append(contentsOf: try errorRecords())
+                return (.daemon(slicer.last), nil)
             case .check:
                 let report = GraphCheck.run(database: database)
                 return (.daemon(.check(scheduledNodes: report.scheduledNodeCount)),
@@ -347,6 +355,8 @@ enum HandlerFailure: Error {
     case notAFolder(path: String)
     case node(description: String)
     case malformed(description: String)
+    /// One item of a streamed reply too large for a frame on its own (`ReplySlicer`).
+    case replyTooLarge(request: String, bytes: Int)
 
     var response: ErrorResponse {
         switch self {
@@ -354,6 +364,8 @@ enum HandlerFailure: Error {
         case .notAFolder(let path):       return .notAFolder(path: path)
         case .node(let description):      return .nodeError(description: description)
         case .malformed(let description): return .malformedRequest(description: description)
+        case .replyTooLarge(let request, let bytes):
+            return .replyTooLarge(request: request, bytes: bytes, limit: Int(Frame.maximumJSONLength))
         }
     }
 }
