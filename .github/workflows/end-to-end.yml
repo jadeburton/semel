@@ -62,7 +62,8 @@ jobs:
           if-no-files-found: ignore
 
       # The kept roots are gigabytes each; on a machine that is also a workstation they
-      # do not accumulate. The artifact above is the copy that survives.
+      # do not accumulate. The artifact above is the copy that survives; the archive it
+      # was made from goes too, or a failed run leaves it on the disk until someone finds it.
       - name: Remove the run roots
         if: always()
-        run: rm -rf /tmp/semel-e2e-${{ github.run_id }}
+        run: rm -rf /tmp/semel-e2e-${{ github.run_id }} /tmp/semel-e2e-roots.tgz
