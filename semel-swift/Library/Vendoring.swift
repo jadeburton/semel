@@ -8,7 +8,9 @@
 //  dependency of every package in a graph lives at `<root>/Dependencies/<name>`, where
 //  `<name>` is the repository's last path component minus `.git`. That is SwiftPM's own
 //  checkout layout, so vendoring is: let SwiftPM resolve, then copy — and lock each copy
-//  beside it, `<name>.semel-lock`, so a build can tell when it has moved (B-06).
+//  beside it, `<name>.semel-lock`, so a build can tell when it has moved (B-06). A copy
+//  whose lock already says what resolution chose, and whose folder still folds to what the
+//  lock says, is left as it is (B-138): a rerun of `prepare` moves only what moved.
 
 import Foundation
 import SemelNodeKit
@@ -22,14 +24,54 @@ public enum Vendoring {
         /// What the resolver chose for this checkout, when its resolved file says: recorded
         /// in the lock written beside the copy, never enforced.
         public let pin: Pin?
+        /// Whether the checkout was copied, and why, or the copy already there was left.
+        public let change: Change
 
-        public init(name: String, source: URL, destination: URL, pin: Pin? = nil) {
+        public init(name: String, source: URL, destination: URL, pin: Pin? = nil, change: Change = .copied(.absent)) {
             self.name        = name
             self.source      = source
             self.destination = destination
             self.pin         = pin
+            self.change      = change
         }
     }
+
+    /// What vendoring did with one checkout (B-138).
+    public enum Change: Equatable {
+        /// The copy there is what copying would make again, and its lock says so. Neither
+        /// is touched, so its content root does not move and nothing downstream rebuilds.
+        case unchanged
+        case copied(CopyReason)
+    }
+
+    /// Why a checkout was copied over whatever was under its name. Every case past
+    /// `lockUnreadable` carries the lock that was there, so a report can say what moved
+    /// from what.
+    public enum CopyReason: Equatable {
+        /// Nothing was vendored under the name.
+        case absent
+        /// A copy with no lock beside it: nothing says what it is.
+        case lockMissing
+        /// A lock that does not parse, and so cannot say what the copy is.
+        case lockUnreadable(DependencyLockError)
+        /// The lock's root was taken under another fold than this `prepare` takes one under,
+        /// so the two roots cannot be compared.
+        case foldChanged(DependencyLock)
+        /// Resolution chose another version, revision or origin than the lock records.
+        case pinMoved(DependencyLock)
+        /// The checksums the copy's manifest names for its binary targets are not the ones
+        /// the lock records.
+        case artifactsDiffer(DependencyLock)
+        /// The copy folds to another root than its lock's: it was changed after it was
+        /// vendored, and `prepare` is where a person asks for it to be made right.
+        case contentDiffers(DependencyLock)
+    }
+
+    /// The `checksum:` of each binary target the manifest in a vendored package's folder
+    /// declares, by target: what a lock's `artifacts` line records. Handed in, because
+    /// reading a manifest is running SwiftPM, which `Preparation` does for every vendored
+    /// package anyway and can do once for both.
+    public typealias ManifestChecksums = (URL) throws -> [String: String]
 
     /// One entry of a `Package.resolved`: where a package came from and what was chosen.
     public struct Pin: Equatable {
@@ -52,20 +94,14 @@ public enum Vendoring {
     /// The folder under a package root that holds its vendored dependencies.
     public static let dependenciesFolderName = "Dependencies"
 
-    /// Resolves and copies: `swift package resolve` on `packageRoot`, then every checkout
-    /// under `.build/checkouts` into `<packageRoot>/Dependencies/<name>`.
-    public static func vendor(packageRoot: URL) throws -> [Copied] {
-        try vendor(packageRoots: [packageRoot],
-                   into: packageRoot.appendingPathComponent(dependenciesFolderName, isDirectory: true))
-    }
-
     /// Resolves each package and copies every checkout of each into one `dependencies`
     /// folder — the shape a formula that includes several packages with one build root
     /// needs (`SwiftFormulaConverter(path: <pkg>, root: <.>)`): their common closure is
     /// vendored once. A name two packages both resolve is copied by the later one; SwiftPM
     /// resolves them as separate graphs, so the versions can in principle differ, and the
     /// last copy wins as it would for a rerun.
-    public static func vendor(packageRoots: [URL], into dependencies: URL) throws -> [Copied] {
+    public static func vendor(packageRoots: [URL], into dependencies: URL,
+                              manifestChecksums: ManifestChecksums) throws -> [Copied] {
         var copied: [Copied] = []
         for packageRoot in packageRoots {
             try resolve(packageRoot: packageRoot)
@@ -73,7 +109,8 @@ public enum Vendoring {
             copied += try copyCheckouts(from: packageRoot.appendingPathComponent(".build/checkouts", isDirectory: true),
                                         into: dependencies,
                                         pins: pins(inResolvedFileAt: packageRoot.appendingPathComponent("Package.resolved")),
-                                        artifacts: artifacts)
+                                        artifacts: artifacts,
+                                        manifestChecksums: manifestChecksums)
             // The root's own binary targets, which SwiftPM downloads beside its dependencies'.
             try copyArtifacts(from: artifacts, identity: packageRoot.lastPathComponent, into: packageRoot)
         }
@@ -85,7 +122,7 @@ public enum Vendoring {
     /// clones every package the project reaches, transitively, into the folder it is
     /// given, under `checkouts/`, the same layout SwiftPM uses — so the copy step is the
     /// same. The clone folder is temporary; the copies are what the build reads.
-    public static func vendor(project: URL, into dependencies: URL) throws -> [Copied] {
+    public static func vendor(project: URL, into dependencies: URL, manifestChecksums: ManifestChecksums) throws -> [Copied] {
         let clones = FileManager.default.temporaryDirectory
             .appendingPathComponent("semel-swift-clones-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: clones) }
@@ -104,7 +141,8 @@ public enum Vendoring {
         let resolvedFile = project.appendingPathComponent("project.xcworkspace/xcshareddata/swiftpm/Package.resolved")
         return try copyCheckouts(from: clones.appendingPathComponent("checkouts", isDirectory: true), into: dependencies,
                                  pins: pins(inResolvedFileAt: resolvedFile),
-                                 artifacts: clones.appendingPathComponent("artifacts", isDirectory: true))
+                                 artifacts: clones.appendingPathComponent("artifacts", isDirectory: true),
+                                 manifestChecksums: manifestChecksums)
     }
 
     /// The folder in a package a binary target's artifact is vendored into, one per target.
@@ -249,10 +287,13 @@ public enum Vendoring {
     /// was there, and leaves out each checkout's `.git` and `.build`: neither is source,
     /// and a nested `.git` would make the copy look like a repository of its own. The
     /// binary artifacts resolution downloaded for a checkout, found in `artifacts` under its
-    /// identity, go into the copy's `semel-artifacts` (B-77).
-    /// Returns what was copied, sorted by name, each with its pin from `pins` when there is one.
+    /// identity, go into the copy's `semel-artifacts` (B-77). A copy that `reasonToCopy`
+    /// finds already right is left, its lock with it (B-138).
+    /// Returns every checkout, sorted by name, each with its pin from `pins` when there is
+    /// one and what was done with it.
     public static func copyCheckouts(from checkouts: URL, into dependencies: URL,
-                                     pins: [String: Pin] = [:], artifacts: URL? = nil) throws -> [Copied] {
+                                     pins: [String: Pin] = [:], artifacts: URL? = nil,
+                                     manifestChecksums: ManifestChecksums) throws -> [Copied] {
         let fileManager = FileManager.default
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: checkouts.path, isDirectory: &isDirectory), isDirectory.boolValue else {
@@ -274,6 +315,10 @@ public enum Vendoring {
             let source      = checkouts.appendingPathComponent(name, isDirectory: true)
             let destination = dependencies.appendingPathComponent(name, isDirectory: true)
 
+            guard let reason = try reasonToCopy(to: destination, pin: pins[name], manifestChecksums: manifestChecksums) else {
+                copied.append(Copied(name: name, source: source, destination: destination, pin: pins[name], change: .unchanged))
+                continue
+            }
             if fileManager.fileExists(atPath: destination.path) {
                 try fileManager.removeItem(at: destination)
             }
@@ -287,8 +332,48 @@ public enum Vendoring {
             if let artifacts {
                 try copyArtifacts(from: artifacts, identity: name, into: destination)
             }
-            copied.append(Copied(name: name, source: source, destination: destination, pin: pins[name]))
+            copied.append(Copied(name: name, source: source, destination: destination, pin: pins[name],
+                                 change: .copied(reason)))
         }
         return copied
+    }
+
+    /// Why the copy at `destination` has to be made again for `pin`, or nil when the one
+    /// there is what copying would make: its lock records the pin, was taken under this
+    /// fold and records the checksums its manifest names, and the folder still folds to the
+    /// lock's root. Cheapest first — the pin is a comparison, the checksums are a manifest
+    /// read `Preparation` keeps for later, and the root is a walk of every file — so a
+    /// rerun after a pin moved folds only the copies whose pins did not.
+    ///
+    /// The pin compared is the whole of what the lock records of it: a version that stays
+    /// while its revision moves is a retagged release, and an origin that moves is another
+    /// repository under the same name, and either is a different checkout.
+    static func reasonToCopy(to destination: URL, pin: Pin?, manifestChecksums: ManifestChecksums) throws -> CopyReason? {
+        guard FileManager.default.fileExists(atPath: destination.path) else {
+            return .absent
+        }
+        let lockFile = DependencyLock.lockFile(forDependencyAt: destination)
+        guard let lockData = FileManager.default.contents(atPath: lockFile.path) else {
+            return .lockMissing
+        }
+        let lock: DependencyLock
+        do {
+            lock = try DependencyLock.parse(String(decoding: lockData, as: UTF8.self))
+        } catch let error as DependencyLockError {
+            return .lockUnreadable(error)
+        }
+        guard lock.fold == FolderContentRoot.formatTag else {
+            return .foldChanged(lock)
+        }
+        guard lock.version == pin?.version, lock.revision == pin?.revision, lock.origin == pin?.origin else {
+            return .pinMoved(lock)
+        }
+        guard try manifestChecksums(destination) == lock.artifacts else {
+            return .artifactsDiffer(lock)
+        }
+        guard try FolderContentRoot.root(ofFolderAt: destination) == lock.contentRoot else {
+            return .contentDiffers(lock)
+        }
+        return nil
     }
 }

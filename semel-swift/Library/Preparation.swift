@@ -25,8 +25,31 @@ public struct PrepareReport: Equatable {
     /// the ones directly in its synchronized folders.
     public var localPackages: [URL] = []
     public var roots: [PackageSummary] = []
+    /// Every checkout resolution produced, in the order vendoring met them: a name two
+    /// roots resolve is here twice, and the later entry is the one that stood.
     public var vendored: [Vendoring.Copied] = []
-    /// The lock written beside each vendored copy (B-06), one per copy.
+    /// One vendored package copied on this run, and why: a first copy, a pin that moved, or
+    /// a copy or lock that was not right (B-138).
+    public struct Revendored: Equatable {
+        public var name: String
+        public var reason: Vendoring.CopyReason
+        /// What the copy is now, as the lock beside it records.
+        public var pin: Vendoring.Pin?
+
+        public init(name: String, reason: Vendoring.CopyReason, pin: Vendoring.Pin?) {
+            self.name   = name
+            self.reason = reason
+            self.pin    = pin
+        }
+    }
+
+    /// The packages copied on this run, by name, one per copy (B-138).
+    public var revendored: [Revendored] = []
+    /// The packages whose copy and lock were already right and were left untouched, by
+    /// name: their content roots did not move, so nothing downstream of them rebuilds.
+    public var unchanged: [String] = []
+    /// The lock written beside each copy made on this run (B-06), one per copy. A copy left
+    /// untouched keeps the lock it had.
     public var locks: [URL] = []
     /// Every binary target's `path:` zip unzipped into its package's `semel-artifacts`.
     public var unzippedArtifacts: [URL] = []
@@ -64,19 +87,86 @@ public struct PrepareReport: Equatable {
     public var ungeneratedSources: [XcodeProjectFacts.UngeneratedSource] = []
 }
 
+// MARK: - What vendoring did, as `prepare` prints it
+
+extension PrepareReport {
+
+    /// One line per package copied on this run, then one counting the packages left as
+    /// they were: `GRDB.swift 6.29.3 → 7.0.0, re-vendored` and `33 unchanged` (B-138).
+    /// A line names what moved — the version, the revision when the version did not say
+    /// (a branch pin, or a tag moved under its version), the origin when it was the
+    /// repository that changed — and why a copy whose pin did not move was copied all the
+    /// same.
+    public var vendoringLines: [String] {
+        var lines = revendored.map(Self.line(for:))
+        if !unchanged.isEmpty {
+            lines.append("\(unchanged.count) unchanged")
+        }
+        return lines
+    }
+
+    static func line(for revendored: Revendored) -> String {
+        let now = Self.label(version: revendored.pin?.version, revision: revendored.pin?.revision)
+        let named = now.map { "\(revendored.name) \($0)" } ?? revendored.name
+        switch revendored.reason {
+        case .absent:
+            return "\(named), vendored"
+        case .lockMissing:
+            return "\(named), re-vendored: the copy had no lock"
+        case .lockUnreadable(let error):
+            return "\(named), re-vendored: its lock could not be read (\(error))"
+        case .foldChanged(let lock):
+            return "\(named), re-vendored: its lock was folded as \(lock.fold), and this prepare folds as \(FolderContentRoot.formatTag)"
+        case .artifactsDiffer:
+            return "\(named), re-vendored: its lock's binary-target checksums are not its manifest's"
+        case .contentDiffers:
+            return "\(named), re-vendored: the copy had changed since its lock was written"
+        case .pinMoved(let lock):
+            return "\(revendored.name) \(Self.movement(from: lock, to: revendored.pin)), re-vendored"
+        }
+    }
+
+    /// What a pin moved by, in the terms that moved: the origin when the repository is
+    /// another, else the version, else the revision.
+    static func movement(from lock: DependencyLock, to pin: Vendoring.Pin?) -> String {
+        let unpinned = "unpinned"
+        guard lock.origin == pin?.origin else {
+            return "\(lock.origin ?? unpinned) → \(pin?.origin ?? unpinned)"
+        }
+        guard lock.version == pin?.version else {
+            let before = label(version: lock.version, revision: lock.revision) ?? unpinned
+            let after  = label(version: pin?.version, revision: pin?.revision) ?? unpinned
+            return "\(before) → \(after)"
+        }
+        let revisions = "\(lock.revision.map(abbreviated) ?? unpinned) → \(pin?.revision.map(abbreviated) ?? unpinned)"
+        return lock.version.map { "\($0) \(revisions)" } ?? revisions
+    }
+
+    /// The version, or the revision a branch pin has instead, abbreviated as git does.
+    static func label(version: String?, revision: String?) -> String? {
+        version ?? revision.map(abbreviated)
+    }
+
+    static func abbreviated(_ revision: String) -> String {
+        String(revision.prefix(7))
+    }
+}
+
 public enum Preparation {
 
     /// The steps that touch the machine, so a test can run the rest against a tree it
     /// wrote itself.
     public struct Steps {
         public var summarize: (URL) throws -> PackageSummary
-        public var vendor: ([URL], URL) throws -> [Vendoring.Copied]
-        public var vendorProject: (URL, URL) throws -> [Vendoring.Copied]
+        /// Resolves the roots and vendors their checkouts into the folder, asking the
+        /// checksums of an existing copy's manifest before it is left as it is.
+        public var vendor: ([URL], URL, Vendoring.ManifestChecksums) throws -> [Vendoring.Copied]
+        public var vendorProject: (URL, URL, Vendoring.ManifestChecksums) throws -> [Vendoring.Copied]
         public var facts: () throws -> ToolchainFacts
 
         public init(summarize: @escaping (URL) throws -> PackageSummary,
-                    vendor: @escaping ([URL], URL) throws -> [Vendoring.Copied],
-                    vendorProject: @escaping (URL, URL) throws -> [Vendoring.Copied] = { _, _ in [] },
+                    vendor: @escaping ([URL], URL, Vendoring.ManifestChecksums) throws -> [Vendoring.Copied],
+                    vendorProject: @escaping (URL, URL, Vendoring.ManifestChecksums) throws -> [Vendoring.Copied] = { _, _, _ in [] },
                     facts: @escaping () throws -> ToolchainFacts) {
             self.summarize     = summarize
             self.vendor        = vendor
@@ -85,8 +175,8 @@ public enum Preparation {
         }
 
         public static let live = Steps(summarize: PackageScan.summary(ofPackageAt:),
-                                       vendor: Vendoring.vendor(packageRoots:into:),
-                                       vendorProject: Vendoring.vendor(project:into:),
+                                       vendor: Vendoring.vendor(packageRoots:into:manifestChecksums:),
+                                       vendorProject: Vendoring.vendor(project:into:manifestChecksums:),
                                        facts: ToolchainFacts.fromMachine)
     }
 
@@ -107,6 +197,24 @@ public enum Preparation {
         var declaredVersion: String?
         // Every package the build reads, the tree's own and the vendored ones alike.
         var allSummaries: [PackageSummary] = []
+        // A vendored copy's manifest is read before vendoring decides to leave the copy,
+        // for the checksums its lock should record (B-138), and kept by folder: a copy left
+        // as it was is the copy summarised below, so it is read once.
+        var summariesReadWhileVendoring: [String: PackageSummary] = [:]
+        let manifestChecksums: Vendoring.ManifestChecksums = { copy in
+            let summary = try steps.summarize(copy)
+            summariesReadWhileVendoring[copy.standardizedFileURL.path] = summary
+            return checksums(of: summary)
+        }
+        let summarizeVendored: (URL) throws -> PackageSummary = { folder in
+            try summariesReadWhileVendoring[folder.standardizedFileURL.path] ?? steps.summarize(folder)
+        }
+        // What was read of a copy that was then replaced describes the copy that went.
+        func forgetReplacedCopies() {
+            for copied in report.vendored where copied.change != .unchanged {
+                summariesReadWhileVendoring[copied.destination.standardizedFileURL.path] = nil
+            }
+        }
 
         // A folder holding an `.xcodeproj` is a project: the project is the one root, it
         // says which packages it reaches, and its application's deployment target is the
@@ -114,7 +222,8 @@ public enum Preparation {
         // namespaces the formula's converters read, and no other.
         if let project = try projectFile(in: folder) {
             report.project = project.lastPathComponent
-            report.vendored = try steps.vendorProject(project, dependencies)
+            report.vendored = try steps.vendorProject(project, dependencies, manifestChecksums)
+            forgetReplacedCopies()
             // Before the project is read for its deployment target: an xcconfig is a
             // layer of the settings that reading evaluates.
             (report.copiedFromTemplate, report.missingXcconfigs) = try placeXcconfigs(ofProjectAt: project, sources: xcconfigSources)
@@ -131,7 +240,8 @@ public enum Preparation {
             report.localPackages = try XcodeProjectFacts.localPackagePaths(ofProjectAt: project)
                 .map { folder.appendingPathComponent($0, isDirectory: true).standardizedFileURL }
                 .filter { FileManager.default.fileExists(atPath: $0.appendingPathComponent("Package.swift").path) }
-            let packageSummaries = try (report.localPackages + vendoredManifestFolders(in: dependencies)).map(steps.summarize)
+            let packageSummaries = try report.localPackages.map(steps.summarize)
+                + vendoredManifestFolders(in: dependencies).map(summarizeVendored)
             // ibtool's block when a package's resources hold a xib too, which its formula
             // compiles into the package's bundle (B-77).
             var compiledSources = try XcodeProjectFacts.compiledSources(ofProjectAt: project, sdk: platform.sdkName,
@@ -153,7 +263,8 @@ public enum Preparation {
             }
             let summaries = try manifestFolders.map(steps.summarize)
             report.roots = PackageScan.roots(of: summaries)
-            report.vendored = try steps.vendor(report.roots.map(\.folder), dependencies)
+            report.vendored = try steps.vendor(report.roots.map(\.folder), dependencies, manifestChecksums)
+            forgetReplacedCopies()
             declaredVersion = GeneratedFiles.deploymentVersion(for: platform, in: summaries)
             formula = GeneratedFiles.formula(rootPaths: report.roots.map { relativePath(of: $0.folder, under: folder) })
             // Which languages the tree holds is decided after vendoring, over the vendored
@@ -161,16 +272,31 @@ public enum Preparation {
             // IceCubes — is compiled through clang like one of the tree's own, and a scan
             // before the copy could not see it (B-122). The vendored packages are not roots
             // and say nothing about the deployment version; they only add languages.
-            let vendoredSummaries = try vendoredManifestFolders(in: dependencies).map(steps.summarize)
+            let vendoredSummaries = try vendoredManifestFolders(in: dependencies).map(summarizeVendored)
             namespaces = GeneratedFiles.packageTreeNamespaces(
                 forCFamilyTargets: GeneratedFiles.hasCFamilyTargets(in: summaries + vendoredSummaries))
             allSummaries = summaries + vendoredSummaries
         }
 
+        // What each vendored package's copy is now, and what was left as it was (B-138).
+        let standing = standingCopies(of: report.vendored)
+        for copied in standing {
+            switch copied.change {
+            case .unchanged:
+                report.unchanged.append(copied.name)
+            case .copied(let reason):
+                report.revendored.append(.init(name: copied.name, reason: reason, pin: copied.pin))
+            }
+        }
+        let leftAsTheyWere = Set(standing.filter { $0.change == .unchanged }.map(\.destination.path))
+
         // Every package's binary targets in its `semel-artifacts`, before the locks are
         // taken over the copies that hold them (B-77): a `path:` zip unzipped here; what a
-        // `url:` names was copied from resolution's download with its checkout.
-        report.unzippedArtifacts = try unzipArtifacts(of: allSummaries)
+        // `url:` names was copied from resolution's download with its checkout. A copy left
+        // as it was has its artifacts already, and its lock's root covers them.
+        report.unzippedArtifacts = try unzipArtifacts(of: allSummaries.filter {
+            !leftAsTheyWere.contains($0.folder.standardizedFileURL.path)
+        })
         report.artifacts = artifactFolders(of: allSummaries)
         report.locks = try writeLocks(for: report.vendored, summaries: allSummaries)
 
@@ -217,26 +343,39 @@ public enum Preparation {
         return report
     }
 
-    /// A lock beside every copy, once every copy is in place (B-06): several roots vendor
-    /// into one folder and a name two of them resolve is copied by the later one, so the
-    /// lock is taken over the copy that stayed, with the pin of the root that copied it,
-    /// and each binary target's checksum from the copy's manifest in `summaries` (B-77).
+    /// A lock beside every copy made on this run, once every copy is in place (B-06):
+    /// several roots vendor into one folder and a name two of them resolve is copied by the
+    /// later one, so the lock is taken over the copy that stayed, with the pin of the root
+    /// that copied it, and each binary target's checksum from the copy's manifest in
+    /// `summaries` (B-77). A copy left as it was keeps its lock, byte for byte (B-138).
     static func writeLocks(for vendored: [Vendoring.Copied], summaries: [PackageSummary] = []) throws -> [URL] {
-        var lastCopy: [URL: Vendoring.Copied] = [:]
+        try standingCopies(of: vendored).filter { $0.change != .unchanged }.map { copied in
+            let destination = copied.destination.standardizedFileURL.path
+            let summary = summaries.first { $0.folder.standardizedFileURL.path == destination }
+            return try Vendoring.writeLock(for: copied, artifacts: summary.map(checksums(of:)) ?? [:])
+        }
+    }
+
+    /// The entry that stood for each destination — the last, since a later copy replaces
+    /// an earlier one — with its destination standardized, sorted by path.
+    static func standingCopies(of vendored: [Vendoring.Copied]) -> [Vendoring.Copied] {
+        var lastCopy: [String: Vendoring.Copied] = [:]
         for copied in vendored {
-            lastCopy[copied.destination.standardizedFileURL] = copied
+            let destination = copied.destination.standardizedFileURL
+            lastCopy[destination.path] = Vendoring.Copied(name: copied.name, source: copied.source, destination: destination,
+                                                          pin: copied.pin, change: copied.change)
         }
-        return try lastCopy.keys.sorted { $0.path < $1.path }.compactMap { destination in
-            guard let copied = lastCopy[destination] else {
-                return nil
-            }
-            let summary = summaries.first { $0.folder.standardizedFileURL.path == destination.path }
-            var checksums: [String: String] = [:]
-            for binaryTarget in summary?.binaryTargets ?? [] {
-                checksums[binaryTarget.name] = binaryTarget.checksum
-            }
-            return try Vendoring.writeLock(for: copied, artifacts: checksums)
+        return lastCopy.keys.sorted().compactMap { lastCopy[$0] }
+    }
+
+    /// The `checksum:` of each of the package's binary targets that has one, by target:
+    /// what its lock records (B-77).
+    static func checksums(of summary: PackageSummary) -> [String: String] {
+        var checksums: [String: String] = [:]
+        for binaryTarget in summary.binaryTargets {
+            checksums[binaryTarget.name] = binaryTarget.checksum
         }
+        return checksums
     }
 
     /// Unzips every binary target's `path:` zip into its package's `semel-artifacts`, as

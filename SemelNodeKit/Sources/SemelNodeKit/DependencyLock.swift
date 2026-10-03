@@ -21,7 +21,13 @@ import Foundation
 /// node configuration lives in a database, where it cannot be reviewed, shared between
 /// developers or read without Semel running. And beside the folder rather than inside it,
 /// for two reasons: a lock in the folder would be a child the root folds, so recording the
-/// root would change the root; and `prepare` replaces each `Dependencies/<name>` wholesale.
+/// root would change the root; and `prepare` replaces a `Dependencies/<name>` wholesale
+/// when it copies it again.
+///
+/// `prepare` also reads it back (B-138): a copy whose lock records the pin resolution
+/// chose, under the fold `prepare` takes, and whose folder still folds to `content`, is
+/// left with its lock untouched, so its root does not move and nothing downstream of it
+/// rebuilds.
 public struct DependencyLock: Equatable {
     /// The folder's content root, as the object store names it — the hex of a SHA-256.
     public var contentRoot: String

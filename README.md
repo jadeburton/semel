@@ -225,7 +225,16 @@ Semel never fetches anything: every file a build needs has to be inside the inpu
 cd path/to && semel 'build Packages'        # products land in path/to/semel-out/Packages
 ```
 
-Beside each copy, `prepare` writes a lock — `Dependencies/GRDB.swift.semel-lock` — to check in with it. Its `content` line is the Merkle root of the vendored folder as Semel sees it once pushed, and every build compares the two: a dependency that has moved since it was vendored stops the build, naming the expected and the found hash, rather than being quietly rebuilt against. The `version`, `revision` and `origin` lines are recorded for the reader and never enforced. To accept a change, run `prepare` again, or put the found hash on the `content` line. A vendored folder with no lock beside it builds, with a notice saying nothing checks it.
+Beside each copy, `prepare` writes a lock — `Dependencies/GRDB.swift.semel-lock` — to check in with it. Its `content` line is the Merkle root of the vendored folder as Semel sees it once pushed, and every build compares the two: a dependency that has moved since it was vendored stops the build, naming the expected and the found hash, rather than being quietly rebuilt against. The `version`, `revision` and `origin` lines are recorded and never enforced by a build: which version a copy should be is the package manager's question, and `prepare` is where it is asked. To accept a change, run `prepare` again, or put the found hash on the `content` line. A vendored folder with no lock beside it builds, with a notice saying nothing checks it.
+
+A second `prepare` touches only what moved. SwiftPM resolves again, and each pin it chose is compared with the lock beside the copy: a copy whose lock records the same version, revision and origin, and whose folder still folds to the lock's `content`, is left as it is with its lock, so its root does not move and nothing built from it rebuilds. A pin that moved is copied and locked again, and so is a copy with no lock, a lock that does not parse, or a copy changed since its lock was written. The report says which, one line per package copied, then a count of the rest:
+
+```
+GRDB.swift 6.29.3 → 7.0.0, re-vendored
+33 unchanged
+```
+
+Comparing costs little beside resolution itself: folding all thirty-four of CodeEdit's copies (808 MB) against their locks takes under two seconds.
 
 ## Architecture
 
