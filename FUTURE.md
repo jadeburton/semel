@@ -587,7 +587,33 @@ first):
    includes inlined and the macros unexpanded (`-frewrite-includes`), which then needs
    the defines at compile time too.
 
-**B-138** `open` — **`prepare` notices a moved pin and re-vendors only that copy.**
+**B-138** `done` — **`prepare` notices a moved pin and re-vendors only that copy.**
+Done 2026-10-04: `prepare` resolves as before, then `Vendoring.copyCheckouts` asks of each
+checkout whether the copy under its name is what copying would make again
+(`reasonToCopy`), cheapest first: a lock beside it that parses, taken under this fold,
+recording the pin's version, revision and origin, recording the checksums the copy's
+manifest names for its binary targets, and a copy that still folds to the lock's
+`content`. A copy that passes is left with its lock, byte and date — no copy, no new lock,
+no unzip — and one that fails is copied and locked as before, with the reason as a
+`Vendoring.CopyReason` (`absent`, `lockMissing`, `lockUnreadable`, `foldChanged`,
+`pinMoved`, `artifactsDiffer`, `contentDiffers`), each but the first two carrying the lock
+that was there. A retagged release (the revision moved under its version) and another
+origin under the same name are moved pins. The manifest's checksums come from the summary
+`prepare` takes of every vendored package anyway, read once and kept for a copy left as it
+was. `PrepareReport` carries `revendored` (name, reason, pin) and `unchanged` (names), and
+`vendoringLines` renders them: one line per package copied — `GRDB.swift 6.29.3 → 7.0.0,
+re-vendored`, the revision for a branch pin, the origin when that is what moved, the reason
+when the pin did not — then `33 unchanged`. Measured on CodeEdit's thirty-four copies (808
+MB): folding every copy against its lock takes 1.7 s on a first pass and 0.6 s warm, in a
+debug build, so the pin is compared first only because it is free, and the second
+`prepare` (34 unchanged) took 32 s against the first's 66 s — what is left is
+`xcodebuild -resolvePackageDependencies` cloning into a fresh folder each run.
+`VendoringTests` and `PrepareTests` hold each reason and the lines, and
+`PrepareEndToEndTests` runs the binary over two git repositories made on disk: the second
+run leaves `Dependencies` as it was and says `2 unchanged`, and a requirement moved to
+1.1.0 copies that package alone. Still open: whether `build` should run `prepare`.
+
+The entry as it was filed:
 Decided 2026-10-03: checking a dependency's version against its manifest's requirement is
 not the engine's job but the package manager's, and the package manager is `prepare`,
 which runs SwiftPM's resolution outside the engine. So the converter does not check it

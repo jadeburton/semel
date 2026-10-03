@@ -10,9 +10,10 @@
 //  `<folder>/Dependencies`, and writes `semel.fmla` and `semel.config` beside them unless
 //  they are already there, and its part of `semel.machine.config` — the machine's tools
 //  and SDK — every time, keeping what `semel-clang` wrote there. The same command every
-//  time: after cloning, and again after changing a dependency or a toolchain — the copies,
-//  the lock beside each and prepare's part of the machine file are replaced, the formula
-//  and the project's config are kept.
+//  time: after cloning, and again after changing a dependency or a toolchain — a copy whose
+//  pin moved, or that is not what its lock says, is replaced with its lock, every other
+//  copy and lock is left untouched (B-138), prepare's part of the machine file is
+//  rewritten, and the formula and the project's config are kept.
 
 import Foundation
 import SemelNodeKit
@@ -93,8 +94,8 @@ do {
     if report.vendored.isEmpty {
         print("No dependencies to vendor.")
     }
-    for entry in report.vendored {
-        print("\(entry.name) -> \(entry.destination.path)")
+    for line in report.vendoringLines {
+        print(line)
     }
     for zip in report.unzippedArtifacts {
         print("Unzipped: \(zip.path)")

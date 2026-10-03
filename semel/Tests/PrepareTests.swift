@@ -583,10 +583,15 @@ final class PrepareTests: XCTestCase {
 
     // MARK: - Running it
 
+    /// `vendored` stands in for resolving and copying both; `vendoredChecking`, when given,
+    /// is handed the manifest reader too, for a fake that runs the real copy step over
+    /// checkouts it laid out itself.
     private func steps(vendored: @escaping ([URL], URL) throws -> [Vendoring.Copied] = { _, _ in [] },
+                       vendoredChecking: (([URL], URL, Vendoring.ManifestChecksums) throws -> [Vendoring.Copied])? = nil,
                        facts: ToolchainFacts? = nil,
                        binaryTargets: [String: [PackageSummary.BinaryTarget]] = [:]) -> Preparation.Steps {
-        Preparation.Steps(
+        let vendor = vendoredChecking ?? { roots, into, _ in try vendored(roots, into) }
+        return Preparation.Steps(
             summarize: { folder in
                 let name = folder.lastPathComponent
                 let dependsOn = name == "Timeline" ? [self.folder("Packages/Models")] : []
@@ -597,8 +602,8 @@ final class PrepareTests: XCTestCase {
                                       targets: [.init(folder: folder.appendingPathComponent("Sources/\(name)", isDirectory: true))],
                                       binaryTargets: binaryTargets[name] ?? [])
             },
-            vendor: vendored,
-            vendorProject: { project, into in
+            vendor: vendor,
+            vendorProject: { project, into, _ in
                 self.vendoredProject = (project, into)
                 return []
             },
@@ -1059,6 +1064,141 @@ final class PrepareTests: XCTestCase {
         XCTAssertEqual(report.locks, [])
     }
 
+    // MARK: - Only what moved (B-138)
+
+    private let grdbPin = Vendoring.Pin(origin: "https://github.com/groue/GRDB.swift.git", version: "6.29.3",
+                                        revision: "b83108d10f42680d78f23fe4d4d80fc88dab3212")
+    private let nukePin = Vendoring.Pin(origin: "https://github.com/kean/Nuke.git", version: "12.8.0",
+                                        revision: "0f4d2e9a7c1b3d5e6f708192a3b4c5d6e7f80912")
+
+    /// Resolution faked as what it leaves — a checkout per package, with the files given,
+    /// and the pins — and the real copy step run over it, so what is left and what is
+    /// copied is decided as `prepare` decides it.
+    private func resolving(_ checkouts: [String: [String: String]],
+                           pins: [String: Vendoring.Pin]) -> ([URL], URL, Vendoring.ManifestChecksums) throws -> [Vendoring.Copied] {
+        { _, into, manifestChecksums in
+            let resolved = self.folder("resolved")
+            try? FileManager.default.removeItem(at: resolved)
+            for (name, files) in checkouts {
+                for (path, content) in files {
+                    try self.write("resolved/checkouts/\(name)/\(path)", content)
+                }
+            }
+            return try Vendoring.copyCheckouts(from: resolved.appendingPathComponent("checkouts", isDirectory: true), into: into,
+                                               pins: pins, manifestChecksums: manifestChecksums)
+        }
+    }
+
+    private func lockData(_ name: String) throws -> Data {
+        try Data(contentsOf: folder("Packages/Dependencies").appendingPathComponent("\(name).semel-lock"))
+    }
+
+    private let twoCheckouts = ["GRDB.swift": ["Package.swift": "// grdb 6.29.3\n", "GRDB/Database.swift": "class Database {}\n"],
+                                "Nuke": ["Package.swift": "// nuke\n"]]
+
+    func test_aSecondPrepareLeavesEveryCopyAndLockAndSaysSo() throws {
+        try write("Packages/App/Package.swift")
+        let pins = ["GRDB.swift": grdbPin, "Nuke": nukePin]
+        let first = try Preparation.run(folder: folder("Packages"), platform: .macos,
+                                        steps: steps(vendoredChecking: resolving(twoCheckouts, pins: pins)))
+        XCTAssertEqual(first.revendored, [.init(name: "GRDB.swift", reason: .absent, pin: grdbPin),
+                                          .init(name: "Nuke", reason: .absent, pin: nukePin)])
+        XCTAssertEqual(first.vendoringLines, ["GRDB.swift 6.29.3, vendored", "Nuke 12.8.0, vendored"])
+        let locksBefore = try ["GRDB.swift", "Nuke"].map(lockData)
+
+        let second = try Preparation.run(folder: folder("Packages"), platform: .macos,
+                                         steps: steps(vendoredChecking: resolving(twoCheckouts, pins: pins)))
+
+        XCTAssertEqual(second.revendored, [])
+        XCTAssertEqual(second.unchanged, ["GRDB.swift", "Nuke"])
+        XCTAssertEqual(second.locks, [], "no lock is written for a copy left as it was")
+        XCTAssertEqual(try ["GRDB.swift", "Nuke"].map(lockData), locksBefore)
+        XCTAssertEqual(second.vendoringLines, ["2 unchanged"])
+    }
+
+    func test_aMovedPinIsReVendoredAndRelockedAlone() throws {
+        try write("Packages/App/Package.swift")
+        _ = try Preparation.run(folder: folder("Packages"), platform: .macos,
+                                steps: steps(vendoredChecking: resolving(twoCheckouts, pins: ["GRDB.swift": grdbPin, "Nuke": nukePin])))
+        let grdbLock = try DependencyLock.parse(String(decoding: try lockData("GRDB.swift"), as: UTF8.self))
+        let nukeLock = try lockData("Nuke")
+        var moved = twoCheckouts
+        moved["GRDB.swift"]?["Package.swift"] = "// grdb 7.0.0\n"
+        let grdbSeven = Vendoring.Pin(origin: grdbPin.origin, version: "7.0.0", revision: "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d")
+
+        let report = try Preparation.run(folder: folder("Packages"), platform: .macos,
+                                         steps: steps(vendoredChecking: resolving(moved, pins: ["GRDB.swift": grdbSeven, "Nuke": nukePin])))
+
+        XCTAssertEqual(report.revendored, [.init(name: "GRDB.swift", reason: .pinMoved(grdbLock), pin: grdbSeven)])
+        XCTAssertEqual(report.unchanged, ["Nuke"])
+        XCTAssertEqual(report.locks, [folder("Packages/Dependencies").appendingPathComponent("GRDB.swift.semel-lock")])
+        XCTAssertEqual(report.vendoringLines, ["GRDB.swift 6.29.3 → 7.0.0, re-vendored", "1 unchanged"])
+        XCTAssertEqual(try lockData("Nuke"), nukeLock)
+        let relocked = try DependencyLock.parse(String(decoding: try lockData("GRDB.swift"), as: UTF8.self))
+        XCTAssertEqual(relocked.version, "7.0.0")
+        XCTAssertEqual(relocked.contentRoot, try FolderContentRoot.root(ofFolderAt: folder("Packages/Dependencies/GRDB.swift")))
+    }
+
+    /// The checksums compared are the ones the copy's manifest names, read through the same
+    /// summary `prepare` takes of every vendored package; a lock that records others is
+    /// taken again with the manifest's.
+    func test_aLockWhoseChecksumIsNotTheManifestsIsReVendored() throws {
+        try write("Packages/App/Package.swift")
+        let sparklePin = Vendoring.Pin(origin: "https://github.com/sparkle-project/Sparkle", version: "2.6.0", revision: "5e1f")
+        let sparkle = ["Sparkle": ["Package.swift": "// swift-tools-version: 5.9\n// sparkle\n"]]
+        let binaryTargets = ["Sparkle": [PackageSummary.BinaryTarget(name: "Sparkle", checksum: "4d5de3d3")]]
+        let sparkleSteps = steps(vendoredChecking: resolving(sparkle, pins: ["Sparkle": sparklePin]), binaryTargets: binaryTargets)
+        _ = try Preparation.run(folder: folder("Packages"), platform: .macos, steps: sparkleSteps)
+        XCTAssertEqual(try Preparation.run(folder: folder("Packages"), platform: .macos, steps: sparkleSteps).unchanged, ["Sparkle"])
+        let lockFile = folder("Packages/Dependencies").appendingPathComponent("Sparkle.semel-lock")
+        var edited = try DependencyLock.parse(try String(contentsOf: lockFile, encoding: .utf8))
+        edited.artifacts = ["Sparkle": "00000000"]
+        try edited.text.write(to: lockFile, atomically: true, encoding: .utf8)
+
+        let report = try Preparation.run(folder: folder("Packages"), platform: .macos, steps: sparkleSteps)
+
+        XCTAssertEqual(report.revendored, [.init(name: "Sparkle", reason: .artifactsDiffer(edited), pin: sparklePin)])
+        XCTAssertEqual(try DependencyLock.parse(try String(contentsOf: lockFile, encoding: .utf8)).artifacts, ["Sparkle": "4d5de3d3"])
+    }
+
+    /// Each reason a copy is made again reads as one line naming the package and what it
+    /// is now.
+    func test_eachReasonForACopyReadsAsOneLine() {
+        let lock = DependencyLock(contentRoot: "00", fold: FolderContentRoot.formatTag, version: "6.29.3",
+                                  revision: "b83108d10f42680d78f23fe4d4d80fc88dab3212", origin: grdbPin.origin)
+        let branchLock = DependencyLock(contentRoot: "00", fold: FolderContentRoot.formatTag, version: nil,
+                                        revision: "0123abcd0123", origin: nukePin.origin)
+        let branchPin = Vendoring.Pin(origin: nukePin.origin, version: nil, revision: "4567cdef4567")
+        let fork = Vendoring.Pin(origin: "https://example.com/fork/GRDB.swift.git", version: "6.29.3", revision: "b831")
+        let retag = Vendoring.Pin(origin: grdbPin.origin, version: "6.29.3", revision: "fedcba9876")
+        var oldFold = lock
+        oldFold.fold = "content-root-2"
+        let cases: [(PrepareReport.Revendored, String)] = [
+            (.init(name: "GRDB.swift", reason: .absent, pin: grdbPin), "GRDB.swift 6.29.3, vendored"),
+            (.init(name: "Local", reason: .absent, pin: nil), "Local, vendored"),
+            (.init(name: "GRDB.swift", reason: .lockMissing, pin: grdbPin), "GRDB.swift 6.29.3, re-vendored: the copy had no lock"),
+            (.init(name: "GRDB.swift", reason: .lockUnreadable(.missingKey("fold")), pin: grdbPin),
+             "GRDB.swift 6.29.3, re-vendored: its lock could not be read (there is no 'fold' line)"),
+            (.init(name: "GRDB.swift", reason: .foldChanged(oldFold), pin: grdbPin),
+             "GRDB.swift 6.29.3, re-vendored: its lock was folded as content-root-2, and this prepare folds as \(FolderContentRoot.formatTag)"),
+            (.init(name: "GRDB.swift", reason: .artifactsDiffer(lock), pin: grdbPin),
+             "GRDB.swift 6.29.3, re-vendored: its lock's binary-target checksums are not its manifest's"),
+            (.init(name: "GRDB.swift", reason: .contentDiffers(lock), pin: grdbPin),
+             "GRDB.swift 6.29.3, re-vendored: the copy had changed since its lock was written"),
+            (.init(name: "Nuke", reason: .pinMoved(branchLock), pin: branchPin), "Nuke 0123abc → 4567cde, re-vendored"),
+            (.init(name: "GRDB.swift", reason: .pinMoved(lock), pin: fork),
+             "GRDB.swift https://github.com/groue/GRDB.swift.git → https://example.com/fork/GRDB.swift.git, re-vendored"),
+            (.init(name: "GRDB.swift", reason: .pinMoved(lock), pin: retag), "GRDB.swift 6.29.3 b83108d → fedcba9, re-vendored"),
+        ]
+        for (revendored, line) in cases {
+            XCTAssertEqual(PrepareReport.line(for: revendored), line)
+        }
+        var report = PrepareReport()
+        XCTAssertEqual(report.vendoringLines, [], "nothing vendored says nothing here; the caller says there was nothing")
+        report.unchanged = ["Nuke"]
+        XCTAssertEqual(report.vendoringLines, ["1 unchanged"])
+    }
+
     // MARK: - Binary targets (B-77)
 
     /// `ditto -c -k --keepParent`, as a framework's zip is made: the folder inside the zip.
@@ -1112,7 +1252,7 @@ final class PrepareTests: XCTestCase {
         try write("resolved/artifacts/zip/Zip/Zip.xcframework/Info.plist", "<plist/>\n")
 
         let copied = try Vendoring.copyCheckouts(from: folder("resolved/checkouts"), into: folder("Dependencies"),
-                                                 artifacts: folder("resolved/artifacts"))
+                                                 artifacts: folder("resolved/artifacts"), manifestChecksums: { _ in [:] })
 
         XCTAssertEqual(copied.map(\.name), ["Sparkle"])
         XCTAssertTrue(FileManager.default.fileExists(
@@ -1132,7 +1272,7 @@ final class PrepareTests: XCTestCase {
         }
 
         let copied = try Vendoring.copyCheckouts(from: folder("resolved/checkouts"), into: folder("Dependencies"),
-                                                 artifacts: folder("resolved/artifacts"))
+                                                 artifacts: folder("resolved/artifacts"), manifestChecksums: { _ in [:] })
         let lock = try DependencyLock.parse(try String(contentsOf: try Vendoring.writeLock(for: try XCTUnwrap(copied.first)), encoding: .utf8))
 
         let artifact = folder("Dependencies/Sparkle/semel-artifacts/Sparkle")
