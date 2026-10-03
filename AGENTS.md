@@ -359,6 +359,13 @@ In tests, `try XCTUnwrap(…)` and a `throws` test method.
   reports its version; `ToolDiscovery` registers what is found under that version. A node
   pinned to a version that is no longer installed is expected to fail when processed, with
   a message naming what is available. Do not add launch-time warnings about this.
+- **The engine does not check a dependency's version against its requirement.** Which
+  version a vendored copy should be is the package manager's question, and the package
+  manager is `semel-swift prepare`, which runs SwiftPM's resolution outside the engine
+  and writes the copies and their locks. The engine builds the files it was pushed; the
+  lock (B-06) says only whether a copy has moved since it was vendored, and records the
+  version so that a person, and `prepare` (B-138), can tell when a pin has. Do not add a
+  version check to a converter.
 
 ## Tests
 

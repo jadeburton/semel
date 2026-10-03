@@ -300,8 +300,10 @@ holding file and folder links. What
 remains: a file removed from disk stays in `input:` (a push only adds), so the root then
 differs from a fresh lock with no word on which file; a lock `rm`'d from `input:` is named
 as a deleted source on every report while the converter still wires it, as any removed
-source a build reads is; and the version is recorded, never checked against the manifest's
-requirement (the converter's `ISSUE:`).
+source a build reads is. The version is recorded and never checked against the manifest's
+requirement, and that is a decision (2026-10-03): which version a copy should be is the
+package manager's question, and the package manager is `prepare`, outside the engine. The
+engine builds the files it was pushed. What makes rerunning `prepare` the habit is B-138.
 
 The entry as it was filed:
 `ISSUE:` in `SwiftFormulaConverter`'s dependency resolution. A `sourceControl` or registry
@@ -584,6 +586,22 @@ first):
    the header trees the preprocessor saw and the preprocessor handing on text with the
    includes inlined and the macros unexpanded (`-frewrite-includes`), which then needs
    the defines at compile time too.
+
+**B-138** `open` — **`prepare` notices a moved pin and re-vendors only that copy.**
+Decided 2026-10-03: checking a dependency's version against its manifest's requirement is
+not the engine's job but the package manager's, and the package manager is `prepare`,
+which runs SwiftPM's resolution outside the engine. So the converter does not check it
+(B-06's lock records the version and no more), and the remedy for a bumped requirement
+is to run `prepare` again. Today that re-vendors every copy, which is why nobody does it
+between builds. What this asks for: `prepare` compares each pin SwiftPM resolved
+(`Package.resolved`, or the project's) with the version, revision and origin the lock
+beside the copy records, copies and re-locks only the packages whose pin moved, leaves
+the others' folders and locks untouched so their content roots do not move and nothing
+downstream rebuilds, and says what it did per package — `GRDB.swift 6.29.3 → 7.0.0,
+re-vendored; 33 unchanged`. A copy whose lock is missing or whose root differs from its
+lock is re-vendored too, since `prepare` is where a person asks for the copy to be made
+right. With that, `prepare` is cheap enough to run before every build, and a script or the
+watcher can run it; whether `build` should is a question for after it exists.
 
 **B-122** `done` — **`prepare` writes no clang settings for a tree with C targets.**
 Fixed 2026-09-27: `prepare` decided the tree's languages from a scan taken before
