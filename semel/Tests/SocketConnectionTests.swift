@@ -131,6 +131,78 @@ final class SocketConnectionTests: XCTestCase {
         XCTAssertEqual(results["second"], "second")
     }
 
+    // MARK: - Sending without waiting
+
+    /// Three requests leave before any reply is asked for — the server answers only once
+    /// it holds all three, so a send that waited would never return — and the server
+    /// answers them last first: each handle still gets its own reply, collected in the
+    /// order sent, the two that came early kept until asked for.
+    func test_requestsSentWithoutWaitingAreAllOutAtOnceAndCollectedInOrder() throws {
+        var pending: [Frame] = []
+        startServer { frame in
+            pending.append(frame)
+            guard pending.count == 3 else {
+                return nil
+            }
+            for waiting in pending.reversed() {
+                guard case .daemon(.list(_, let pattern))? = try? waiting.request(),
+                      let reply = try? Frame.response(.daemon(.debug), correlationID: waiting.correlationID,
+                                                      body: Data(pattern.utf8)) else {
+                    continue
+                }
+                try? self.serverStream?.send(reply)
+            }
+            return nil
+        }
+        let connection = try SocketConnection.connect(to: socketPath)
+
+        let handles = try ["first", "second", "third"].map { pattern in
+            try connection.sendWithoutWaiting(.daemon(.list(fileSystem: .input, pattern: pattern)), body: nil)
+        }
+        let bodies = try handles.map { String(decoding: try $0.reply().1 ?? Data(), as: UTF8.self) }
+
+        XCTAssertEqual(bodies, ["first", "second", "third"])
+        XCTAssertEqual(String(decoding: try handles[0].reply().1 ?? Data(), as: UTF8.self), "first",
+                       "asked again, the same reply")
+    }
+
+    /// A reply that streams, collected later: the parts wait in the waiter until asked for,
+    /// and the handle joins them as the whole-reply `send` does.
+    func test_aStreamedReplySentWithoutWaitingIsCollectedWhole() throws {
+        startServer { frame in
+            for reply in self.streamedRemoval(parts: ["a", "b"], last: ["c"], correlationID: frame.correlationID) {
+                try? self.serverStream?.send(reply)
+            }
+            return nil
+        }
+        let connection = try SocketConnection.connect(to: socketPath)
+
+        let pending = try connection.sendWithoutWaiting(.daemon(.remove(pattern: "*")), body: nil)
+        let (whole, _) = try connection.send(.daemon(.remove(pattern: "*")), body: nil)
+
+        XCTAssertEqual(try pending.reply().0, .daemon(.remove(removedFiles: ["a", "b", "c"], removedFolders: [])))
+        XCTAssertEqual(whole, .daemon(.remove(removedFiles: ["a", "b", "c"], removedFolders: [])))
+    }
+
+    /// A connection that closes with a request out fails its handle, as it fails a waiting
+    /// send; and a handle asked for after the close hears the same.
+    func test_aClosedSocketFailsAReplyStillToBeCollected() throws {
+        startServer { _ in
+            self.serverStream?.close()
+            return nil
+        }
+        let connection = try SocketConnection.connect(to: socketPath)
+
+        let pending = try connection.sendWithoutWaiting(.daemon(.reset(clearCache: false)), body: nil)
+
+        XCTAssertThrowsError(try pending.reply()) { error in
+            XCTAssertEqual(error as? ConnectionError, .closed)
+        }
+        XCTAssertThrowsError(try connection.sendWithoutWaiting(.daemon(.reset(clearCache: false)), body: nil)) { error in
+            XCTAssertEqual(error as? ConnectionError, .closed)
+        }
+    }
+
     func test_anEventReachesOnEvent() throws {
         startServer { frame in
             if let event = try? Frame.event(.daemon(.notice(line: "built"))) {

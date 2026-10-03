@@ -5,8 +5,10 @@
 // under the correlation ID, writes the frame, and parks on a semaphore until the reader
 // delivers that ID's reply — each part of a streamed one, then the last. Several threads
 // may be parked at once, each on its own waiter, which is the shape the engine's cache
-// role will need. Events go to `onEvent` on the reader's queue, as the in-process
-// connection delivers them.
+// role will need. `sendWithoutWaiting` is the same two halves with the caller in between:
+// the waiter is registered and the frame written, and the parking happens when the caller
+// asks the handle for its reply. Events go to `onEvent` on the reader's queue, as the
+// in-process connection delivers them.
 
 import Foundation
 import Network
@@ -47,10 +49,10 @@ public final class SocketConnection: SemelConnection {
     }
 
     /// One request in flight. The reader puts what arrives on `arrivals` and signals once
-    /// per arrival; the sender takes them in order, so a streamed reply's parts reach
-    /// `onPart` on the sending thread, one at a time, and the waiter is released only by
-    /// the last frame or the connection closing (B-137). Both fields are guarded by the
-    /// connection's lock.
+    /// per arrival; the collecting thread takes them in order, so a streamed reply's parts
+    /// reach `onPart` there, one at a time, and the waiter is released only by the last
+    /// frame or the connection closing (B-137). What arrives before anyone collects stays
+    /// here until they do. Both fields are guarded by the connection's lock.
     private final class Waiter {
         enum Arrival {
             case part(Result<Response, Error>)
@@ -148,6 +150,23 @@ public final class SocketConnection: SemelConnection {
     // MARK: - SemelConnection
 
     public func send(_ request: Request, body: Data?, onPart: (Response) throws -> Void) throws -> (Response, Data?) {
+        try collect(try dispatch(request, body: body), onPart: onPart)
+    }
+
+    /// The waiter is registered before the frame leaves, so the reply has somewhere to go
+    /// however soon it comes; the caller collects it from there whenever it asks, and the
+    /// parts of a streamed one wait in the waiter until then.
+    public func sendWithoutWaiting(_ request: Request, body: Data?) throws -> PendingReply {
+        let waiter = try dispatch(request, body: body)
+        return PendingReply(collecting: { [self] in
+            var parts = ReplyParts()
+            let (last, replyBody) = try collect(waiter, onPart: { try parts.append($0) })
+            return (try parts.whole(endingWith: last), replyBody)
+        })
+    }
+
+    /// Registers a waiter for the request's reply and writes its frame, without waiting.
+    private func dispatch(_ request: Request, body: Data?) throws -> Waiter {
         // Encoded before the waiter is registered: a request that cannot be encoded must
         // leave no waiter behind for a reply that will never come.
         let json = try MessageCoder.encode(request)
@@ -169,7 +188,11 @@ public final class SocketConnection: SemelConnection {
             lock.withLock { _ = waiters.removeValue(forKey: correlationID) }
             throw error
         }
+        return waiter
+    }
 
+    /// Takes the waiter's arrivals in order, handing each part to `onPart`, until the last.
+    private func collect(_ waiter: Waiter, onPart: (Response) throws -> Void) throws -> (Response, Data?) {
         var heldFailure: Error?
         while true {
             waiter.semaphore.wait()

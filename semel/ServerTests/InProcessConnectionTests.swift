@@ -86,6 +86,31 @@ final class InProcessConnectionTests: RequestHandlerTestCase {
         XCTAssertTrue(entries.allSatisfy { $0.status == .deleted }, "every file was removed, not only the first part's")
     }
 
+    /// With nothing to overlap, a request sent without waiting is handled before the call
+    /// returns: what it pushed is there for the next request to read before its handle is
+    /// asked, and the handles answer in the order sent.
+    func test_aRequestSentWithoutWaitingIsAnsweredBeforeItReturns() throws {
+        let first  = try connection.sendWithoutWaiting(.daemon(.pushFile(path: "a.c", mode: 0o644)), body: Data("a".utf8))
+        let second = try connection.sendWithoutWaiting(.daemon(.pushFile(path: "a.c", mode: 0o644)), body: Data("a".utf8))
+
+        let (_, bytes) = try connection.send(.daemon(.fetch(fileSystem: .input, path: "a.c")), body: nil)
+
+        XCTAssertEqual(bytes, Data("a".utf8))
+        XCTAssertEqual(try first.reply().0, .daemon(.pushFile(didChange: true)))
+        XCTAssertEqual(try second.reply().0, .daemon(.pushFile(didChange: false)))
+    }
+
+    /// A streamed reply to a request sent without waiting arrives whole, as the whole-reply
+    /// `send` returns it.
+    func test_aStreamedReplySentWithoutWaitingArrivesWhole() throws {
+        let paths = try pushFilesTooManyToNameInOneFrame()
+
+        let pending = try connection.sendWithoutWaiting(.daemon(.remove(pattern: "many/*")), body: nil)
+
+        XCTAssertTrue(try pending.reply().0 == .daemon(.remove(removedFiles: paths, removedFolders: [])),
+                      "the reply is not every path, in order")
+    }
+
     func test_aSmallReplyIsOneFrame() throws {
         _ = try connection.send(.daemon(.pushFile(path: "a.c", mode: 0o644)), body: Data("hi".utf8))
         var partCount = 0
