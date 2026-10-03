@@ -44,6 +44,34 @@ public final class RequestHandler {
     /// parts through `replyStream` as it goes, and what is returned is its last.
     public func handle(_ request: Request, body: Data?, session: Session,
                        replyStream: any ReplyStream) -> (Response, Data?) {
+        handle(prepare(request, body: body), session: session, replyStream: replyStream)
+    }
+
+    /// The part of answering a request that reads no row, done before the request takes
+    /// the queue: a push's bytes are hashed and stored here, on the caller's thread and
+    /// every core, and the queue is handed the hashes. On the queue that would be a tenth
+    /// of what a cold push of a tree costs the one queue every client takes turns on; off
+    /// it, a connection prepares its next request while the queue records the one before
+    /// (`ServerConnection`).
+    func prepare(_ request: Request, body: Data?) -> PreparedRequest {
+        switch request {
+        case .daemon(.pushFiles(let headers)):
+            return PreparedRequest(request: request, body: nil,
+                                   interned: Result { try interned(headers, body: body ?? Data()) })
+        case .daemon(.pushFile(let path, let mode)):
+            let header = PushedFileHeader(path: path, mode: mode, length: body?.count ?? 0)
+            return PreparedRequest(request: request, body: nil,
+                                   interned: Result { try interned([header], body: body ?? Data()) })
+        default:
+            return PreparedRequest(request: request, body: body, interned: nil)
+        }
+    }
+
+    /// Answers a request `prepare` has prepared.
+    func handle(_ prepared: PreparedRequest, session: Session, replyStream: any ReplyStream) -> (Response, Data?) {
+        let request = prepared.request
+        let body    = prepared.body
+
         // A wait observes; it does not mutate. Off the queue so a client waiting for the
         // graph to settle does not hold every other client's commands behind it.
         // It parks the caller's thread, which must therefore not be one of the cooperative pool's — the engine's loop runs there and would have nothing left to settle on.
@@ -52,15 +80,11 @@ public final class RequestHandler {
             return (.daemon(.ok), nil)
         }
 
-        // A push's bytes are hashed and stored here, on the caller's thread and every core,
-        // and the queue is handed the hashes: none of that reads a row, and on the queue it
-        // is a tenth of what a cold push of a tree costs the one queue every client takes
-        // turns on.
-        switch request {
-        case .daemon(.pushFiles(let headers)):
-            return pushFiles(headers, body: body ?? Data())
-        case .daemon(.pushFile(let path, let mode)):
-            return pushFile(PushedFileHeader(path: path, mode: mode, length: body?.count ?? 0), body: body ?? Data())
+        switch (request, prepared.interned) {
+        case (.daemon(.pushFiles), let interned?):
+            return pushFiles(interned)
+        case (.daemon(.pushFile(let path, _)), let interned?):
+            return pushFile(interned, path: path)
         default:
             break
         }
@@ -180,26 +204,27 @@ public final class RequestHandler {
     // MARK: - Push
 
     /// One file: a batch of one, answered as itself.
-    private func pushFile(_ header: PushedFileHeader, body: Data) -> (Response, Data?) {
+    private func pushFile(_ interned: Result<[InternedFile], Error>, path: String) -> (Response, Data?) {
         answering {
-            let files = try interned([header], body: body)
+            let files = try interned.get()
             switch try queue.sync(execute: { try pushFiles(files) }).first {
             case .stored(let didChange):
                 return (.daemon(.pushFile(didChange: didChange)), nil)
             case .failed(let error):
                 return (.error(error), nil)
             case nil:
-                throw HandlerFailure.malformed(description: "\(header.path) was not recorded")
+                throw HandlerFailure.malformed(description: "\(path) was not recorded")
             }
         }
     }
 
-    /// A batch: every file interned off the queue, then recorded on it in order, in one
-    /// turn. A failure to intern is the whole request's — a body the headers do not cut, or
-    /// a store that cannot be written — and a failure to record is that file's alone.
-    private func pushFiles(_ headers: [PushedFileHeader], body: Data) -> (Response, Data?) {
+    /// A batch: every file interned off the queue (`prepare`), then recorded on it in
+    /// order, in one turn. A failure to intern is the whole request's — a body the headers
+    /// do not cut, or a store that cannot be written — and a failure to record is that
+    /// file's alone.
+    private func pushFiles(_ interned: Result<[InternedFile], Error>) -> (Response, Data?) {
         answering {
-            let files = try interned(headers, body: body)
+            let files = try interned.get()
             return (.daemon(.pushFiles(outcomes: try queue.sync(execute: { try pushFiles(files) }))), nil)
         }
     }
@@ -460,4 +485,14 @@ extension CheckFinding.Kind {
         case .graphCouldNotBeRead:   self = .graphCouldNotBeRead
         }
     }
+}
+
+/// A request with what can be done before it takes the handler's queue already done: for a
+/// push, its files hashed and in the object store, or the failure that stopped them.
+struct PreparedRequest {
+    let request:  Request
+    /// Nil for a push, whose bytes are in the store by now.
+    let body:     Data?
+    /// A push's files, interned; nil for any other request.
+    let interned: Result<[InternedFile], Error>?
 }
