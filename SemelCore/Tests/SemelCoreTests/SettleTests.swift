@@ -62,10 +62,16 @@ final class SettleTests: SemelCoreTestCase {
     /// A push marks its folder dirty and asks for a pass through a Task; a waiter that
     /// started before that Task delivered must still see the pass through, not return on
     /// the idle mark the push interrupted.
+    ///
+    /// In a batch, as a request records one, so that the pass is asked for once the push
+    /// is whole: outside one, each mark asks on its own, and a pass the first of them
+    /// woke can fold the folder before the precondition is read.
     func test_waitingAfterAPushSpansThePassThePushAskedFor() async throws {
         await engine.waitUntilIdle()
+        engine.beginBatch()
         try push("src/main.c", contents: "int main(void) { return 0; }")
         XCTAssertFalse(try dirtyManifests().isEmpty, "precondition: the push left a manifest to rebuild")
+        engine.endBatch()
 
         await engine.waitUntilIdle()
 

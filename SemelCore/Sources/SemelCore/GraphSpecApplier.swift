@@ -88,9 +88,21 @@ extension GraphSpecNode {
     ///
     /// Throws `GraphSpecApplierError` for all failure cases; never returns nil.
     public func findOrCreateMatchingNode() throws -> (fromNode: NodeRecord, fromSymbolID: ObjectID?) {
+        try findOrCreateMatchingNode(outputIfCreated: { _ in nil })
+    }
+
+    /// The same, for a caller that knows more about the node it may be making than the
+    /// node's `didCreate` can: what `outputIfCreated` returns for the node this tree
+    /// describes, if it has to be made, is written in place of what `didCreate` says, and
+    /// nil leaves it to `didCreate`. The nodes upstream of it are made as they always are.
+    /// A push is the caller: it makes a file with the metadata it is pushing, and a folder
+    /// on the way to it without the listing it is about to replace.
+    func findOrCreateMatchingNode(outputIfCreated: (any Node) throws -> ProcessOutput?)
+        throws -> (fromNode: NodeRecord, fromSymbolID: ObjectID?) {
         let (table, root) = try GraphSpecTable.applied(tree: self)
         var applier = GraphSpecTableApplier(table: table, database: DatabaseLayer.shared)
-        return (fromNode: try applier.node(identity: root.identity), fromSymbolID: root.outputPort?.asSymbolID())
+        return (fromNode: try applier.node(identity: root.identity, outputIfCreated: outputIfCreated),
+                fromSymbolID: root.outputPort?.asSymbolID())
     }
 }
 
@@ -134,6 +146,12 @@ struct GraphSpecTableApplier {
     /// what keeps find-then-create atomic, since two tasks that both saw nothing and both
     /// inserted would break `Node.identity`'s unique index.
     mutating func node(identity: String) throws -> NodeRecord {
+        try node(identity: identity, outputIfCreated: { _ in nil })
+    }
+
+    /// The node filed under `identity`, found or created, and created with what
+    /// `outputIfCreated` returns for it when that is not nil (`findOrCreateMatchingNode`).
+    mutating func node(identity: String, outputIfCreated: (any Node) throws -> ProcessOutput?) throws -> NodeRecord {
         if let nodeRecord = resolved[identity] {
             return nodeRecord
         }
@@ -151,7 +169,7 @@ struct GraphSpecTableApplier {
                 if let existing = try database.node.select(identity: identity).first {
                     return existing
                 }
-                return try createNode(identity: identity, kind: kind, row: row)
+                return try createNode(identity: identity, kind: kind, row: row, outputIfCreated: outputIfCreated)
             }
         }
         resolved[identity] = nodeRecord
@@ -162,7 +180,8 @@ struct GraphSpecTableApplier {
 
     /// The node first, then its wires, each from its source found or created: the order a
     /// node is created and wired in whichever way the demand arrived.
-    private mutating func createNode(identity: String, kind: UInt, row: GraphSpecTable.Row) throws -> NodeRecord {
+    private mutating func createNode(identity: String, kind: UInt, row: GraphSpecTable.Row,
+                                     outputIfCreated: (any Node) throws -> ProcessOutput?) throws -> NodeRecord {
         let computed = try table.identity(of: row)
         guard computed == identity else {
             throw GraphSpecApplierError.identityMismatch(typeName: row.typeName, filedUnder: identity, computed: computed)
@@ -172,7 +191,8 @@ struct GraphSpecTableApplier {
         let newNode = try NodeRecord.createNode(database: database,
                                                 kind: kind,
                                                 properties: nodeProperties,
-                                                identity: identity)
+                                                identity: identity,
+                                                outputIfCreated: outputIfCreated)
         let newNodeID   = try newNode.requireID()
         let createdNode = try newNode.makeNode()
         let descriptor  = createdNode.descriptor
@@ -237,7 +257,8 @@ private extension NodeRecord {
     /// of one already in the graph is the constraint failing rather than the node found
     /// (B-127). A node is made from a tree, `GraphSpecNode.findOrCreateMatchingNode()`,
     /// wherever it comes from — a formula, a demand, a push, a test.
-    static func createNode(database: DatabaseLayer, kind: UInt, properties: [String: String], identity: String) throws -> NodeRecord {
+    static func createNode(database: DatabaseLayer, kind: UInt, properties: [String: String], identity: String,
+                           outputIfCreated: (any Node) throws -> ProcessOutput?) throws -> NodeRecord {
 
         var nodeRecord = NodeRecord(parentNodeID: nil,
                                     kind: kind,
@@ -295,7 +316,7 @@ private extension NodeRecord {
         // A node that says nothing at creation publishes the state it is in: created, not
         // yet processed. Not an error, so a report passes over it and a graph of fresh nodes
         // does not read as a graph of failures.
-        let output = try node.didCreate() ?? node.buildOutput(reason: .initializing)
+        let output = try outputIfCreated(node) ?? node.didCreate() ?? node.buildOutput(reason: .initializing)
 
         try node.writeToOutputs(output: output)
 

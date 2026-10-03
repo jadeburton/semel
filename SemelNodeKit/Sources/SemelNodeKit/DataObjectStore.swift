@@ -151,14 +151,39 @@ public final class DataObjectStore {
     private var bytesStoredCount = 0
 
     private func noteStored(bytes: Int) {
-        bytesStoredLock.withLock { bytesStoredCount += bytes }
+        bytesStoredLock.withLock {
+            bytesStoredCount += bytes
+            writeCounts.written += 1
+        }
     }
+
+    /// How often this store has been asked to keep an object since it was made: `written`
+    /// for one it did not hold, each a file created on disk, and `touched` for one it held
+    /// already, each a change to that file's modification date. A test observable: what a
+    /// push or a fold costs the store is a count of these, which a test can pin where a
+    /// timing could not be.
+    public struct WriteCounts: Equatable {
+        public var written = 0
+        public var touched = 0
+
+        public init(written: Int = 0, touched: Int = 0) {
+            self.written = written
+            self.touched = touched
+        }
+    }
+
+    public var writes: WriteCounts {
+        bytesStoredLock.withLock { writeCounts }
+    }
+
+    private var writeCounts = WriteCounts()
 
     /// An object interned again is in use again. Its modification date moves to now, so
     /// a collection that began before this intern — and so did not see whichever row is
     /// about to refer to it — leaves it alone by age. That is the one race a collector
     /// walking a snapshot of the graph has, and this is what closes it.
     private func touch(_ url: URL) {
+        bytesStoredLock.withLock { writeCounts.touched += 1 }
         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
     }
 

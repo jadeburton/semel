@@ -109,10 +109,14 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable, File
     /// `fileMetadata`. Returns whether either changed: a file made executable under the same
     /// bytes is a push that changes what a tree or a product built from it holds.
     public func replaceContent(_ content: DataObjectHash, mode: UInt16, symbolicLinkTarget: String? = nil) throws -> Bool {
-        let metadataChanged = try thisNode.writeToOutputPort(Self.fileMetadataOutputPort,
-                                                             value: try Self.metadataValue(mode: mode,
-                                                                                           symbolicLinkTarget: symbolicLinkTarget))
-        let contentChanged = try replaceContentWith(.value(content), notifying: metadataChanged)
+        try replaceContent(content, metadata: try Self.metadataValue(mode: mode, symbolicLinkTarget: symbolicLinkTarget))
+    }
+
+    /// The same, with the metadata document already interned: a push interns it once, for
+    /// the file it may create and for this.
+    func replaceContent(_ content: DataObjectHash, metadata: NodeValue) throws -> Bool {
+        let metadataChanged = try thisNode.writeToOutputPort(Self.fileMetadataOutputPort, value: metadata)
+        let contentChanged  = try replaceContentWith(.value(content), notifying: metadataChanged)
         return contentChanged || metadataChanged
     }
 
@@ -140,8 +144,15 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable, File
     /// file keeps the mode it was last pushed with for the same reason. What reads a mode
     /// reads it beside the bytes, whose state is the one that stops it.
     public func didCreate() throws -> ProcessOutput? {
+        didCreate(metadata: try Self.metadataValue(mode: FileMetadata.defaultMode))
+    }
+
+    /// The same, with the metadata a push is about to give the file: made with it, the file
+    /// has its metadata document interned once, where made with the default and then given
+    /// the push's it was interned twice — the default's touched again on every new file.
+    func didCreate(metadata: NodeValue) -> ProcessOutput {
         .init(outputValues: [Self.outputPort:             .noValue(reason: .initializing),
-                             Self.fileMetadataOutputPort: try Self.metadataValue(mode: FileMetadata.defaultMode)],
+                             Self.fileMetadataOutputPort: metadata],
               inputWireSpecs: [:])
     }
 
@@ -226,13 +237,17 @@ extension StaticFile {
         }
 
         let root = try Folder.inputFileSystem
-        _ = try root.ensureEntirePathExistsAsFolders(relativePath.deletingLastComponent ?? .empty, pinned: true)
+        _ = try root.ensureEntirePathExistsAsFolders(relativePath.deletingLastComponent ?? .empty, pinned: true,
+                                                     forAChild: true)
 
-        let (fromNode, _) = try specNode.findOrCreateMatchingNode()
+        let metadata = try metadataValue(mode: mode, symbolicLinkTarget: symbolicLinkTarget)
+        let (fromNode, _) = try specNode.findOrCreateMatchingNode(outputIfCreated: { node in
+            (node as? StaticFile)?.didCreate(metadata: metadata)
+        })
         guard let staticFile = try fromNode.nodeAsAny() as? StaticFile else {
             throw NodeError.nameCollision(path: fullPath.string, existingKind: fromNode.kind)
         }
-        return try staticFile.replaceContent(try storing(), mode: mode, symbolicLinkTarget: symbolicLinkTarget)
+        return try staticFile.replaceContent(try storing(), metadata: metadata)
     }
 
     /// What one push would leave in the graph, worked out before anything is read.

@@ -104,6 +104,55 @@ final class HeldTreeTests: SemelCoreTestCase {
         }
     }
 
+    /// The same, for a push recorded as a request records one — every file in one
+    /// transaction, a savepoint each — and folded afterwards by the flush, a transaction a
+    /// round and a savepoint a fold: the roots are the disk's.
+    func test_aBatchFoldedByTheTransactionalFlushHoldsTheRootsTheDiskFoldsTo() throws {
+        try frameworkTree()
+        try write("app/Sources/Deep/er/still/file.swift", "let deep = 1\n")
+        try DatabaseLayer.shared.withTransactionPerStep {
+            try push("app", flushing: false)
+        }
+        try Folder.flushDirtyManifests()
+
+        let held = try HeldTree.folderRoots(below: Path("app"))
+        let disk = diskRoots("app")
+        XCTAssertEqual(Set(held.map(\.path.string)), Set(disk.keys))
+        for folder in held {
+            XCTAssertEqual(folder.contentRoot, disk[folder.path.string] ?? nil, folder.path.string)
+        }
+    }
+
+    /// A collection straight after a push and its fold, with no age margin, keeps every
+    /// object the pushed tree refers to — the files, their metadata, each folder's three
+    /// folds and what each content-root document names — and the tree reads back as the
+    /// disk's. A new folder interns nothing of its own before its first fold, so nothing
+    /// a later read needs was left to be superseded.
+    func test_aCollectionAfterAPushKeepsEveryObjectTheTreeRefersTo() throws {
+        try frameworkTree()
+        try push("app")
+
+        _ = try engine.collectUnreferencedObjects(olderThan: -1)
+
+        let store = DataObjectStore.shared
+        for hash in try engine.database.outputPort.selectAllHashes() where !hash.isEmpty {
+            XCTAssertTrue(store.exists(hash: hash), "a port's object \(hash)")
+            // An empty file's line, `hash  mode 644`, reads to the collector as naming
+            // `mode`: an object nothing is filed under, kept or not.
+            for named in BuildEngine.objects(namedByDocument: hash, in: store) where named != "mode" {
+                XCTAssertTrue(store.exists(hash: named), "an object a document names, \(named)")
+            }
+        }
+        let disk = diskRoots("app")
+        for folder in try HeldTree.folderRoots(below: Path("app")) {
+            XCTAssertEqual(folder.contentRoot, disk[folder.path.string] ?? nil, folder.path.string)
+            let record = try XCTUnwrap(try Folder.inputFileSystem.childNode(path: folder.path))
+            for port in [Folder.folderManifestOutputPort, Folder.subtreeManifestOutputPort] {
+                XCTAssertNoThrow(try record.readFromOutputPort(port).expectValue().resolve(), "\(folder.path) \(port)")
+            }
+        }
+    }
+
     /// Three queries of the graph for the roots, whatever the size of the tree: a folder's
     /// path, the folders below it with their ports, and the dot-named files they hold.
     func test_theRootsCostThreeNodeSelectsHoweverLargeTheTree() throws {

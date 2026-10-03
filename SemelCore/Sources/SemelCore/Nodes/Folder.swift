@@ -72,9 +72,36 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest(of: []).toJSON().intern()),
                              Self.contentRootOutputPort: .value(try buildContentRootDocument(of: []).intern()),
                              Self.subtreeManifestOutputPort: .value(try FolderSubtreeManifest(entries: []).toJSON().intern()),
-                             Self.pinnedOutputPort: try canBePinned() ? .noValue(reason: .initializing) : .value(""), // HACK
+                             Self.pinnedOutputPort: try initialPinnedValue(),
                              Self.symbolicLinkOutputPort: Self.notASymbolicLink],
               inputWireSpecs: [:])
+    }
+
+    /// What a folder made on the way to something placed below it is created with
+    /// (`ensureEntirePathExistsAsFolders`): its three folds in the state of values nobody
+    /// has produced yet. A push and a node's placement make every folder on the way and
+    /// give each its child at once, and the empty listing `didCreate` writes would be a
+    /// document stored per folder — named by the folder's path, so one of its own each —
+    /// for the next pass to replace before anything read it.
+    ///
+    /// The child marks the folder as it is placed (`onChildAdded`), in the same
+    /// transaction where a push is one, and from then on nothing reads one of these
+    /// states: a read of the port flushes a marked folder first, so it is handed the fold
+    /// as it would have been; a node wired to a folder is processed only after the flush
+    /// that starts every selection; a fold of the folder above runs after this one, which
+    /// is deeper; and a push comparing roots (B-132) takes no root of a marked folder or
+    /// of any folder above one.
+    func didCreateOnTheWayToAChild() throws -> ProcessOutput {
+        .init(outputValues: [Self.folderManifestOutputPort:   .noValue(reason: .initializing),
+                             Self.contentRootOutputPort:      .noValue(reason: .initializing),
+                             Self.subtreeManifestOutputPort:  .noValue(reason: .initializing),
+                             Self.pinnedOutputPort:           try initialPinnedValue(),
+                             Self.symbolicLinkOutputPort:     Self.notASymbolicLink],
+              inputWireSpecs: [:])
+    }
+
+    private func initialPinnedValue() throws -> NodeValue {
+        try canBePinned() ? .noValue(reason: .initializing) : .value("") // HACK
     }
 
     /// What `symbolicLink` holds for a folder that is not a link.
@@ -327,47 +354,136 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// A collected folder marks its parent, and a root or a subtree manifest that moved
     /// marks the folder above, so the marks are drained in rounds until none is left; the
     /// rounds walk up the tree and there are at most as many as it is deep.
+    ///
+    /// The flush is one transaction. A fold reads a dozen statements and writes a few rows,
+    /// and outside a transaction every one of those reads is a `DatabaseQueue.read`, whose
+    /// `PRAGMA query_only` expires every prepared statement on the connection, and every
+    /// write is a commit of its own: a flush outside one spent a quarter of its database
+    /// time preparing statements again. Measured on a cold push of 4,530 files, a
+    /// transaction per round of the flush and one per fold each folded the tree more
+    /// slowly than one for the whole flush (1.8 s and 2.0 s against 1.5 s, medians of
+    /// five), so a request waiting on the queue waits for the flush, as it would for any
+    /// other write of that size, and a reader sees the flush whole or not at all.
+    ///
+    /// Each fold is a savepoint inside it, so a fold that throws leaves its mark and
+    /// publishes nothing — not the manifest without the root, and not the mark cleared
+    /// over a value nobody folded. The folds beside it commit; its own is said and tried
+    /// again on the next pass, and not again in this flush, whose rounds would otherwise
+    /// meet the same mark for ever. Only the machine's failures — a full disk, a damaged
+    /// database — leave the flush.
     @discardableResult
     static func flushDirtyManifests() throws -> Int {
-        let database: DatabaseLayer = DatabaseLayer.shared
-        var flushed = 0
-        while true {
-            let manifestKeys    = try database.metadata.selectKeys(withPrefix: manifestDirtyKeyPrefix)
-            let contentRootKeys = try database.metadata.selectKeys(withPrefix: contentRootDirtyKeyPrefix)
-            let subtreeKeys     = try database.metadata.selectKeys(withPrefix: subtreeManifestDirtyKeyPrefix)
-            guard !manifestKeys.isEmpty || !contentRootKeys.isEmpty || !subtreeKeys.isEmpty else {
-                return flushed
+        try DatabaseLayer.shared.withTransaction {
+            var flushed = 0
+            var refused = Set<String>()
+            while true {
+                let round = try flushRound(refusing: refused)
+                flushed += round.manifestsRebuilt
+                refused.formUnion(round.refused)
+                guard round.foundMarks else {
+                    return flushed
+                }
             }
+        }
+    }
 
-            for key in manifestKeys {
-                guard let nodeID = ObjectID(key.dropFirst(manifestDirtyKeyPrefix.count)),
-                      let folder = try markedFolder(nodeID: nodeID, clearing: key) else {
-                    continue
+    /// What one round of the flush did.
+    private struct FlushRound {
+        var foundMarks       = false
+        var manifestsRebuilt = 0
+        /// The marks whose fold threw in this round, left in place.
+        var refused          = Set<String>()
+    }
+
+    /// One round: every mark there is, less those already refused in this flush, folded
+    /// deepest folder first.
+    ///
+    /// Deepest first because a root or a subtree manifest that moves marks the folder
+    /// above, and a folder folded before its marked subfolders folds them as they were and
+    /// is folded again in the next round, over what they became — once per round per level
+    /// below it, each fold a document written to the object store. Below-first, the mark a
+    /// subfolder leaves on its parent is one the parent's own fold in this round clears,
+    /// having read what the subfolder published: a push of a new tree is folded once per
+    /// folder, however deep.
+    private static func flushRound(refusing refused: Set<String>) throws -> FlushRound {
+        var round = FlushRound()
+        let manifestMarks    = try deepestFirst(marked: manifestDirtyKeyPrefix, refusing: refused)
+        let contentRootMarks = try deepestFirst(marked: contentRootDirtyKeyPrefix, refusing: refused)
+        let subtreeMarks     = try deepestFirst(marked: subtreeManifestDirtyKeyPrefix, refusing: refused)
+        guard !manifestMarks.isEmpty || !contentRootMarks.isEmpty || !subtreeMarks.isEmpty else {
+            return round
+        }
+        round.foundMarks = true
+
+        for mark in manifestMarks {
+            let rebuilt = try foldAlone(mark, refused: &round.refused) {
+                guard let folder = try markedFolder(nodeID: mark.nodeID, clearing: mark.key) else {
+                    return false
                 }
                 guard try !folder.isAbandoned() else {
                     try folder.delete()
-                    continue
+                    return false
                 }
                 try folder.refreshManifest()
-                flushed += 1
+                return true
             }
+            if rebuilt == true {
+                round.manifestsRebuilt += 1
+            }
+        }
 
-            // After the manifests, so that a folder its last child took with it is gone by
-            // the time its root would have been recomputed.
-            for key in contentRootKeys {
-                guard let nodeID = ObjectID(key.dropFirst(contentRootDirtyKeyPrefix.count)) else {
-                    continue
-                }
-                try refreshMarkedContentRoot(nodeID: nodeID, clearing: key)
+        // After the manifests, so that a folder its last child took with it is gone by
+        // the time its root would have been recomputed.
+        for mark in contentRootMarks {
+            _ = try foldAlone(mark, refused: &round.refused) {
+                try markedFolder(nodeID: mark.nodeID, clearing: mark.key)?.refreshContentRoot()
             }
+        }
 
-            for key in subtreeKeys {
-                guard let nodeID = ObjectID(key.dropFirst(subtreeManifestDirtyKeyPrefix.count)),
-                      let folder = try markedFolder(nodeID: nodeID, clearing: key) else {
-                    continue
-                }
-                try folder.refreshSubtreeManifest()
+        for mark in subtreeMarks {
+            _ = try foldAlone(mark, refused: &round.refused) {
+                try markedFolder(nodeID: mark.nodeID, clearing: mark.key)?.refreshSubtreeManifest()
             }
+        }
+        return round
+    }
+
+    /// One mark: its key, the folder it names, and how deep that folder is.
+    private struct Mark {
+        let key:    String
+        let nodeID: ObjectID
+        let depth:  Int
+    }
+
+    /// The marks under `prefix`, less `refused`, deepest folder first and by node id within
+    /// a depth. A mark naming a folder that has been collected since sorts last, where
+    /// `markedFolder` clears it.
+    private static func deepestFirst(marked prefix: String, refusing refused: Set<String>) throws -> [Mark] {
+        let database: DatabaseLayer = DatabaseLayer.shared
+        var marks: [Mark] = []
+        for key in try database.metadata.selectKeys(withPrefix: prefix) where !refused.contains(key) {
+            guard let nodeID = ObjectID(key.dropFirst(prefix.count)) else {
+                continue
+            }
+            let path  = try database.node.find(nodeID: nodeID)?.properties[pathProperty]
+            marks.append(Mark(key: key, nodeID: nodeID, depth: path.map { Path($0).count } ?? -1))
+        }
+        return marks.sorted { ($0.depth, $1.nodeID) > ($1.depth, $0.nodeID) }
+    }
+
+    /// Runs one fold in a savepoint of its own. A fold that throws is undone, its mark with
+    /// it, and is said and added to `refused`; nil is what it returns then. A failure of
+    /// the machine is not caught.
+    private static func foldAlone<Outcome>(_ mark: Mark, refused: inout Set<String>,
+                                           _ fold: () throws -> Outcome) throws -> Outcome? {
+        do {
+            return try DatabaseLayer.shared.withSavepoint(fold)
+        } catch let error as any UnrecoverableError {
+            throw error
+        } catch {
+            refused.insert(mark.key)
+            Debug.warn("the fold marked \(mark.key) failed and stays marked for the next pass: \(error)")
+            return nil
         }
     }
 
@@ -390,61 +506,63 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// A read rebuilds; it never collects, since the caller is about to read the port of
     /// the node it would delete. A folder whose last child has gone is marked again
     /// instead, and the next pass collects it.
+    ///
+    /// In a savepoint, as each fold of the flush is: a rebuild that throws leaves the
+    /// mark, and the reader's error, rather than a cleared mark over the old manifest.
     static func flushManifestIfDirty(nodeID: ObjectID) throws {
         let database: DatabaseLayer = DatabaseLayer.shared
         let key = manifestDirtyKey(nodeID)
         guard try database.metadata.select(key: key) != nil else {
             return
         }
-        try database.metadata.delete(key: key)
-        guard let folder = try database.node.select(nodeID: nodeID).makeNode() as? Folder else {
-            return
-        }
-        try folder.refreshManifest()
-        if try folder.isAbandoned() {
-            try folder.markManifestDirty()
+        try database.withSavepoint {
+            try database.metadata.delete(key: key)
+            guard let folder = try database.node.select(nodeID: nodeID).makeNode() as? Folder else {
+                return
+            }
+            try folder.refreshManifest()
+            if try folder.isAbandoned() {
+                try folder.markManifestDirty()
+            }
         }
     }
 
     /// Recomputes one folder's content root if it is marked, on the way into a direct read
     /// of that port. The folder's own children, not the tree below it: a read that walked
     /// down would be O(tree), which is the cost the marks exist to avoid.
+    ///
+    /// The mark is cleared, the root folded and the folder above marked when the root
+    /// moved in one savepoint, so that no reader sees the mark gone before the mark above
+    /// it is written. Between the two, the folder above would hold a stale root with
+    /// nothing saying so, and a push comparing roots (B-132) would take it for current and
+    /// send nothing for a change the graph has not folded in yet.
     static func flushContentRootIfDirty(nodeID: ObjectID) throws {
+        let database: DatabaseLayer = DatabaseLayer.shared
         let key = contentRootDirtyKey(nodeID)
-        guard try DatabaseLayer.shared.metadata.select(key: key) != nil else {
+        guard try database.metadata.select(key: key) != nil else {
             return
         }
-        try refreshMarkedContentRoot(nodeID: nodeID, clearing: key)
-    }
-
-    /// Clears one folder's root mark, folds its root again, and marks the folder above
-    /// when the root moved — in one transaction, so that no reader sees the mark gone
-    /// before the mark above it is written. Between the two, the folder above would hold a
-    /// stale root with nothing saying so, and a push comparing roots (B-132) would take it
-    /// for current and send nothing for a change the graph has not folded in yet.
-    private static func refreshMarkedContentRoot(nodeID: ObjectID, clearing key: String) throws {
-        try DatabaseLayer.shared.withTransaction {
-            guard let folder = try markedFolder(nodeID: nodeID, clearing: key) else {
-                return
-            }
-            try folder.refreshContentRoot()
+        try database.withSavepoint {
+            try markedFolder(nodeID: nodeID, clearing: key)?.refreshContentRoot()
         }
     }
 
     /// Refolds one folder's subtree manifest if it is marked, on the way into a direct read
     /// of that port: the folder's own children, as `flushContentRootIfDirty` reads, and for
-    /// the same reason.
+    /// the same reason; in a savepoint, as that one is.
     static func flushSubtreeManifestIfDirty(nodeID: ObjectID) throws {
         let database: DatabaseLayer = DatabaseLayer.shared
         let key = subtreeManifestDirtyKey(nodeID)
         guard try database.metadata.select(key: key) != nil else {
             return
         }
-        try database.metadata.delete(key: key)
-        guard let folder = try database.node.select(nodeID: nodeID).makeNode() as? Folder else {
-            return
+        try database.withSavepoint {
+            try database.metadata.delete(key: key)
+            guard let folder = try database.node.select(nodeID: nodeID).makeNode() as? Folder else {
+                return
+            }
+            try folder.refreshSubtreeManifest()
         }
-        try folder.refreshSubtreeManifest()
     }
 
     public func onChildAdded(nodeID: ObjectID) throws {
