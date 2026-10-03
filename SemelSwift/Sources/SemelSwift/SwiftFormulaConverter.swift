@@ -927,11 +927,13 @@ struct SwiftFormulaConverter: Node {
     // beside it records the folder's content root, and a copy folding to anything else
     // stops the build (B-06, `DependencyLockCheck`).
     //
-    // ISSUE: a sourceControl or registry dependency's version requirement is not checked
-    // against the vendored copy.  Nothing here can read a version out of a bare source
-    // tree, so a manifest asking for `from: "7.11.1"` builds against whatever was vendored.
-    // The lock records the version `prepare` resolved, but only records it: SwiftPM chose
-    // it against the requirement, and a lock written by hand says whatever its writer said.
+    // What is not checked, by decision, is the requirement: a manifest asking for
+    // `from: "7.11.1"` builds against whatever `Dependencies/<identity>` holds. Which
+    // version a copy should be is a package manager's question, and the package manager
+    // here is `semel-swift prepare`, which runs SwiftPM's resolution outside the engine
+    // and writes the copies and their locks. The engine builds the files it was pushed;
+    // the lock records the version `prepare` chose so that a person, and `prepare`, can
+    // tell when a pin has moved (B-138).
     private struct AnySPMDependency: Decodable {
         let dependencies: [SPMPackageDependency]
 
