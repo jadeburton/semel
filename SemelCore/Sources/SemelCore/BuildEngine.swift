@@ -160,7 +160,7 @@ public final class BuildEngine {
             if batchLock.withLock({ stopRequested }) {
                 // Leave every waiter with a settled answer before going: the stop counted
                 // as a wake-up and was consumed just above, so they return.
-                await idle.markIdle()
+                await idle.markIdle(settledThrough: wakeUpsConsumed)
                 batchLock.withLock { loopIsRunning = false }
                 return
             }
@@ -192,7 +192,7 @@ public final class BuildEngine {
             // objects being interned are a client's pushes, which the age margin covers.
             collectObjectsIfDue()
 
-            await idle.markIdle()
+            await idle.markIdle(settledThrough: wakeUpsConsumed)
             await workSignal.wait()
         }
     }
@@ -225,14 +225,22 @@ public final class BuildEngine {
     /// be marked idle with no signal pending, and a waiter let through there would report
     /// a build that had not started. Each idle mark carries a generation, so a waiter that
     /// finds a request outstanding waits for the *next* mark rather than the current one.
+    ///
+    /// What a mark is compared with is the count of wake-ups it settled, carried by the
+    /// mark itself, never the loop's count as it stands when the waiter looks (B-139). The
+    /// mark is read in the idle actor and the count under a lock, and between the two the
+    /// loop can wake, mark itself busy and take every wake-up outstanding: a waiter
+    /// comparing with that count found a request answered by a pass that had not yet run,
+    /// and returned before the push it was waiting for was folded.
     public func waitUntilIdle() async {
         guard batchLock.withLock({ loopIsRunning }) else {
             return
         }
         var seen = -1
         while true {
-            seen = await idle.awaitIdle(newerThan: seen)
-            if everyWakeUpIsConsumed {
+            let mark = await idle.awaitIdle(newerThan: seen)
+            seen = mark.generation
+            if wakeUpsRequested == mark.settledThrough {
                 return
             }
         }
@@ -740,8 +748,10 @@ public final class BuildEngine {
         batchLock.withLock { wakeUpsRequestedCount }
     }
 
-    private var everyWakeUpIsConsumed: Bool {
-        batchLock.withLock { wakeUpsRequestedCount == wakeUpsConsumedCount }
+    /// How many wake-ups the loop had taken when its current pass began, and so how many
+    /// the passes before its next idle mark answer.
+    private var wakeUpsConsumed: Int {
+        batchLock.withLock { wakeUpsConsumedCount }
     }
 
     private func consumeWakeUps() {
@@ -1141,17 +1151,25 @@ extension BuildEngine {
 /// every idle mark so a waiter can ask for a mark newer than one it has already judged.
 private actor IdleState {
 
+    /// One idle mark: its generation, and how many wake-ups the passes before it answered.
+    struct Mark {
+        let generation:     Int
+        let settledThrough: Int
+    }
+
     private var isIdle = false
     private var generation = 0
+    private var settledThrough = 0
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
     func markBusy() {
         isIdle = false
     }
 
-    func markIdle() {
+    func markIdle(settledThrough wakeUps: Int) {
         isIdle = true
         generation += 1
+        settledThrough = wakeUps
         let resumed = waiters
         waiters = []
         for waiter in resumed {
@@ -1159,15 +1177,15 @@ private actor IdleState {
         }
     }
 
-    /// Returns the current generation once the loop is idle at a generation newer than
-    /// `seen` — at once if it already is, otherwise after the next idle mark.
-    func awaitIdle(newerThan seen: Int) async -> Int {
+    /// Returns the current mark once the loop is idle at a generation newer than `seen` —
+    /// at once if it already is, otherwise after the next idle mark.
+    func awaitIdle(newerThan seen: Int) async -> Mark {
         while !(isIdle && generation > seen) {
             await withCheckedContinuation { continuation in
                 waiters.append(continuation)
             }
         }
-        return generation
+        return Mark(generation: generation, settledThrough: settledThrough)
     }
 }
 

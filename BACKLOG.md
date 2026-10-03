@@ -292,6 +292,26 @@ engine, GRDB's decoding and the object store, as the table above lists them.
 
 ## Design, correctness and code quality
 
+**B-139** `done` — **`wait` could return before the pass a push asked for had run.**
+Found 2026-10-04: `SettleTests.test_aWaiterNeverSlipsBetweenTheWakeUpAndThePassItAsksFor`
+failed on `main` about one run in three at a load average of 6 (`round 146: the wait
+returned before the pass ran`). The cause is in `BuildEngine.waitUntilIdle`, not in the
+test: a waiter took the loop's idle mark from the `IdleState` actor and then compared the
+wake-ups requested with the loop's count of those consumed, read under a lock, and the two
+reads were not one. Between them the loop could take the push's signal, mark itself busy
+and consume every wake-up outstanding — B-128 put the busy mark before the consumption,
+which closes the window on the loop's side and not on the waiter's. The waiter then found
+every request consumed, by a pass that had not run, and returned with the push's folder
+still marked: a `build` waiting there could export against manifests not yet folded. An
+idle mark now carries the count of wake-ups its passes answered, and a waiter compares
+with that (`IdleState.Mark.settledThrough`), so what it judges is what the mark it holds
+settled, whatever the loop has done since. Not caused by #160: the window is between two
+reads in the waiter, and folding a new folder later or sooner moves neither; a cheaper
+push brings the batch's end and the wait closer together, which can only make the loop's
+wake-up land in it more often. Not reproduced on demand: the interleaving needs the
+waiter's task descheduled between its two reads, and the test's 200 rounds are the
+regression check.
+
 **B-133** `open` `For Fable Only` — **A subgraph that rewires itself without converging looks,
 from the prompt, like one still working; and a path a vendored package lacks reads as a
 lock mismatch.**
