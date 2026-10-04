@@ -109,7 +109,7 @@ extension CommandContext {
     /// becomes a thrown `ServerError`; any other kind of reply is a protocol bug.
     func request(_ request: DaemonRequest, body: Data? = nil) throws -> (DaemonResponse, Data?) {
         let (response, replyBody) = try connection.send(.daemon(request), body: body)
-        return (try daemonReply(response), replyBody)
+        return (try response.daemonReply(), replyBody)
     }
 
     /// `request`, for a reply that may stream (B-137): each part is handed to `onPart` as it
@@ -124,20 +124,14 @@ extension CommandContext {
             }
             try onPart(daemonPart)
         }
-        return (try daemonReply(response), replyBody)
+        return (try response.daemonReply(), replyBody)
     }
 
-    /// A server-reported failure becomes a thrown `ServerError`; any other kind of reply is
-    /// a protocol bug.
-    private func daemonReply(_ response: Response) throws -> DaemonResponse {
-        switch response {
-        case .daemon(let daemonResponse):
-            return daemonResponse
-        case .error(let error):
-            throw ServerError(response: error)
-        case .hello:
-            throw ServerError(response: .malformedRequest(description: "a hello reply to a daemon request"))
-        }
+    /// `request`, without waiting for the reply: what returns is collected later, as
+    /// `request` would have returned it. For a command with work of its own to do while the
+    /// server answers — a push reading its next files from disk.
+    func requestWithoutWaiting(_ request: DaemonRequest, body: Data? = nil) throws -> PendingDaemonReply {
+        PendingDaemonReply(pending: try connection.sendWithoutWaiting(.daemon(request), body: body))
     }
 
     /// Resolves a user-supplied path string relative to `base`, handling `..` and `.`.
@@ -172,6 +166,34 @@ extension CommandContext {
         }
         running.process.stop()
         outputMessage("Stopped watching \(running.folder).")
+    }
+}
+
+/// A daemon request sent without waiting (`requestWithoutWaiting`). `reply()` blocks for
+/// the reply and returns it as `request` would have: a failure the server reported is a
+/// thrown `ServerError`.
+struct PendingDaemonReply {
+    let pending: PendingReply
+
+    func reply() throws -> (DaemonResponse, Data?) {
+        let (response, replyBody) = try pending.reply()
+        return (try response.daemonReply(), replyBody)
+    }
+}
+
+extension Response {
+
+    /// A server-reported failure becomes a thrown `ServerError`; any other kind of reply is
+    /// a protocol bug.
+    fileprivate func daemonReply() throws -> DaemonResponse {
+        switch self {
+        case .daemon(let daemonResponse):
+            return daemonResponse
+        case .error(let error):
+            throw ServerError(response: error)
+        case .hello:
+            throw ServerError(response: .malformedRequest(description: "a hello reply to a daemon request"))
+        }
     }
 }
 

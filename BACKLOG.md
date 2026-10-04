@@ -261,6 +261,34 @@ The settle after a push folds each marked folder once, as before, outside a tran
 where every read expires the cached statements (GRDB's `PRAGMA query_only`), so the flush
 prepares as often as it did; folding in one transaction would keep them prepared.
 
+Measured 2026-10-04 on the same four trees assembled again — this repository as `git archive`
+exports it at `2b37367`, the other three less `.git` — 4,537 files pushed, release binaries,
+a fresh home per push, `main` at `2b37367`. A `sample` of `main`'s server put the request
+queue recording batches 65% of the push, the connection cutting and hashing the next batch
+12% (on the connection's thread, before the queue, and so after the batch before it had been
+recorded), and nothing at all 23%. A `sample` of the client put it waiting for replies nine
+tenths of the push and reading files a twentieth. So two changes: the client keeps
+`FilePlugin.batchesInFlight` batches sent ahead of their replies (`sendWithoutWaiting`), and
+collects the replies in order; and a server connection prepares a request — a push's files
+hashed and stored — on a queue of its own, ahead of the queue that hands requests to the
+handler in arrival order, so batch k+1 is hashed while batch k is recorded. The client half
+alone gave 3.9 s and an idle queue 18% of the push. Alternated, six rounds each, load
+average 5–7:
+
+| cold push, 4,537 files | `main` | one in flight | two in flight | three in flight |
+|---|---|---|---|---|
+| wall time, median of six (best) | 4.03 s (3.97 s) | 3.91 s (3.83 s) | 3.44 s (3.38 s) | 3.54 s (3.35 s) |
+| wall time, the two quietest rounds (load 5.0–5.9) | 3.98 s, 3.99 s | 3.83 s, 3.91 s | 3.63 s, 3.46 s | 4.92 s, 3.61 s |
+| server CPU time per push, median | 6.2 s | 6.1 s | 6.0 s | 6.0 s |
+| files per second, median | 1,126 | 1,160 | 1,319 | 1,282 |
+| request queue recording, of the push (one sampled push) | 65% | | 84% | |
+
+Two it is: three is no faster and holds another 8 MB in flight. One in flight reads the next
+batch during the last but still hashes it after, which is why it barely moves. What the queue
+does not record now (16%) is mostly before the first batch: the client starting, asking for
+the roots and folding the disk (about a tenth of the push). Recording is the push now: the
+engine, GRDB's decoding and the object store, as the table above lists them.
+
 
 ## Design, correctness and code quality
 

@@ -272,6 +272,66 @@ final class ServerTests: RequestHandlerTestCase {
         XCTAssertEqual(events, [.daemon(.notice(line: "output:/app: written"))])
     }
 
+    // MARK: - Requests in flight
+
+    /// Pushes sent without waiting and a `wait` behind them: the wait is answered from a
+    /// thread of its own, but only once the connection has handled the pushes ahead of it,
+    /// so by its reply every one of them is recorded — whichever reply is collected first.
+    func test_aWaitSentBehindPushesInFlightAnswersAfterTheyAreRecorded() throws {
+        try withLiveServer { socketPath, _ in
+            let client = try SocketConnection.connect(to: socketPath)
+            let pushes = try (0..<3).map { index in
+                try client.sendWithoutWaiting(.daemon(.pushFile(path: "p\(index).c", mode: 0o644)), body: Data("\(index)".utf8))
+            }
+            let waited = try client.sendWithoutWaiting(.daemon(.wait), body: nil)
+
+            XCTAssertEqual(try waited.reply().0, .daemon(.ok))
+            let observer = try SocketConnection.connect(to: socketPath)
+            guard case .daemon(.list(let entries)) = try observer.send(.daemon(.list(fileSystem: .input, pattern: "*.c")),
+                                                                       body: nil).0 else {
+                return XCTFail("expected a listing")
+            }
+            XCTAssertEqual(entries.map(\.path), ["p0.c", "p1.c", "p2.c"])
+            for push in pushes {
+                XCTAssertEqual(try push.reply().0, .daemon(.pushFile(didChange: true)))
+            }
+        }
+    }
+
+    /// A push of a tree over the socket, several batches in flight, one file in the middle
+    /// refused by the graph (it is below `tree/m/k`, which the server holds as a file): the
+    /// refusal is reported against that file, and every other file is stored.
+    func test_aPushWithBatchesInFlightReportsARefusalAgainstItsFile() throws {
+        let disk = directory.appendingPathComponent("disk", isDirectory: true)
+        var paths = ["tree/m/k/inner.c"]
+        for index in 0..<100 {
+            paths.append("tree/a/file\(String(format: "%03d", index)).c")
+            paths.append("tree/z/file\(String(format: "%03d", index)).c")
+        }
+        for path in paths {
+            let url = disk.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(path.utf8).write(to: url)
+        }
+        let client = try connect()
+        _ = try daemon(client, .pushFile(path: "tree/m/k", mode: 0o644), body: Data("a file".utf8))
+
+        let interpreter = CommandInterpreter(connection: client, baseDirectory: disk.path)
+        var lines: [String] = []
+        interpreter.output = { lines.append($0) }
+        _ = try interpreter.connect(subscribing: false)
+        interpreter.handleCommand("push tree")
+
+        let refusals = lines.filter { $0.hasPrefix("push: ") }
+        XCTAssertEqual(refusals.count, 1, "\(lines)")
+        XCTAssertTrue(refusals.first?.hasPrefix("push: tree/m/k/inner.c: ") == true, "\(refusals)")
+        // Every file but the refused one; how many folders the push names depends on which
+        // the earlier push of `tree/m/k` left pinned, which is not what this pins.
+        XCTAssertTrue(lines.contains { $0.hasPrefix("Pushed 200 files and ") }, "\(lines)")
+        XCTAssertEqual(try daemon(client, .fetch(fileSystem: .input, path: "tree/z/file099.c")).1,
+                       Data("tree/z/file099.c".utf8))
+    }
+
     // MARK: - Sessions
 
     func test_aClientThatVanishesMidBatchLeavesNoBatchOpen() throws {
@@ -348,6 +408,26 @@ final class ServerTests: RequestHandlerTestCase {
 
             wait(for: [parked], timeout: 1)
             _ = try daemon(holder, .endBatch)
+            wait(for: [released], timeout: 5)
+        }
+    }
+
+    /// A client that opens a batch and a push without waiting for either and goes at once:
+    /// its session is ended behind the requests it sent, not in front of them, so no batch
+    /// is left open and another client's wait settles.
+    func test_aClientThatGoesWithRequestsInFlightLeavesNoBatchOpen() throws {
+        try withLiveServer { socketPath, _ in
+            let leaver = try SocketConnection.connect(to: socketPath)
+            _ = try leaver.sendWithoutWaiting(.daemon(.beginBatch), body: nil)
+            _ = try leaver.sendWithoutWaiting(.daemon(.pushFile(path: "left.c", mode: 0o644)), body: Data("int left;".utf8))
+            leaver.close()
+
+            let waiter   = try SocketConnection.connect(to: socketPath)
+            let released = expectation(description: "the wait returned")
+            DispatchQueue.global().async {
+                _ = try? self.daemon(waiter, .wait)
+                released.fulfill()
+            }
             wait(for: [released], timeout: 5)
         }
     }

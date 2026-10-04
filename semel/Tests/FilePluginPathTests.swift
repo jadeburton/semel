@@ -90,7 +90,7 @@ final class FilePluginPathTests: XCTestCase {
                       "expected a not-found error, got \(context.allOutput)")
     }
 
-    // The matcher lists a file, then pushOne reads it. Anything can happen in between —
+    // The matcher lists a file, then the push reads it. Anything can happen in between —
     // and the read result was force-unwrapped, so a permission change or a deleted file
     // took the whole process down.
     func test_push_reportsAnUnreadableFileInsteadOfCrashing() throws {

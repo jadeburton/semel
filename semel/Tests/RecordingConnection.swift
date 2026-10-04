@@ -32,6 +32,36 @@ final class RecordingConnection: SemelConnection {
     func send(_ request: Request, body: Data?, onPart: (Response) throws -> Void) throws -> (Response, Data?) {
         orderLog?.record("send")
         requests.append((request, body))
+        return try serve(onPart: onPart)
+    }
+
+    /// When set, a request sent without waiting is answered only when its reply is
+    /// collected, as a server busy with the requests before it answers: so a test can see
+    /// how far ahead of its replies a command sends. Otherwise it is answered at once, as
+    /// the protocol's default does.
+    var answersWhenCollected = false
+    /// Requests sent without waiting and not yet collected, and the most there ever were.
+    private(set) var outstanding = 0
+    private(set) var mostOutstanding = 0
+
+    func sendWithoutWaiting(_ request: Request, body: Data?) throws -> PendingReply {
+        guard answersWhenCollected else {
+            return PendingReply(answered: Result { try send(request, body: body) })
+        }
+        orderLog?.record("send")
+        requests.append((request, body))
+        outstanding += 1
+        mostOutstanding = max(mostOutstanding, outstanding)
+        return PendingReply(collecting: { [self] in
+            orderLog?.record("collect")
+            outstanding -= 1
+            return serve(onPart: { _ in })
+        })
+    }
+
+    /// The next scripted reply, its parts handed to `onPart` first; `ok` once the script
+    /// has run out.
+    private func serve(onPart: (Response) throws -> Void) rethrows -> (Response, Data?) {
         guard !responses.isEmpty else {
             return (.daemon(.ok), nil)
         }

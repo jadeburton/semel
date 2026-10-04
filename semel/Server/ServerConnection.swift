@@ -1,11 +1,14 @@
 // ServerConnection.swift
 // SemelServer
 //
-// One client. A serial queue of its own, a FrameStream, a Session, and the shared handler.
-// Each request frame becomes one handler call on this queue — a `wait`, which blocks until
-// the graph settles, on a thread of its own — and one reply frame back on the same stream,
-// so replies leave in request order; events from the registry go out on the same stream
-// and so cannot interleave with a reply.
+// One client. A FrameStream, a Session, the shared handler, and three serial queues of its
+// own: the stream's, which reads frames in and writes replies and events out; one that
+// prepares each request (`RequestHandler.prepare`, a push's files hashed and stored); and
+// one that hands each prepared request to the handler, in the order the frames arrived —
+// a `wait`, which blocks until the graph settles, on a thread of its own. A client with
+// several pushes in flight has the next one prepared while the handler records the one
+// before. Each request gets one reply frame back on the same stream, and events from the
+// registry go out on that stream too, so they cannot interleave with a reply.
 
 import Foundation
 import Network
@@ -16,23 +19,27 @@ final class ServerConnection {
 
     let session = Session()
 
-    /// Called on the connection's queue once, after the peer is gone and the session ended.
+    /// Called on the handling queue once, after the peer is gone, every request received
+    /// before has been handled, and the session ended.
     var onClose: ((ServerConnection) -> Void)?
 
     private let stream: FrameStream
     private let handler: RequestHandler
-    private let queue: DispatchQueue
+    private let preparing: DispatchQueue
+    private let handling: DispatchQueue
+    /// On `handling`.
     private var finished = false
 
-    /// The queue named by `label` is a plain dispatch queue: every request but `wait` is
-    /// handled on it, and the events to this client leave through it, which is why a
-    /// `wait` is handled on a thread of its own (`receive`).
+    /// The queue named by `label` is the stream's: frames are read on it and replies and
+    /// events leave through it, so nothing that waits runs there. A request is prepared on
+    /// the queue after it and handled on the one after that.
     init(connection: NWConnection, handler: RequestHandler, label: String) {
-        self.handler = handler
-        self.queue   = DispatchQueue(label: label)
-        self.stream  = FrameStream(connection: connection, queue: queue)
+        self.handler   = handler
+        self.preparing = DispatchQueue(label: label + ".preparing")
+        self.handling  = DispatchQueue(label: label + ".handling")
+        self.stream    = FrameStream(connection: connection, queue: DispatchQueue(label: label))
         stream.onFrame = { [weak self] frame in self?.receive(frame) }
-        stream.onClose = { [weak self] _ in self?.finish() }
+        stream.onClose = { [weak self] _ in self?.afterRequestsReceived { $0.finish() } }
     }
 
     func start() {
@@ -41,7 +48,16 @@ final class ServerConnection {
 
     func close() {
         stream.close()
-        queue.async { [self] in finish() }
+        afterRequestsReceived { $0.finish() }
+    }
+
+    /// Runs `work` on the handling queue once every request received so far has been
+    /// handled — the order the two stages keep, so a session is ended behind the requests
+    /// that arrived before its peer went, never in front of a `beginBatch` among them.
+    private func afterRequestsReceived(_ work: @escaping (ServerConnection) -> Void) {
+        preparing.async { [self] in
+            handling.async { [self] in work(self) }
+        }
     }
 
     /// Writes an already-encoded event to this client. Called from the registry, on any
@@ -71,28 +87,39 @@ final class ServerConnection {
             return
         }
         let body = frame.body.isEmpty ? nil : frame.body
+        let correlationID = frame.correlationID
 
-        // A wait blocks until the graph settles, and not on this queue: the events the
-        // client reads meanwhile — progress above all (B-95), a notice, the idle-time
-        // error report — go out through this same queue, and a wait parked on it held
-        // every one of them back until it ended, which is exactly when they stop being
-        // worth reading. A thread of its own, then: not this queue, and not the
-        // cooperative pool's, whose threads the engine's loop needs (see the handler).
-        // The client sends one request at a time, so a reply leaving from another thread
-        // still leaves in request order.
-        let parts = PartSender(stream: stream, correlationID: frame.correlationID)
-        if case .daemon(.wait) = request {
-            let thread = Thread { [self] in
-                let (response, replyBody) = handler.handle(request, body: body, session: session, replyStream: parts)
-                reply(response, body: replyBody, to: frame, request: request)
+        preparing.async { [self] in
+            let prepared = handler.prepare(request, body: body)
+            handling.async { [self] in
+                handle(prepared, correlationID: correlationID)
             }
-            thread.name = "semel.wait"
-            thread.start()
+        }
+    }
+
+    /// On the handling queue, in the order the requests arrived.
+    ///
+    /// A wait blocks until the graph settles, and not on this queue: requests the client
+    /// sends behind it would wait with it. A thread of its own, then, and not the
+    /// cooperative pool's, whose threads the engine's loop needs (see the handler). It is
+    /// started only here, so every request that arrived before it has been handled when it
+    /// begins to wait — pushes in flight ahead of a wait are recorded before it can settle.
+    /// A request that arrived after it may be answered first; the client matches replies to
+    /// requests by correlation ID, so that reorders nothing it reads, and no command of the
+    /// client's sends behind a wait before the wait is answered.
+    private func handle(_ prepared: PreparedRequest, correlationID: UInt64) {
+        let parts = PartSender(stream: stream, correlationID: correlationID)
+        guard case .daemon(.wait) = prepared.request else {
+            let (response, replyBody) = handler.handle(prepared, session: session, replyStream: parts)
+            reply(response, body: replyBody, correlationID: correlationID, request: prepared.request)
             return
         }
-
-        let (response, replyBody) = handler.handle(request, body: body, session: session, replyStream: parts)
-        reply(response, body: replyBody, to: frame, request: request)
+        let thread = Thread { [self] in
+            let (response, replyBody) = handler.handle(prepared, session: session, replyStream: parts)
+            reply(response, body: replyBody, correlationID: correlationID, request: prepared.request)
+        }
+        thread.name = "semel.wait"
+        thread.start()
     }
 
     /// The parts of one request's reply (B-137): frames with the continue flag, on the same
@@ -113,16 +140,16 @@ final class ServerConnection {
     }
 
     /// One reply frame back on the stream, from whichever thread handled the request;
-    /// `FrameStream.send` serializes the write on the connection's queue.
-    private func reply(_ response: Response, body: Data?, to frame: Frame, request: Request) {
+    /// `FrameStream.send` serializes the write on the stream's queue.
+    private func reply(_ response: Response, body: Data?, correlationID: UInt64, request: Request) {
         do {
-            try stream.send(try Frame.response(response, correlationID: frame.correlationID, body: body ?? Data()))
+            try stream.send(try Frame.response(response, correlationID: correlationID, body: body ?? Data()))
         } catch {
             // Only an over-limit reply fails to frame, and nothing has been written, so the
             // client hears what was refused and how large it was — an answer it can act on,
             // where a closed socket would leave it with a number.
             if let fallback = try? Frame.response(Self.tooLarge(request, error: error),
-                                                  correlationID: frame.correlationID) {
+                                                  correlationID: correlationID) {
                 try? stream.send(fallback)
             }
         }

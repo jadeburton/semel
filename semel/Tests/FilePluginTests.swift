@@ -223,6 +223,66 @@ final class FilePluginTests: XCTestCase {
         XCTAssertEqual(context.messages, ["Pushed 21 files and 1 folder, 2 unchanged"])
     }
 
+    /// Three batches' worth of files under one folder, answered only when collected: the
+    /// folder and the batches after it, and the push's `endBatch`, scripted in that order
+    /// behind the roots and the `beginBatch`.
+    private func scriptThreeBatchesInFlight(secondBatch: [PushedFileOutcome]) throws {
+        for index in 0..<(3 * FilePlugin.filesPerRequest) {
+            try write("src/file\(String(format: "%03d", index)).c", "\(index)")
+        }
+        connection.answersWhenCollected = true
+        try replyHoldingNothing()
+        connection.reply(.ok)
+        connection.reply(.ok)
+        connection.reply(.pushFiles(outcomes: Array(repeating: .stored(didChange: true), count: FilePlugin.filesPerRequest)))
+        connection.reply(.pushFiles(outcomes: secondBatch))
+        connection.reply(.pushFiles(outcomes: Array(repeating: .stored(didChange: true), count: FilePlugin.filesPerRequest)))
+        connection.reply(.ok)
+    }
+
+    private var sentBatches: [[PushedFileHeader]] {
+        connection.daemonRequests.compactMap { request in
+            guard case .pushFiles(let files) = request else {
+                return nil
+            }
+            return files
+        }
+    }
+
+    /// A batch leaves while the one before it is still being answered, up to
+    /// `batchesInFlight`, and a file the server refuses in a batch that is no longer the
+    /// newest is still reported against its own path.
+    func test_batchesLeaveAheadOfTheirRepliesAndARefusalIsReportedAgainstItsFile() throws {
+        var secondBatch = Array(repeating: PushedFileOutcome.stored(didChange: true), count: FilePlugin.filesPerRequest)
+        secondBatch[9] = .failed(error: .nodeError(description: "the node it wakes cannot be made"))
+        try scriptThreeBatchesInFlight(secondBatch: secondBatch)
+
+        try run("push", ["src"])
+
+        XCTAssertEqual(connection.mostOutstanding, FilePlugin.batchesInFlight)
+        XCTAssertEqual(connection.outstanding, 0, "every reply collected before the push ends")
+        XCTAssertEqual(connection.daemonRequests.last, .endBatch)
+        XCTAssertEqual(sentBatches.count, 3)
+        let refused = try XCTUnwrap(sentBatches.dropFirst().first?[9].path)
+        XCTAssertEqual(context.errors, ["push: \(refused): the node it wakes cannot be made"])
+        XCTAssertEqual(context.messages, ["Pushed \(3 * FilePlugin.filesPerRequest - 1) files and 1 folder"])
+    }
+
+    /// A failure that is the server's stops the push at the batch it came in, and the
+    /// batches already sent behind it are waited out before the batch is ended, so no
+    /// reply of the push is still to come when the next command's requests go out.
+    func test_aServerThatStoppedMidPushWaitsOutTheBatchesAlreadySent() throws {
+        try scriptThreeBatchesInFlight(secondBatch: Array(repeating: .failed(error: .unrecoverable(message: "the disk is full")),
+                                                          count: FilePlugin.filesPerRequest))
+
+        XCTAssertThrowsError(try run("push", ["src"])) { error in
+            XCTAssertEqual((error as? ServerError)?.description, "the server stopped: the disk is full")
+        }
+
+        XCTAssertEqual(connection.outstanding, 0)
+        XCTAssertEqual(connection.daemonRequests.last, .endBatch)
+    }
+
     func test_pushOfAnAbsolutePathIsRefusedWithoutSendingAnything() throws {
         try run("push", ["/etc/hosts"])
 

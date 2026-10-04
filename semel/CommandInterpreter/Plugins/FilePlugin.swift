@@ -166,7 +166,9 @@ final class FilePlugin: CommandPlugin {
             }
         }
 
-        var batch = PushBatch()
+        var batch    = PushBatch()
+        var pipeline = PushPipeline()
+        defer { pipeline.abandon() }
         for item in work {
             switch item {
             case .held(let entry):
@@ -174,17 +176,14 @@ final class FilePlugin: CommandPlugin {
             case .send(let entry) where entry.kind == .file:
                 batch.append(PushBatch.Step(reading: entry, under: context.baseDirectory))
             case .send(let entry):
-                try batch.send(context: context, report: report)
-                guard let sent = try pushOne(entry, context: context) else {
-                    continue
-                }
-                report(entry, sent)
+                batch.append(.folder(entry))
             }
             if batch.isFull {
-                try batch.send(context: context, report: report)
+                try pipeline.send(&batch, context: context, report: report)
             }
         }
-        try batch.send(context: context, report: report)
+        try pipeline.send(&batch, context: context, report: report)
+        try pipeline.collectAll(context: context, report: report)
 
         guard !nameEachPath, let counts = Self.countedTogether(files: files, folders: folders) else {
             return
@@ -433,42 +432,71 @@ final class FilePlugin: CommandPlugin {
     static let filesPerRequest = 64
     static let bytesPerRequest = 8 << 20
 
-    /// Pushes one folder and says what it was; `nil` when it was reported and skipped. A
-    /// file goes in a `PushBatch`.
-    ///
-    /// A server that could not store this entry is reported by its path and the push goes
-    /// on to the next, as for a file that cannot be read: one entry the graph refused says
-    /// nothing about the rest (B-130).
-    private func pushOne(_ entry: FileWildcardEntry, context: any CommandContext) throws -> PushOutcome? {
-        do {
-            return try sendFolder(entry, context: context)
-        } catch let failure as ServerError where failure.isTheRequestsOwn {
-            context.outputError("push: \(entry.path): \(failure)")
-            return nil
-        }
-    }
+    /// How many of a push's batches may be on their way to the server at once. While the
+    /// server records one, the client reads the next from disk and sends it and the server
+    /// hashes it, so the queue that records them finds the next batch waiting rather than
+    /// waiting for it. Measured on a cold push of 4,537 files (`BACKLOG.md`, Performance,
+    /// 2026-10-04): one is barely better than none, because the next batch is read but
+    /// still hashed after the one before is recorded; two takes the push from 4.0 s to
+    /// 3.4 s; three is no faster than two and holds another 8 MB in flight.
+    static let batchesInFlight = 2
 
-    /// Just the folder. Its contents are separate entries in the work list, put there by
-    /// `expand`, so that a file reachable both directly and through its folder is still
-    /// pushed once.
-    private func sendFolder(_ entry: FileWildcardEntry, context: any CommandContext) throws -> PushOutcome? {
-        guard let target = entry.symbolicLinkTarget else {
-            _ = try context.request(.pushFolder(path: entry.path.string))
-            return .folder
+    /// What a push sends, gathered into batches and kept in flight (`batchesInFlight`), and
+    /// each batch's replies collected in the order the batches were sent. The server
+    /// handles a connection's requests in arrival order, so the replies say what they would
+    /// have said had the push waited for each; and a batch is reported only when it is
+    /// collected, so the report keeps the work list's order however far ahead the sending
+    /// has got.
+    private struct PushPipeline {
+
+        /// Oldest first.
+        private var inFlight: [SentBatch] = []
+
+        /// Sends what `batch` has gathered and leaves it empty, collecting the oldest batch
+        /// first when as many as may be are already out.
+        mutating func send(_ batch: inout PushBatch, context: any CommandContext,
+                           report: (FileWildcardEntry, PushOutcome) -> Void) throws {
+            guard !batch.isEmpty else {
+                return
+            }
+            while inFlight.count >= FilePlugin.batchesInFlight {
+                try collectOldest(context: context, report: report)
+            }
+            let gathered = batch
+            batch = PushBatch()
+            inFlight.append(try gathered.send(context: context))
         }
-        let request = DaemonRequest.pushSymbolicLink(path: entry.path.string, target: target, referent: .folder)
-        guard case .pushFile(let didChange) = try context.request(request).0 else {
-            return nil
+
+        /// Collects every batch still out, in order.
+        mutating func collectAll(context: any CommandContext, report: (FileWildcardEntry, PushOutcome) -> Void) throws {
+            while !inFlight.isEmpty {
+                try collectOldest(context: context, report: report)
+            }
         }
-        return .symbolicLink(target: target, didChange: didChange)
+
+        /// Waits out every reply still to come and drops it: what a push that stopped on a
+        /// failure leaves behind, so that nothing it sent is still being answered when the
+        /// next command's requests go out — the batch's end among them.
+        mutating func abandon() {
+            for sent in inFlight {
+                sent.waitForReplies()
+            }
+            inFlight = []
+        }
+
+        private mutating func collectOldest(context: any CommandContext,
+                                            report: (FileWildcardEntry, PushOutcome) -> Void) throws {
+            try inFlight.removeFirst().report(context: context, report: report)
+        }
     }
 
     /// The files a push sends, gathered into one request (`pushFiles`) rather than one
-    /// each: a request per file is a round trip per file, the client waiting on every
-    /// answer before it reads the next file, and the server hashes and stores the files of
-    /// one request on every core before its one queue records them. What stands between
-    /// them in the work list — an entry already held, a file that could not be read — waits
-    /// in here too, so the report keeps the work list's order.
+    /// each: a request per file is a round trip per file, and the server hashes and stores
+    /// the files of one request on every core before its one queue records them. What
+    /// stands between them in the work list — an entry already held, a file that could not
+    /// be read — waits in here too, so the report keeps the work list's order. A folder or
+    /// a link is a request of its own and closes the batch, so the requests leave in the
+    /// work list's order.
     private struct PushBatch {
 
         enum Step {
@@ -478,6 +506,10 @@ final class FilePlugin: CommandPlugin {
             /// push goes on, as for a file the server refuses.
             case unreadable(message: String)
             case file(FileWildcardEntry, PushedContent)
+            /// Just the folder. Its contents are separate entries in the work list, put
+            /// there by `expand`, so that a file reachable both directly and through its
+            /// folder is still pushed once.
+            case folder(FileWildcardEntry)
 
             init(reading entry: FileWildcardEntry, under baseDirectory: String) {
                 let absolutePath = (baseDirectory as NSString).appendingPathComponent(entry.path.string)
@@ -492,102 +524,189 @@ final class FilePlugin: CommandPlugin {
         private var steps: [Step] = []
         private var fileCount = 0
         private var byteCount = 0
-        /// A link to a file is a request of its own (`pushSymbolicLink`): what it holds is a
-        /// target as well as bytes. It closes the batch, so the requests leave in the work
-        /// list's order.
-        private var endsWithLink = false
+        /// A link or a folder is a request of its own, after the batch's files.
+        private var endsWithOwnRequest = false
+
+        var isEmpty: Bool { steps.isEmpty }
 
         var isFull: Bool {
-            endsWithLink || fileCount >= FilePlugin.filesPerRequest || byteCount >= FilePlugin.bytesPerRequest
+            endsWithOwnRequest || fileCount >= FilePlugin.filesPerRequest || byteCount >= FilePlugin.bytesPerRequest
         }
 
         mutating func append(_ step: Step) {
             steps.append(step)
-            guard case .file(_, let content) = step else {
+            switch step {
+            case .decided, .unreadable:
                 return
+            case .folder:
+                endsWithOwnRequest = true
+            case .file(_, let content):
+                guard content.symbolicLinkTarget == nil else {
+                    endsWithOwnRequest = true
+                    return
+                }
+                fileCount += 1
+                byteCount += content.bytes.count
             }
-            guard content.symbolicLinkTarget == nil else {
-                endsWithLink = true
-                return
-            }
-            fileCount += 1
-            byteCount += content.bytes.count
         }
 
-        /// Sends what is gathered and reports every step in order, leaving the batch empty.
-        /// A failure that is the server's rather than one file's stops the push, as it does
-        /// for a folder.
-        mutating func send(context: any CommandContext, report: (FileWildcardEntry, PushOutcome) -> Void) throws {
-            let gathered = steps
-            self = PushBatch()
-
-            let files = gathered.compactMap { step -> (entry: FileWildcardEntry, content: PushedContent)? in
+        /// Sends the batch's requests without waiting for their replies: its files as one,
+        /// then the link or folder that closed it.
+        func send(context: any CommandContext) throws -> SentBatch {
+            let files = steps.compactMap { step -> (entry: FileWildcardEntry, content: PushedContent)? in
                 guard case .file(let entry, let content) = step, content.symbolicLinkTarget == nil else {
                     return nil
                 }
                 return (entry, content)
             }
-            var outcomes = try Self.send(files, context: context)[...]
+            let filesReply = try SentBatch.FilesReply(sending: files, context: context)
 
-            for step in gathered {
+            let sent = try steps.map { step -> SentBatch.Step in
+                switch step {
+                case .decided(let entry, let outcome):
+                    return .decided(entry, outcome)
+                case .unreadable(let message):
+                    return .unreadable(message: message)
+                case .folder(let entry):
+                    guard let target = entry.symbolicLinkTarget else {
+                        return .folder(entry, reply: try context.requestWithoutWaiting(.pushFolder(path: entry.path.string)))
+                    }
+                    let request = DaemonRequest.pushSymbolicLink(path: entry.path.string, target: target, referent: .folder)
+                    return .link(entry, target: target, reply: try context.requestWithoutWaiting(request))
+                case .file(let entry, let content):
+                    guard let target = content.symbolicLinkTarget else {
+                        return .file(entry)
+                    }
+                    let request = DaemonRequest.pushSymbolicLink(path: entry.path.string, target: target,
+                                                                 referent: .file(mode: content.mode))
+                    return .link(entry, target: target,
+                                 reply: try context.requestWithoutWaiting(request, body: content.bytes))
+                }
+            }
+            return SentBatch(steps: sent, filesReply: filesReply)
+        }
+    }
+
+    /// A batch on its way: its requests sent, its replies still to collect.
+    private struct SentBatch {
+
+        enum Step {
+            case decided(FileWildcardEntry, PushOutcome)
+            case unreadable(message: String)
+            /// Answered, in turn, by the batch's `filesReply`.
+            case file(FileWildcardEntry)
+            case link(FileWildcardEntry, target: String, reply: PendingDaemonReply)
+            case folder(FileWildcardEntry, reply: PendingDaemonReply)
+        }
+
+        /// The one request for the batch's plain files. One file goes as `pushFile`, which
+        /// is all a batch of one needs; several as `pushFiles`.
+        enum FilesReply {
+            case none
+            case one(PendingDaemonReply)
+            case several(PendingDaemonReply, count: Int)
+
+            init(sending files: [(entry: FileWildcardEntry, content: PushedContent)], context: any CommandContext) throws {
+                guard files.count > 1 else {
+                    guard let file = files.first else {
+                        self = .none
+                        return
+                    }
+                    let request = DaemonRequest.pushFile(path: file.entry.path.string, mode: file.content.mode)
+                    self = .one(try context.requestWithoutWaiting(request, body: file.content.bytes))
+                    return
+                }
+                let headers = files.map {
+                    PushedFileHeader(path: $0.entry.path.string, mode: $0.content.mode, length: $0.content.bytes.count)
+                }
+                let body = PushedFiles.body(joining: files.map(\.content.bytes))
+                self = .several(try context.requestWithoutWaiting(.pushFiles(files: headers), body: body),
+                                count: files.count)
+            }
+
+            /// What became of each file, in order; nil for one the reply did not answer as a
+            /// push, which is skipped unreported.
+            func outcomes() throws -> [PushedFileOutcome?] {
+                switch self {
+                case .none:
+                    return []
+                case .one(let pending):
+                    do {
+                        guard case .pushFile(let didChange) = try pending.reply().0 else {
+                            return [nil]
+                        }
+                        return [.stored(didChange: didChange)]
+                    } catch let failure as ServerError where failure.isTheRequestsOwn {
+                        return [.failed(error: failure.response)]
+                    }
+                case .several(let pending, let count):
+                    let reply: DaemonResponse
+                    do {
+                        reply = try pending.reply().0
+                    } catch let failure as ServerError where failure.isTheRequestsOwn {
+                        return Array(repeating: .failed(error: failure.response), count: count)
+                    }
+                    guard case .pushFiles(let outcomes) = reply, outcomes.count == count else {
+                        return Array(repeating: nil, count: count)
+                    }
+                    return outcomes
+                }
+            }
+
+            fileprivate var pending: PendingDaemonReply? {
+                switch self {
+                case .none:                        return nil
+                case .one(let pending):            return pending
+                case .several(let pending, _):     return pending
+                }
+            }
+        }
+
+        let steps: [Step]
+        let filesReply: FilesReply
+
+        /// Collects the batch's replies and reports every step in order. A failure that is
+        /// the server's rather than one entry's stops the push.
+        func report(context: any CommandContext, report: (FileWildcardEntry, PushOutcome) -> Void) throws {
+            var outcomes = try filesReply.outcomes()[...]
+            for step in steps {
                 switch step {
                 case .decided(let entry, let outcome):
                     report(entry, outcome)
                 case .unreadable(let message):
                     context.outputError(message)
-                case .file(let entry, let content):
-                    guard let target = content.symbolicLinkTarget else {
-                        try Self.report(outcomes.popFirst() ?? nil, of: entry, context: context, report: report)
-                        continue
-                    }
-                    let request = DaemonRequest.pushSymbolicLink(path: entry.path.string, target: target,
-                                                                 referent: .file(mode: content.mode))
-                    do {
-                        guard case .pushFile(let didChange) = try context.request(request, body: content.bytes).0 else {
-                            continue
+                case .file(let entry):
+                    try Self.report(outcomes.popFirst() ?? nil, of: entry, context: context, report: report)
+                case .link(let entry, let target, let pending):
+                    try Self.reportOwnRequest(of: entry, context: context) {
+                        guard case .pushFile(let didChange) = try pending.reply().0 else {
+                            return
                         }
                         report(entry, .symbolicLink(target: target, didChange: didChange))
-                    } catch let failure as ServerError where failure.isTheRequestsOwn {
-                        context.outputError("push: \(entry.path): \(failure)")
+                    }
+                case .folder(let entry, let pending):
+                    try Self.reportOwnRequest(of: entry, context: context) {
+                        _ = try pending.reply()
+                        report(entry, .folder)
                     }
                 }
             }
         }
 
-        /// What became of each file, in order; nil for one the reply did not answer as a
-        /// push, which is skipped unreported. One file goes as `pushFile`, which is all a
-        /// batch of one needs; several as `pushFiles`.
-        private static func send(_ files: [(entry: FileWildcardEntry, content: PushedContent)],
-                                 context: any CommandContext) throws -> [PushedFileOutcome?] {
-            guard files.count > 1 else {
-                guard let file = files.first else {
-                    return []
-                }
-                do {
-                    let request = DaemonRequest.pushFile(path: file.entry.path.string, mode: file.content.mode)
-                    guard case .pushFile(let didChange) = try context.request(request, body: file.content.bytes).0 else {
-                        return [nil]
-                    }
-                    return [.stored(didChange: didChange)]
-                } catch let failure as ServerError where failure.isTheRequestsOwn {
-                    return [.failed(error: failure.response)]
+        /// Blocks until every reply has come, and drops them.
+        func waitForReplies() {
+            var pendings = [filesReply.pending].compactMap { $0 }
+            for step in steps {
+                switch step {
+                case .link(_, _, let pending), .folder(_, let pending):
+                    pendings.append(pending)
+                case .decided, .unreadable, .file:
+                    break
                 }
             }
-
-            let headers = files.map {
-                PushedFileHeader(path: $0.entry.path.string, mode: $0.content.mode, length: $0.content.bytes.count)
+            for pending in pendings {
+                _ = try? pending.reply()
             }
-            let reply: DaemonResponse
-            do {
-                reply = try context.request(.pushFiles(files: headers),
-                                            body: PushedFiles.body(joining: files.map(\.content.bytes))).0
-            } catch let failure as ServerError where failure.isTheRequestsOwn {
-                return files.map { _ in .failed(error: failure.response) }
-            }
-            guard case .pushFiles(let outcomes) = reply, outcomes.count == files.count else {
-                return files.map { _ in nil }
-            }
-            return outcomes
         }
 
         /// One file's outcome, said as a push says it; a failure that is not the file's own
@@ -605,6 +724,18 @@ final class FilePlugin: CommandPlugin {
                 context.outputError("push: \(entry.path): \(failure)")
             case nil:
                 break
+            }
+        }
+
+        /// A link or a folder the server could not store is reported by its path and the
+        /// push goes on to the next entry, as for a file that cannot be read: one entry the
+        /// graph refused says nothing about the rest (B-130).
+        private static func reportOwnRequest(of entry: FileWildcardEntry, context: any CommandContext,
+                                             _ collect: () throws -> Void) throws {
+            do {
+                try collect()
+            } catch let failure as ServerError where failure.isTheRequestsOwn {
+                context.outputError("push: \(entry.path): \(failure)")
             }
         }
     }
