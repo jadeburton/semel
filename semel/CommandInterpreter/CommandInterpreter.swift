@@ -487,8 +487,42 @@ public final class CommandInterpreter: CommandContext {
         }
         let asked = Path(path)
         return entries.contains { entry in
-            Path(entry.path) == asked && (entry.status == .none || entry.status == .unreferenced)
+            Path(entry.path) == asked && Self.isHeld(entry)
         }
+    }
+
+    /// Every file and folder the input file system holds below `folder` — relative to its
+    /// root, the empty string for the root itself — at any depth, dot-names among them, as
+    /// `inputHolds` would answer for each: what a program mirroring a disk compares with
+    /// the disk to learn what to remove. Gathered part by part as the listing streams, so
+    /// a large tree's answer is never one frame. A folder the graph does not hold holds
+    /// nothing.
+    public func inputHoldings(below folder: String) throws -> [FileWildcardEntry] {
+        let pattern = folder.isEmpty ? WildcardPath.anyFolders : "\(folder)/\(WildcardPath.anyFolders)"
+        var entries: [ListEntry] = []
+        let last: DaemonResponse
+        do {
+            last = try request(.list(fileSystem: .input, pattern: pattern)) { part in
+                if case .list(let partEntries) = part {
+                    entries.append(contentsOf: partEntries)
+                }
+            }.0
+        } catch let failure as ServerError where failure.isTheRequestsOwn {
+            return []
+        }
+        if case .list(let lastEntries) = last {
+            entries.append(contentsOf: lastEntries)
+        }
+        return entries.filter(Self.isHeld).map { entry in
+            FileWildcardEntry(path: Path(entry.path), kind: entry.kind == .folder ? .folder : .file,
+                              state: .present, isUnreferenced: entry.status == .unreferenced)
+        }
+    }
+
+    /// Whether a listed name stands for something pushed: there, read or not — not a
+    /// source removed and still standing, nor a name the graph only asks for.
+    private static func isHeld(_ entry: ListEntry) -> Bool {
+        entry.status == .none || entry.status == .unreferenced
     }
 
     /// Whether the graph holds any failure, as `errors` would list it, without printing

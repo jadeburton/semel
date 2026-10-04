@@ -44,7 +44,7 @@ public final class Watcher {
     /// unless a test wants to read them.
     public var output: (String) -> Void = { print($0) }
 
-    /// How many batches have been issued, the initial push among them.
+    /// How many batches have been issued, the initial one among them.
     public private(set) var batchesIssued = 0
 
     private let events: any FileEvents
@@ -74,18 +74,21 @@ public final class Watcher {
 
     // MARK: - The loop
 
-    /// Connects, says what is watched, pushes the tree once, and then issues one batch per
-    /// burst of changes until the stream ends. Throws only when the first connection fails:
-    /// a watcher that never reached an engine has nothing to watch for.
+    /// Connects, says what is watched, mirrors the tree once — removing what the graph
+    /// holds and the disk lacks, then pushing every watched folder, in one batch — and then
+    /// issues one batch per burst of changes until the stream ends. Throws only when the
+    /// first connection fails: a watcher that never reached an engine has nothing to watch
+    /// for.
     public func run() throws {
         let opened = try connector.connect()
         adopt(opened)
         output("Semel \(opened.serverVersion)")
         output("Graph: \(opened.databasePath)")
-        output(launchLine)
 
         if configuration.pushesInitially {
-            issue(nil)
+            issue(nil, announcing: true)
+        } else {
+            output(launchLine(mirrored: nil))
         }
         while true {
             let timeout = coalescer.dueAt.map { max(.zero, $0 - clock.now) }
@@ -105,8 +108,10 @@ public final class Watcher {
 
     /// What is watched, what is excepted, and when a batch goes: the line that shows a
     /// filter excepting the file being edited, and names the base so that two watchers on
-    /// one are seen to be.
-    var launchLine: String {
+    /// one are seen to be. After it, from the initial batch's plan, how many paths the
+    /// graph held that the disk no longer has are removed, and how many are kept because
+    /// the filter excepts them — the one place a narrowing filter shows what it spared.
+    func launchLine(mirrored plan: MirrorPlan?) -> String {
         let watched = filter.roots.map { $0.isEmpty ? "." : $0.string }.joined(separator: ", ")
         var parts = ["Watching \(watched) under \(configuration.base)"]
         if filter.only != [Path(WatchFilter.everything)] {
@@ -118,7 +123,19 @@ public final class Watcher {
             parts.append("exporting into \(destination) after each settle without errors")
         }
         parts.append("a batch after \(Self.spoken(configuration.quietInterval)) of quiet")
+        if let plan, plan.removedCount > 0 {
+            parts.append("removing \(Self.counted(plan.removedCount, "path")) the disk no longer has")
+        }
+        if let plan, plan.exceptedCount > 0 {
+            parts.append("keeping \(Self.counted(plan.exceptedCount, "path")) the disk no longer has, "
+                         + "which the filter excepts")
+        }
         return parts.joined(separator: "; ") + "."
+    }
+
+    /// `1 path`, `2 paths`.
+    static func counted(_ count: Int, _ noun: String) -> String {
+        "\(count) \(noun)\(count == 1 ? "" : "s")"
     }
 
     /// `2 s`, or `500 ms` for an interval that is not whole seconds.
@@ -135,12 +152,19 @@ public final class Watcher {
 
     // MARK: - One batch
 
-    /// Plans `batch` — or, for nil, a push of everything watched — and issues it. A
+    /// Plans `batch` — or, for nil, a mirror of everything watched — and issues it. A
     /// connection that drops before or while it is issued is reopened, and the batch
-    /// issued again after a push of everything, since an engine that restarted may have
-    /// missed what was pushed while it was away.
-    private func issue(_ batch: ChangeBatch?) {
+    /// issued again with a mirror of everything, since an engine that restarted may have
+    /// missed what was pushed, or removed, while it was away. `announcing` is the launch:
+    /// the launch line goes out once, with what the first plan removes, before the batch.
+    private func issue(_ batch: ChangeBatch?, announcing: Bool = false) {
         var pushesEverything = batch == nil
+        var announcing = announcing
+        defer {
+            if announcing {
+                output(launchLine(mirrored: nil))
+            }
+        }
         while !events.isStopped {
             switch openSession() {
             case .stopped:
@@ -155,7 +179,12 @@ public final class Watcher {
             }
             let commands: [WatchCommand]
             do {
-                commands = try plan(batch ?? ChangeBatch(), pushingEverything: pushesEverything, session: session)
+                let planned = try plan(batch ?? ChangeBatch(), mirroringEverything: pushesEverything, session: session)
+                commands = planned.commands
+                if announcing {
+                    output(launchLine(mirrored: planned))
+                    announcing = false
+                }
             } catch {
                 guard session.isOpen() else {
                     continue
@@ -173,11 +202,14 @@ public final class Watcher {
         }
     }
 
-    private func plan(_ batch: ChangeBatch, pushingEverything: Bool, session: WatchSession) throws -> [WatchCommand] {
-        let everything = pushingEverything ? filter.roots : []
-        let planned = ChangeBatch(changed: batch.changed, rescanned: batch.rescanned + everything)
-        return try BatchPlanner(filter: filter).plan(planned, disk: disk,
-                                                     holdings: InterpreterHoldings(interpreter: session.interpreter))
+    private func plan(_ batch: ChangeBatch, mirroringEverything: Bool, session: WatchSession) throws -> MirrorPlan {
+        let planner  = BatchPlanner(filter: filter)
+        let holdings = InterpreterHoldings(interpreter: session.interpreter)
+        guard mirroringEverything else {
+            return MirrorPlan(commands: try planner.plan(batch, disk: disk, holdings: holdings),
+                              removedCount: 0, exceptedCount: 0)
+        }
+        return try planner.planMirroring(batch, folders: configuration.folders, disk: disk, holdings: holdings)
     }
 
     /// One `begin` … `commit` around the batch's removals and pushes, the formula's inputs
@@ -277,7 +309,7 @@ public final class Watcher {
         while !events.isStopped {
             do {
                 adopt(try connector.connect())
-                output("Reconnected to the engine; pushing everything watched again.")
+                output("Reconnected to the engine; mirroring everything watched again.")
                 return .reopened
             } catch {
                 if !saidSo {
@@ -306,5 +338,9 @@ struct InterpreterHoldings: InputHoldings {
 
     func holds(_ path: Path) throws -> Bool {
         try interpreter.inputHolds(path.string)
+    }
+
+    func holdings(below folder: Path) throws -> [FileWildcardEntry] {
+        try interpreter.inputHoldings(below: folder.string)
     }
 }

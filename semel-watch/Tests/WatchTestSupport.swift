@@ -139,6 +139,16 @@ final class HeldPaths: InputHoldings {
         asked.append(path)
         return held.contains(path)
     }
+
+    /// The paths named below `folder`, each a folder when another named path lies below it.
+    func holdings(below folder: Path) -> [FileWildcardEntry] {
+        held.filter { $0 != folder && $0.hasPrefix(folder) }
+            .sorted(by: Path.precedes)
+            .map { path in
+                let isFolder = held.contains { $0 != path && $0.hasPrefix(path) }
+                return FileWildcardEntry(path: path, kind: isFolder ? .folder : .file, state: .present, isUnreferenced: false)
+            }
+    }
 }
 
 /// A fresh directory under the system's temporary one, removed by the test's teardown.

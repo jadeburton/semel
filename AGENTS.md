@@ -366,6 +366,15 @@ In tests, `try XCTUnwrap(…)` and a `throws` test method.
   lock (B-06) says only whether a copy has moved since it was vendored, and records the
   version so that a person, and `prepare` (B-138), can tell when a pin has. Do not add a
   version check to a converter.
+- **A push only adds.** `push <folder>` and `build` never remove from `input:` what the
+  disk no longer has; a removal is an explicit `rm`, and when removals must land together
+  with pushes they are wrapped in `begin` … `commit` so the engine settles once over the
+  whole change. A push that subtracted would make one command mean two things — "send
+  these" and "make the graph look like this" — and the batch is what gives a mirror its
+  atomicity, not the push. `semel-watch` is the client that mirrors a disk, and it does so
+  by issuing `rm` itself: at launch it compares what `input:` holds below each watched
+  folder with the disk and removes the difference in the same batch as its push. Do not
+  make `push` or `build` subtract.
 
 ## Tests
 

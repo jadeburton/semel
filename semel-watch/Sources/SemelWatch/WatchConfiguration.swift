@@ -26,7 +26,8 @@ public struct WatchConfiguration: Equatable {
     /// Where each settle without errors is exported, absolute; nil exports nothing.
     public var exportDestination: String?
     public var quietInterval: Duration
-    /// Whether every watched folder is pushed once before the first change.
+    /// Whether the initial batch mirrors every watched folder before the first change:
+    /// removes what the graph holds and the disk lacks, then pushes. `--no-initial` is false.
     public var pushesInitially: Bool
     /// Whether this watcher prints the settle summary, the artifact diff and the error
     /// report. Off when the prompt started it: the prompt prints them from its own

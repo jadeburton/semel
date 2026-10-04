@@ -197,7 +197,8 @@ exist and become `rm`s, and one batch in step 4.
 - **Deletions the initial push cannot see.** A file removed from disk while no watcher ran
   stays in `input:` until an `rm`; the initial push adds and never subtracts. The fix is a
   listing of `input:` against the disk at launch, and it belongs with the same fix for
-  `build`, which has the same gap.
+  `build`, which has the same gap. (Settled otherwise on 2026-10-04 — see "Decided
+  2026-10-04" at the end.)
 - **A rule file.** The flags are the rule; a project that wants them kept writes them in
   its own script.
 - **Linux.** `inotify` is a second conformance of `FileEvents`, when Semel runs there.
@@ -276,3 +277,35 @@ is what was done.
   `<base>/semel-out/<folder>`, as the design says.
 - **Measured.** The end-to-end run over `EndToEnd/Fixtures/c` takes 2.2 s from writing
   the file to the settle summary, two of them the quiet interval.
+
+## Decided 2026-10-04: a push only adds, and the watcher removes with `rm`
+
+The first "what is not in it" put the deletions the initial push cannot see with "the same
+fix for `build`". There is no such fix. `push <folder>` and `build` never remove from
+`input:` what the disk no longer has: a push that subtracted would make one command mean
+two things — "send these" and "make the graph look like this" — and what makes a mirror
+atomic is the batch, not the push. A removal is an explicit `rm`, and removals that must
+land with pushes are wrapped in `begin` … `commit`, so the engine settles once over the
+whole change.
+
+The watcher is the client that mirrors a disk, so it makes those removals itself:
+
+- **The initial push is an initial batch.** `begin`; for each watched folder, the paths
+  `input:` holds below it, asked of the server as one listing (`list <folder>/**`, which
+  streams), compared with what a push of the folder would push — the lister's rule,
+  `--only` and `--except`, a dot-named file when the graph holds it; one `rm` of every
+  held path the disk lacks, the highest folder that went whole when everything held below
+  it goes; the push of each watched folder; `commit`. One settle. The listing is a second
+  question on `InputHoldings` (`holdings(below:)`), answered by the interpreter's
+  `inputHoldings(below:)`, so the planner reads typed entries and no text.
+- **What the filter excepts is kept.** A held path the disk lacks and the filter does not
+  admit is left in `input:` — a narrowing filter is not a request to delete — and a folder
+  holding one is removed around it, path by path. The launch line counts both: `removing
+  2 paths the disk no longer has`, `keeping 1 path the disk no longer has, which the
+  filter excepts`.
+- **Only the watched folders.** Nothing outside them is compared, including a source the
+  follow pushed from beside them (`../semel.machine.config`): it is watched once followed,
+  but the graph's copy is not this launch's to delete.
+- **A reconnection mirrors too.** The full push after the engine comes back is the same
+  comparison, since an engine that restarted may have missed a removal as well as a push.
+- **`--no-initial`** skips the whole batch, removals and push alike.
