@@ -186,6 +186,25 @@ public final class DatabaseLayer {
         }
     }
 
+    /// `work` as one unit that a throw undoes and nothing else: a savepoint of the
+    /// transaction already open, whichever kind it is, or a transaction of its own outside
+    /// one. For a step a caller means to catch and go on from — a fold that fails stays
+    /// marked, with nothing of it written, while the folds beside it commit.
+    ///
+    /// `withTransaction` will not do for that inside a transaction it did not open: it takes
+    /// part in that one, so a throw caught by the caller leaves whatever the step had
+    /// written before it threw. A volume failure is translated here rather than at the
+    /// outer boundary, so a caller that catches an ordinary failure still lets the
+    /// machine's through.
+    public func withSavepoint<T>(_ work: () throws -> T) throws -> T {
+        guard let wrapper = DatabaseLayer.currentDB else {
+            return try withTransaction(work)
+        }
+        return try translatingVolumeFailures {
+            try Self.inSavepoint(of: wrapper.db, work)
+        }
+    }
+
     /// `work` inside a savepoint of `db`, with what it reaches taking part in that savepoint
     /// rather than opening another: one level, the boundary a transaction of its own drew.
     private static func inSavepoint<T>(of db: Database, _ work: () throws -> T) throws -> T {

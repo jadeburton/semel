@@ -47,8 +47,8 @@ public enum HeldTree {
     /// Three queries, however large the tree: the folders with their roots and pins, the
     /// dot-named files they hold, and the marks that say which roots are waiting to be
     /// folded again. All are read in one
-    /// snapshot, and each fold clears its mark and marks the folder above in one
-    /// transaction (`Folder.refreshMarkedContentRoot`), so a root that is not marked is
+    /// snapshot, and each fold clears its mark and marks the folder above in one savepoint
+    /// of one transaction (`Folder.flushDirtyManifests`), so a root that is not marked is
     /// current as of this read — which is what lets a client skip a whole subtree on it.
     public static func folderRoots(below relativePath: Path) throws -> [FolderRoot] {
         let database: DatabaseLayer = DatabaseLayer.shared

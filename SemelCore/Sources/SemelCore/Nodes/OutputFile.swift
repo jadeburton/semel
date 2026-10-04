@@ -64,7 +64,7 @@ extension HasPath where Self: Node {
             return (try rootNode.requireID())
         }
 
-        let resolvedFolder = try rootNode.ensureEntirePathExistsAsFolders(subPath, pinned: false)
+        let resolvedFolder = try rootNode.ensureEntirePathExistsAsFolders(subPath, pinned: false, forAChild: true)
         return (try resolvedFolder.requireID())
     }
 }

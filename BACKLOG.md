@@ -289,8 +289,80 @@ does not record now (16%) is mostly before the first batch: the client starting,
 the roots and folding the disk (about a tenth of the push). Recording is the push now: the
 engine, GRDB's decoding and the object store, as the table above lists them.
 
+Measured 2026-10-04: the same four trees assembled afresh — 4,537 files in 1,375 folders,
+170 MB, this repository at `2b37367` — release binaries, a fresh home per push, the push
+and then the settle after it (`wait`), with the time the loop spent in the flush read from
+a counter both binaries were built with. The settle's wall time is the package readers'
+processes and moved with the machine (47–80 s either way); the flush is the engine's. The
+flush is now one transaction with a savepoint per fold, folds the deepest marked folder
+first, and a folder made on the way to a pushed file holds no folds until it: a new tree
+is folded once per folder, where parents first folded an ancestor once per level below it
+(23 folds against 8 on `FolderBatchFoldTests`' tree), and a push no longer writes an empty
+listing per new folder or interns a file's metadata twice. The shape was measured first,
+five rounds each alternated, load 4–7:
+
+| the flush after a cold push, median of five (best) | |
+|---|---|
+| `main`, no transaction | 3.23 s (3.08 s) |
+| a transaction per fold | 2.03 s (1.97 s) |
+| a transaction per round of the flush | 1.82 s (1.53 s) |
+| one transaction for the flush | 1.50 s (1.49 s) |
+
+Then the finished branch against `main`, alternated, six rounds each, load 5.5–10:
+
+| cold push of 4,537 files, then the settle | `main` | after |
+|---|---|---|
+| push wall time, median of six (best) | 5.6 s (4.1 s) | 4.5 s (3.7 s) |
+| server CPU over the push, median | 7.8 s | 7.0 s |
+| the flush, median of six (best) | 3.9 s (3.4 s) | 2.7 s (1.6 s) |
+| server CPU over the settle, median | 12.8 s | 12.0 s |
+
+| one sampled flush (load 12–14) | `main` | after |
+|---|---|---|
+| samples (≈ ms) | 6,300 | 1,150 |
+| the object store | 3,544 (56%) | 937 (82%) |
+| SQLite running statements | 1,585 (25%) | 63 (5%) |
+| of which re-preparing expired statements | 699 (11%) | 17 (1.5%) |
+| SQLite committing | 186 (3%) | 1 (0.1%) |
+| the engine's own Swift and GRDB | 975 (15%) | 148 (13%) |
+
+| the push's database queue, one sampled push each, first 4 s | `main` | after |
+|---|---|---|
+| the object store | 29% | 8.5% |
+| a folder's creation (`Folder.didCreate`) | 21% | 0.2% |
+| `selectPath` | 19% | 29% |
+
+What the flush does now is write the documents it folds: a new object per folder for its
+manifest, its root and its subtree manifest, each a file created in a temporary name,
+reopened, written, made read-only and renamed (`DataObjectStore.store`, two thirds of the
+flush, `createFile` alone two fifths of that). The objects are the folds' own and cannot be
+skipped; creating each with its final mode in one `open` would take the reopen and the
+`chmod`. On the push's queue what is left of the store is touches: the `true` every new
+folder is pinned with and the metadata document files share, each a `setAttributes` per
+use. `selectPath` decoding whole nodes is now the push queue's largest single cost.
+
 
 ## Design, correctness and code quality
+
+**B-139** `done` — **`wait` could return before the pass a push asked for had run.**
+Found 2026-10-04: `SettleTests.test_aWaiterNeverSlipsBetweenTheWakeUpAndThePassItAsksFor`
+failed on `main` about one run in three at a load average of 6 (`round 146: the wait
+returned before the pass ran`). The cause is in `BuildEngine.waitUntilIdle`, not in the
+test: a waiter took the loop's idle mark from the `IdleState` actor and then compared the
+wake-ups requested with the loop's count of those consumed, read under a lock, and the two
+reads were not one. Between them the loop could take the push's signal, mark itself busy
+and consume every wake-up outstanding — B-128 put the busy mark before the consumption,
+which closes the window on the loop's side and not on the waiter's. The waiter then found
+every request consumed, by a pass that had not run, and returned with the push's folder
+still marked: a `build` waiting there could export against manifests not yet folded. An
+idle mark now carries the count of wake-ups its passes answered, and a waiter compares
+with that (`IdleState.Mark.settledThrough`), so what it judges is what the mark it holds
+settled, whatever the loop has done since. Not caused by #160: the window is between two
+reads in the waiter, and folding a new folder later or sooner moves neither; a cheaper
+push brings the batch's end and the wait closer together, which can only make the loop's
+wake-up land in it more often. Not reproduced on demand: the interleaving needs the
+waiter's task descheduled between its two reads, and the test's 200 rounds are the
+regression check.
 
 **B-133** `open` `For Fable Only` — **A subgraph that rewires itself without converging looks,
 from the prompt, like one still working; and a path a vendored package lacks reads as a

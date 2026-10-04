@@ -71,8 +71,15 @@ extension NodeRecord {
     /// (`selectPath`), so a path whose folders are all there and pinned costs one read
     /// however deep it is (B-131). Below a folder this creates, the rest is read again from
     /// that folder: a folder found by its identity rather than made may already hold some.
+    ///
+    /// A folder made here with a folder of the path below it, or — `forAChild` — the last
+    /// one, when the caller is about to place a node in it, is made without its folds
+    /// (`Folder.didCreateOnTheWayToAChild`): the child marks it as it is placed, and the
+    /// next pass folds it once, over everything placed in it by then. The last folder of a
+    /// walk nobody places anything in is made with the folds of an empty folder, which is
+    /// what it is: a link pushed as a folder, a folder a formula names and nobody pushed.
     @discardableResult
-    public func ensureEntirePathExistsAsFolders(_ path: Path, pinned: Bool) throws -> NodeRecord {
+    public func ensureEntirePathExistsAsFolders(_ path: Path, pinned: Bool, forAChild: Bool = false) throws -> NodeRecord {
         guard kind == Folder.kind else {
             throw NodeError.other(message: "Cannot ensure path exists on a non-folder node")
         }
@@ -117,7 +124,10 @@ extension NodeRecord {
                 assert(!pathSoFar.string.hasPrefix("/"))
 
                 let specNode = GraphSpecNode(Folder.self, properties: [Folder.pathProperty: pathSoFar.string])
-                let (fromNode, _) = try specNode.findOrCreateMatchingNode()
+                let childFollows  = forAChild || index < names.count - 1
+                let (fromNode, _) = try specNode.findOrCreateMatchingNode(outputIfCreated: { node in
+                    childFollows ? try (node as? Folder)?.didCreateOnTheWayToAChild() : nil
+                })
                 var newFolder = fromNode
                 newFolder.parentNodeID = (try currentFolder.requireID())
                 try database.node.update(newFolder)
