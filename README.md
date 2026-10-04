@@ -80,8 +80,8 @@ cd -i sources/
 
 | Command | Description |
 |---------|-------------|
-| `push <path> ...` | Push files or directories from disk into the input file system: several paths are one push and one report |
-| `rm <path> ...` (`remove`) | Remove files or directories from the input file system |
+| `push <path> ...` | Push files or directories from disk into the input file system: several paths are one push and one report. A push only adds — a file gone from disk stays in `input:` until `rm` removes it; wrap the two in `begin` … `commit` to settle once |
+| `rm <path> ...` (`remove`) | Remove files or directories from the input file system: the one way a source leaves it |
 | `cp [-i\|-o] <src> [dest]` (`copy`) | Copy a file out of the internal file system to disk |
 | `export <folder> --into <dir>` | Copy every product under `<folder>` of the output file system into `<dir>`, keeping the tree below it |
 
@@ -135,7 +135,9 @@ replaces it and is remembered in turn; a script that means the directory it runs
 `base .` first.
 
 To build as you save, watch the tree instead. `semel-watch` takes the base and the folders
-`build` would take, pushes them once, and from then on waits for two quiet seconds after
+`build` would take, mirrors them once — one batch that removes with `rm` what `input:`
+holds below them and the disk no longer has, and pushes them — and from then on waits for
+two quiet seconds after
 each burst of saves — an editor's save, a `git checkout`, a generator's output — and runs
 one `begin`, a `push` of what changed and an `rm` of what went, `commit`: one settle, and
 its summary, per burst. It follows the formula's inputs as `build` does, and with `--into`

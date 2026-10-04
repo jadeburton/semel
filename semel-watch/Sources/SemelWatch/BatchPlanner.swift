@@ -24,9 +24,26 @@ public enum WatchCommand: Equatable, CustomStringConvertible {
 
 /// What the graph holds of the input file system, asked of a path the disk no longer has
 /// — is there anything to remove? — and of a dot-named file, which is a source only when
-/// it was pushed by its name. The interpreter in `semel-watch`; a set in a test.
+/// it was pushed by its name; and, for a watched folder, everything held below it, which
+/// is what a mirror compares with the disk. The interpreter in `semel-watch`; a set in a
+/// test.
 public protocol InputHoldings {
     func holds(_ path: Path) throws -> Bool
+    /// Every file and folder held below `folder`, at any depth, dot-names among them; none
+    /// when the graph does not hold the folder.
+    func holdings(below folder: Path) throws -> [FileWildcardEntry]
+}
+
+/// A plan that mirrors the watched folders: its commands, and what the launch line says
+/// of the comparison with the graph.
+public struct MirrorPlan: Equatable {
+    public let commands: [WatchCommand]
+    /// How many paths the graph held and the disk lacks are removed: files, and folders
+    /// that held nothing.
+    public let removedCount: Int
+    /// How many the graph held and the disk lacks are left, because the filter excepts
+    /// them: a narrowing filter is not a request to delete what it narrows away.
+    public let exceptedCount: Int
 }
 
 /// Reads a batch against the disk and says what to issue.
@@ -64,11 +81,39 @@ public struct BatchPlanner {
         return planning.commands
     }
 
-    /// What a push of every watched root comes to: the initial push, and the full push
-    /// after a reconnection. A root no longer on disk is removed, as any vanished path is.
-    public func planEverything(disk: some FileWildcardMatcherInput,
-                               holdings: some InputHoldings) throws -> [WatchCommand] {
-        try plan(ChangeBatch(rescanned: filter.roots), disk: disk, holdings: holdings)
+    /// What mirroring the watched folders comes to, with `batch` planned beside it: the
+    /// initial batch, and a batch reissued after a reconnection. Every path the graph holds
+    /// below one of `folders` that the disk lacks is removed — the removals a push never
+    /// makes, since a push only adds — and then every watched root is pushed.
+    ///
+    /// The comparison is with what a push would push: the lister's rule, then the filter,
+    /// a dot-named file counting as admitted because the graph holds it. A held path the
+    /// filter excepts is left, and counted, so a watcher started with a narrower filter
+    /// than the last never deletes what it was told to ignore; a folder holding one is
+    /// removed path by path around it rather than whole. Only `folders` are compared: a
+    /// source the follow pushed from outside them is watched, but what the graph holds of
+    /// it is not this watcher's to delete.
+    public func planMirroring(_ batch: ChangeBatch = ChangeBatch(), folders: [Path],
+                              disk: some FileWildcardMatcherInput,
+                              holdings: some InputHoldings) throws -> MirrorPlan {
+        var planning = Planning(filter: filter, disk: CachedListing(disk), holdings: holdings)
+        let compared = Set(folders.filter { folder in !folders.contains { $0 != folder && folder.hasPrefix($0) } })
+        for folder in compared.sorted(by: Path.precedes) {
+            try planning.mirror(folder)
+        }
+        // A compared root the disk lacks was decided by the comparison, which leaves what
+        // the filter excepts; any other root is pushed, or removed as a vanished path is.
+        for root in filter.roots where !compared.contains(where: { root.hasPrefix($0) })
+                                    || WatchFilter.entry(at: root, on: planning.disk) != nil {
+            try planning.plan(root)
+        }
+        for path in batch.rescanned + batch.changed {
+            for target in targets(of: path) {
+                try planning.plan(target)
+            }
+        }
+        return MirrorPlan(commands: planning.commands, removedCount: planning.removedCount,
+                          exceptedCount: planning.exceptedCount)
     }
 
     /// The paths a reported path stands for: itself when it is watched, and otherwise the
@@ -89,6 +134,9 @@ private struct Planning<Disk: FileWildcardMatcherInput, Holdings: InputHoldings>
     private var pushes:  Set<Path> = []
     private var folders: Set<Path> = []
     private var removes: Set<Path> = []
+
+    private(set) var removedCount  = 0
+    private(set) var exceptedCount = 0
 
     init(filter: WatchFilter, disk: Disk, holdings: Holdings) {
         self.filter   = filter
@@ -180,6 +228,77 @@ private struct Planning<Disk: FileWildcardMatcherInput, Holdings: InputHoldings>
         removes.insert(vanished)
     }
 
+    // MARK: - Mirroring a folder
+
+    /// Compares what the graph holds below `folder` with the disk, and removes what the
+    /// disk lacks and the filter admits: the highest such path, when everything held below
+    /// it goes with it.
+    mutating func mirror(_ folder: Path) throws {
+        let held = try holdings.holdings(below: folder)
+        let tree = HeldTree(held, below: folder)
+        guard WatchFilter.entry(at: folder, on: disk) != nil else {
+            // The whole watched folder went: compared when the graph holds it at all.
+            guard !folder.isEmpty, try !held.isEmpty || holdings.holds(folder) else {
+                return
+            }
+            if decideMissing(folder, in: tree) {
+                removes.insert(folder)
+            }
+            return
+        }
+        compare(folder, in: tree)
+    }
+
+    /// A folder the disk has: each held child the disk lacks is decided, and each it has
+    /// that is a folder is compared in turn.
+    private mutating func compare(_ folder: Path, in tree: HeldTree) {
+        for child in tree.children(of: folder) {
+            guard WatchFilter.entry(at: child, on: disk) != nil else {
+                if decideMissing(child, in: tree) {
+                    removes.insert(child)
+                }
+                continue
+            }
+            if tree.isFolder(child) {
+                compare(child, in: tree)
+            }
+        }
+    }
+
+    /// Whether a held path the disk lacks goes whole. A file goes when the filter admits
+    /// it; an empty folder when the filter could admit something below it; any other
+    /// folder when everything held below it goes — and when not, what goes below it is
+    /// removed on its own and the rest stays. Below a missing path everything is missing,
+    /// so the disk is not asked again.
+    private mutating func decideMissing(_ path: Path, in tree: HeldTree) -> Bool {
+        guard tree.isFolder(path) else {
+            return count(removing: filter.admits(path, isHeld: true))
+        }
+        let below = tree.children(of: path)
+        guard !below.isEmpty else {
+            return count(removing: filter.mayAdmitBelow(path))
+        }
+        var goingWhole: [Path] = []
+        for child in below where decideMissing(child, in: tree) {
+            goingWhole.append(child)
+        }
+        guard goingWhole.count == below.count else {
+            removes.formUnion(goingWhole)
+            return false
+        }
+        return true
+    }
+
+    /// Counts one held file, or empty folder, the disk lacks: removed, or excepted.
+    private mutating func count(removing: Bool) -> Bool {
+        if removing {
+            removedCount += 1
+        } else {
+            exceptedCount += 1
+        }
+        return removing
+    }
+
     private func isDotNamed(_ path: Path) -> Bool {
         path.lastComponent?.hasPrefix(".") == true
     }
@@ -192,6 +311,40 @@ private struct Planning<Disk: FileWildcardMatcherInput, Holdings: InputHoldings>
         let pushedFiles = pushes.filter { path in !pushedFolders.contains { path.hasPrefix($0) } }
         return removed.sorted(by: Path.precedes).map(WatchCommand.remove)
              + pushedFolders.union(pushedFiles).sorted(by: Path.precedes).map(WatchCommand.push)
+    }
+}
+
+// MARK: - What the graph holds below a folder
+
+/// What the graph holds below a mirrored folder, as a tree: each folder's held children,
+/// and which paths are folders — a held file's parent is one whether or not the listing
+/// named it.
+private struct HeldTree {
+    private var childrenByFolder: [Path: Set<Path>] = [:]
+    private var folders: Set<Path> = []
+
+    init(_ held: [FileWildcardEntry], below root: Path) {
+        folders.insert(root)
+        for entry in held {
+            if entry.kind == .folder {
+                folders.insert(entry.path)
+            }
+            var child = entry.path
+            while child.count > root.count {
+                let parent = Path(segments: child.segments.dropLast())
+                childrenByFolder[parent, default: []].insert(child)
+                folders.insert(parent)
+                child = parent
+            }
+        }
+    }
+
+    func children(of folder: Path) -> [Path] {
+        (childrenByFolder[folder] ?? []).sorted(by: Path.precedes)
+    }
+
+    func isFolder(_ path: Path) -> Bool {
+        folders.contains(path)
     }
 }
 

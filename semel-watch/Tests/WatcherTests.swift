@@ -94,6 +94,42 @@ final class WatcherTests: XCTestCase {
         XCTAssertTrue(lines.contains("Removed file: src/b.c"), lines.joined(separator: "\n"))
     }
 
+    /// A file pushed and then deleted while no watcher ran is gone from `input:` after the
+    /// initial batch — its `rm` and the folder's push in one `begin` … `commit`, so one
+    /// settle — and the launch line says so.
+    func test_theInitialBatchRemovesWhatTheDiskNoLongerHas() throws {
+        try write("int a;", at: "src/a.c")
+        try write("int b;", at: "src/b.c")
+        try pushBeforeLaunch("src")
+        try FileManager.default.removeItem(at: try XCTUnwrap(base).appendingPathComponent("src/b.c"))
+        let watcher = try makeWatcher(folders: ["src"], events: [])
+
+        try watcher.run()
+
+        let interpreter = CommandInterpreter(connection: InProcessConnection(handler: try XCTUnwrap(handler)))
+        XCTAssertTrue(try interpreter.inputHolds("src/a.c"))
+        XCTAssertFalse(try interpreter.inputHolds("src/b.c"))
+        XCTAssertEqual(watcher.batchesIssued, 1)
+        XCTAssertEqual(lines.filter { $0 == "Settled." }.count, 1, lines.joined(separator: "\n"))
+        XCTAssertTrue(lines.contains("Removed file: src/b.c"), lines.joined(separator: "\n"))
+        XCTAssertTrue(lines.contains { $0.hasPrefix("Watching src") && $0.hasSuffix("; removing 1 path the disk no longer has.") },
+                      lines.joined(separator: "\n"))
+    }
+
+    /// `--no-initial` skips the initial batch whole: what the disk no longer has stays.
+    func test_noInitialLeavesWhatTheDiskNoLongerHas() throws {
+        try write("int b;", at: "src/b.c")
+        try pushBeforeLaunch("src")
+        try FileManager.default.removeItem(at: try XCTUnwrap(base).appendingPathComponent("src/b.c"))
+        let watcher = try makeWatcher(folders: ["src"], pushesInitially: false, events: [])
+
+        try watcher.run()
+
+        let interpreter = CommandInterpreter(connection: InProcessConnection(handler: try XCTUnwrap(handler)))
+        XCTAssertTrue(try interpreter.inputHolds("src/b.c"))
+        XCTAssertEqual(watcher.batchesIssued, 0)
+    }
+
     /// Two bursts with a quiet interval between them are two batches, each settled before
     /// the next is pushed.
     func test_twoBurstsAreTwoBatchesAndTwoSettles() throws {
@@ -181,6 +217,20 @@ final class WatcherTests: XCTestCase {
             self.linesLock.withLock { self.lines.append(line) }
         }
         return watcher
+    }
+
+    /// `push` and `wait` from a session of its own, as a person would have run them before
+    /// the watcher was started; what it prints is not the watcher's.
+    private func pushBeforeLaunch(_ paths: String...) throws {
+        let interpreter = CommandInterpreter(connection: InProcessConnection(handler: try XCTUnwrap(handler)),
+                                             baseDirectory: try XCTUnwrap(base).path)
+        interpreter.output = { _ in }
+        _ = try interpreter.connect()
+        interpreter.handleCommand(verb: "push", arguments: paths)
+        interpreter.handleCommand(verb: "wait", arguments: [])
+        for path in paths {
+            XCTAssertTrue(try interpreter.inputHolds(path), "\(path) was not pushed")
+        }
     }
 
     private func write(_ text: String, at path: String, mode: Int = 0o644) throws {

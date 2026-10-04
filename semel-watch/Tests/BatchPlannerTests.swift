@@ -103,7 +103,7 @@ final class BatchPlannerTests: XCTestCase {
         let disk = FakeDisk(files: ["c/hello.c", "semel.machine.config", "semel-out/c/hello"])
 
         let commands = try BatchPlanner(filter: WatchFilter(roots: [.empty]))
-            .planEverything(disk: disk, holdings: HeldPaths()).map(\.description)
+            .planMirroring(folders: [.empty], disk: disk, holdings: HeldPaths()).commands.map(\.description)
 
         XCTAssertEqual(commands, ["push c", "push semel.machine.config"])
     }

@@ -297,8 +297,10 @@ with the version, revision and origin of the checkout's pin in `Package.resolved
 inside its own folder — a vendored framework's `Versions/Current` — is folded as the link
 it is on both sides since the fold's format 3 (B-77, 2026-09-29), and the test pushes a tree
 holding file and folder links. What
-remains: a file removed from disk stays in `input:` (a push only adds), so the root then
-differs from a fresh lock with no word on which file; a lock `rm`'d from `input:` is named
+remains: the root of a copy with a file removed from disk but not from `input:` differs
+from a fresh lock with no word on which file. That the file stays is the rule, not a gap
+(2026-10-04): a push only adds, and a removal is an `rm` — by hand, or by `semel-watch`,
+which mirrors the disk with one (B-126); a lock `rm`'d from `input:` is named
 as a deleted source on every report while the converter still wires it, as any removed
 source a build reads is. The version is recorded and never checked against the manifest's
 requirement, and that is a decision (2026-10-03): which version a copy should be is the
@@ -929,10 +931,12 @@ a `git checkout` is one batch. The prompt starts one with `watch <folder>` — `
 keeps B-95's meaning — and `unwatch` or `quit` stops it. What it watches is what a push would push (the lister's
 rule), narrowed by `--only` and `--except` spelled as the for-each spells items (B-123),
 with the export destination and `semel-out` always excepted so an export never becomes a
-push. Starts with one full push; `--into` exports after each clean settle as `build`
+push. Starts with one batch mirroring the tree; `--into` exports after each clean settle as `build`
 does. The stream and the disk are behind protocols, so the filter, the coalescer and the
-batch planner are tested with hand-fed events. Left out of the first version: deletions
-the initial push cannot see, a rule file, Linux, and reacting to what the settle built.
+batch planner are tested with hand-fed events. Left out of the first version: a rule file,
+Linux, and reacting to what the settle built. Deletions made while no watcher ran are not
+a push's to make — a push only adds, and a removal is an `rm` (decided 2026-10-04) — so the
+watcher makes them itself, with `rm`, in its initial batch (1 below).
 
 Shipped 2026-10-01, as designed, with the differences in the design's "As built": the
 `SemelWatch` library (`WatchFilter`, `ChangeCoalescer`, `BatchPlanner`, `FileEvents`,
@@ -942,12 +946,18 @@ watcher follows the formula's inputs as `build` does and watches what the follow
 a dot-named file is pushed only when the graph holds it or an `--only` names it exactly.
 The end-to-end run (`WatchEndToEndTests`, the C fixture) measures 2.2 s from a save on
 disk to the settle summary, two of them the quiet interval. What remains — the first
-version's "not in it", all open:
+version's "not in it", the first done and the rest open:
 
-1. **Deletions the initial push cannot see.** A file removed from disk while no watcher
-   ran stays in `input:` until an `rm`; the initial push adds and never subtracts — the
-   push says so (`Not on disk, kept: …`) and goes on. The fix is a listing of `input:`
-   against the disk at launch, with the same fix for `build`.
+1. ~~**Deletions the initial push cannot see.**~~ Done (2026-10-04), and decided: a push
+   only adds — `push <folder>` and `build` never subtract, a removal is an explicit `rm`,
+   and removals that must land with pushes are wrapped in `begin` … `commit` — so there
+   is no "same fix for `build`". The watcher mirrors with `rm`: its initial push is an
+   initial batch, `begin`, one `rm` of every path `input:` holds below a watched folder
+   and the disk lacks, the push of each watched folder, `commit` — one settle. What it
+   compares is what a push would push (the lister's rule, `--only`/`--except`, a dot-name
+   when the graph holds it); a held path the filter excepts is kept and counted on the
+   launch line, and nothing outside the watched folders is touched. A reconnection
+   mirrors the same way. `--no-initial` skips the batch.
 2. **A rule file.** The flags are the rule; reconsidered when a second project needs the
    same flags.
 3. **Linux.** `inotify` is a second conformance of `FileEvents`, when Semel runs there.

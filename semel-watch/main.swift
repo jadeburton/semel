@@ -73,7 +73,7 @@ do {
 // SIGINT and SIGTERM end the stream, and with it the loop; the engine and the graph are
 // left as they are, so the next `semel` sees what was pushed. A batch under way is given
 // a moment to finish its settle, and then the process goes regardless: what it had not
-// pushed, the next launch's initial push will.
+// pushed or removed, the next launch's initial batch will.
 let signalQueue = DispatchQueue(label: "semel-watch.signals")
 var signalSources: [DispatchSourceSignal] = []
 for signalNumber in [SIGINT, SIGTERM] {
