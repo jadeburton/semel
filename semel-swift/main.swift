@@ -9,7 +9,10 @@
 //  nothing there depends on by path, vendors the roots' dependencies into
 //  `<folder>/Dependencies`, and writes `semel.fmla` and `semel.config` beside them unless
 //  they are already there, and its part of `semel.machine.config` — the machine's tools
-//  and SDK — every time, keeping what `semel-clang` wrote there. The same command every
+//  and SDK — every time, keeping what `semel-clang` wrote there. The platform is the one
+//  `semel.config` already holds, else `--platform`, else macOS; a `--platform` the files
+//  already there do not build for is an error, and every run says the platform, the SDK
+//  and the target it prepared for. The same command every
 //  time: after cloning, and again after changing a dependency or a toolchain — a copy whose
 //  pin moved, or that is not what its lock says, is replaced with its lock, every other
 //  copy and lock is left untouched (B-138), prepare's part of the machine file is
@@ -22,6 +25,8 @@ import SemelSwiftTool
 func usage() -> Never {
     FileHandle.standardError.write(Data("""
         usage: semel-swift prepare <folder> [--platform \(Platform.allCases.map(\.rawValue).joined(separator: "|"))] [--application <target>] [--xcconfig <name>=<file>]...
+          --platform     the platform to build for: the one the \(GeneratedFiles.configFileName) already there holds,
+                         else \(Preparation.defaultPlatform.rawValue); naming another than it holds is an error
           --application  the application target to build, when more than one builds for the
                          platform; otherwise the platform picks it
           --xcconfig     the file to copy into place as <name>, an xcconfig the project names
@@ -37,14 +42,12 @@ guard arguments.first == "prepare" else {
 }
 arguments.removeFirst()
 
-var platform = Platform.macos
-var platformWasGiven = false
+var platform: Platform?
 if let flag = arguments.firstIndex(of: "--platform") {
     guard flag + 1 < arguments.count, let chosen = Platform(rawValue: arguments[flag + 1]) else {
         usage()
     }
     platform = chosen
-    platformWasGiven = true
     arguments.removeSubrange(flag...(flag + 1))
 }
 var applicationName: String?
@@ -77,10 +80,13 @@ let folder = URL(fileURLWithPath: arguments[0], isDirectory: true)
 do {
     let report = try Preparation.run(folder: folder, platform: platform, application: applicationName,
                                      xcconfigSources: xcconfigSources)
+    for line in report.platformLines {
+        print(line)
+    }
     if let project = report.project {
         print("Project: \(project)")
-        if let application = report.application {
-            print("  application \(application) for \(platform.sdkName)")
+        if let application = report.application, let buildsFor = report.buildsFor {
+            print("  application \(application) for \(buildsFor.platform.sdkName)")
         }
         for package in report.localPackages {
             print("  local package \(package.lastPathComponent) (\(package.path))")
@@ -148,12 +154,7 @@ do {
         print("  kept in \(GeneratedFiles.machineConfigFileName): \(kept.namespaces.joined(separator: ", "))\(writer)")
     }
     for file in report.kept {
-        // A config already there is the one the build reads; a platform named on this
-        // run changed nothing, and silence would let the user believe otherwise.
-        let note = platformWasGiven && file.lastPathComponent == GeneratedFiles.configFileName
-            ? " (--platform has no effect on a config that is there; delete it to regenerate)"
-            : ""
-        print("Kept: \(file.path)\(note)")
+        print("Kept: \(file.path)")
     }
 } catch {
     FileHandle.standardError.write(Data("semel-swift: \(error)\n".utf8))
