@@ -232,6 +232,41 @@ public enum GeneratedFiles {
         return blocks.joined(separator: "\n\n") + "\n"
     }
 
+    // MARK: - Reading back what the files already say
+
+    /// The target triple a project config holds, read as the engine reads the file: the
+    /// first `<namespace>.target` by key, since prepare writes one triple to every
+    /// namespace that takes one. Nil when the config states none — a hand-written one may
+    /// configure no compiler at all.
+    public static func target(inProjectConfig text: String) -> String? {
+        let settings = [String: String](plainText: text)
+        return settings.keys.sorted().first { $0.hasSuffix(".target") }.flatMap { settings[$0] }
+    }
+
+    /// The `sdk:` an `XcodeProjectConverter` in a formula is given: what platform a
+    /// project formula builds for. Nil when no converter is constructed — a hand-written
+    /// formula that says nothing about the platform — or it is given no `sdk:`. Comment
+    /// lines are left out, as the parser leaves them out.
+    public static func converterSDK(inFormula text: String) -> String? {
+        let formulaText = text.components(separatedBy: "\n")
+            .filter { !$0.drop(while: { $0 == " " || $0 == "\t" }).hasPrefix("//") }
+            .joined(separator: "\n")
+        guard let arguments = firstCapture(of: #"\bXcodeProjectConverter\s*\(([^)]*)\)"#, in: formulaText) else {
+            return nil
+        }
+        return firstCapture(of: #"(?:^|[\s,])sdk\s*:\s*'([^']*)'"#, in: arguments)
+            ?? firstCapture(of: #"(?:^|[\s,])sdk\s*:\s*"([^"]*)""#, in: arguments)
+    }
+
+    private static func firstCapture(of pattern: String, in text: String) -> String? {
+        guard let expression = try? NSRegularExpression(pattern: pattern),
+              let match = expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range(at: 1), in: text) else {
+            return nil
+        }
+        return String(text[range])
+    }
+
     /// The project file's lines for one namespace, by tool. The Swift compiler and linker
     /// and the clang tools take the target triple; clang also wants the language standards
     /// stated, which are the project's to choose; actool takes the platform by name with

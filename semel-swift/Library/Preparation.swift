@@ -6,9 +6,10 @@
 //  Swift packages and `semel 'build <folder>'`. Finds the packages, takes as roots the
 //  ones nothing depends on by path, vendors their closure into one `Dependencies`, and
 //  writes the formula and the two config files beside them. Never overwrites the formula
-//  or the project's config: a project that ships its own has already decided. Its part of
-//  the machine's config is rewritten every run: it is generated and nobody edits it, and
-//  what another writer put there is kept.
+//  or the project's config: a project that ships its own has already decided, and a
+//  `--platform` they do not build for stops the run. Its part of the machine's config is
+//  rewritten every run: it is generated and nobody edits it, and what another writer put
+//  there is kept.
 
 import Foundation
 import SemelApple
@@ -85,6 +86,156 @@ public struct PrepareReport: Equatable {
     /// gyb — that are not there (B-77). Prepare runs no scheme action: it names them, and
     /// what would generate them, for the developer to run or write.
     public var ungeneratedSources: [XcodeProjectFacts.UngeneratedSource] = []
+    /// What the build is for, as the files the build reads say it: set by every run that
+    /// gets as far as writing them.
+    public var buildsFor: BuildsFor?
+
+    /// Whether a file prepare never overwrites was written on this run or was there.
+    public enum FileOrigin: Equatable {
+        case written
+        case alreadyThere
+    }
+
+    /// The platform a run prepared for, with what `semel.config` carries for it — read
+    /// back from the file after the run, so that a config that was there is reported as
+    /// it is rather than as the flag would have written it.
+    public struct BuildsFor: Equatable {
+        public var platform: Platform
+        /// The version of the platform's SDK on this machine, which the machine file names.
+        public var sdkVersion: String
+        /// The target triple `semel.config` carries; nil when it states none.
+        public var target: String?
+        public var config: FileOrigin
+        /// A project formula's `sdk:` for its converter, and whether the formula was
+        /// written; nil for a tree of packages, or a formula that constructs no converter.
+        public var converterSDK: ConverterSDK?
+
+        public struct ConverterSDK: Equatable {
+            public var sdk: String
+            public var formula: FileOrigin
+
+            public init(sdk: String, formula: FileOrigin) {
+                self.sdk     = sdk
+                self.formula = formula
+            }
+        }
+
+        public init(platform: Platform, sdkVersion: String, target: String?, config: FileOrigin,
+                    converterSDK: ConverterSDK? = nil) {
+            self.platform     = platform
+            self.sdkVersion   = sdkVersion
+            self.target       = target
+            self.config       = config
+            self.converterSDK = converterSDK
+        }
+    }
+}
+
+// MARK: - What the build is for, as `prepare` prints it
+
+extension PrepareReport {
+
+    /// `Platform: ios-simulator, SDK iphonesimulator 26.0, target arm64-apple-ios17.0-simulator
+    /// (semel.config written)`, every run: a default platform or a config already there is
+    /// otherwise invisible until a build fails on a module the platform does not have. A
+    /// project adds the line for its formula's converter.
+    public var platformLines: [String] {
+        guard let buildsFor else {
+            return []
+        }
+        let target = buildsFor.target.map { "target \($0)" } ?? "no target"
+        var lines = ["Platform: \(buildsFor.platform.rawValue), SDK \(buildsFor.platform.sdkName) \(buildsFor.sdkVersion), "
+                     + "\(target) (\(Self.origin(of: GeneratedFiles.configFileName, buildsFor.config)))"]
+        if let converter = buildsFor.converterSDK {
+            lines.append("Converter: sdk \(converter.sdk) (\(Self.origin(of: GeneratedFiles.formulaFileName, converter.formula)))")
+        }
+        return lines
+    }
+
+    static func origin(of fileName: String, _ origin: FileOrigin) -> String {
+        switch origin {
+        case .written:      return "\(fileName) written"
+        case .alreadyThere: return "from the \(fileName) already there"
+        }
+    }
+}
+
+// MARK: - A platform the files already there do not build for
+
+/// A setting in a file prepare never overwrites that says what the build is for: the
+/// target triple in `semel.config`, or the `sdk:` a project formula gives its converter.
+public struct HeldPlatform: Equatable {
+    public enum Setting: Equatable {
+        case target(String)
+        case converterSDK(String)
+    }
+
+    public var file: URL
+    public var setting: Setting
+
+    public init(file: URL, setting: Setting) {
+        self.file    = file
+        self.setting = setting
+    }
+
+    /// The platform the setting is for; nil when it is none prepare builds for.
+    public var platform: Platform? {
+        switch setting {
+        case .target(let target):    return Platform(target: target)
+        case .converterSDK(let sdk): return Platform(sdkName: sdk)
+        }
+    }
+
+    var sentence: String {
+        let what: String
+        switch setting {
+        case .target(let target):    what = "holds target \(target)"
+        case .converterSDK(let sdk): what = "gives its converter sdk '\(sdk)'"
+        }
+        let platformName = platform.map { "which is \($0.rawValue)" } ?? "which is no platform prepare builds for"
+        return "\(file.path) \(what), \(platformName)"
+    }
+}
+
+/// Prepare never overwrites the formula or the project config, so a platform they do not
+/// build for cannot be prepared over them: the run stops before writing anything, rather
+/// than leave a build that fails later on a module the platform does not have.
+public enum PlatformConflict: Error, Equatable, CustomStringConvertible {
+    /// `--platform` names one platform and the files already there hold another.
+    case flagDisagrees(asked: Platform, held: [HeldPlatform], disagreeing: [HeldPlatform])
+    /// No `--platform`, and the files already there do not agree on one platform prepare
+    /// builds for, so there is none to keep.
+    case noOnePlatformHeld(held: [HeldPlatform])
+
+    public var description: String {
+        switch self {
+        case .flagDisagrees(let asked, let held, let disagreeing):
+            let names = Self.fileNames(of: disagreeing)
+            let pronoun = disagreeing.count == 1 ? "it" : "them"
+            var remedy = "delete \(names) to write \(pronoun) for \(asked.rawValue)"
+            if let kept = Self.onePlatform(of: held) {
+                remedy += ", or omit --platform to keep \(kept.rawValue)"
+            }
+            return disagreeing.map(\.sentence).joined(separator: "; ")
+                + ", and --platform asks for \(asked.rawValue); \(remedy)"
+        case .noOnePlatformHeld(let held):
+            return held.map(\.sentence).joined(separator: "; ")
+                + "; there is no one platform to keep: delete \(Self.fileNames(of: held)) to write "
+                + "\(held.count == 1 ? "it" : "them") for --platform (\(Preparation.defaultPlatform.rawValue) when it is not given)"
+        }
+    }
+
+    /// The one platform every held setting is for, if there is one.
+    static func onePlatform(of held: [HeldPlatform]) -> Platform? {
+        guard let platform = held.first?.platform, held.allSatisfy({ $0.platform == platform }) else {
+            return nil
+        }
+        return platform
+    }
+
+    private static func fileNames(of held: [HeldPlatform]) -> String {
+        held.map(\.file.lastPathComponent).joined(separator: " and ")
+    }
 }
 
 // MARK: - What vendoring did, as `prepare` prints it
@@ -185,10 +336,20 @@ public enum Preparation {
     /// project names, to the file to copy there.
     /// `application` names the application target to build when more than one builds for
     /// the platform; nil lets the platform pick, as the converter does.
-    public static func run(folder: URL, platform: Platform, application: String? = nil, xcconfigSources: [String: URL] = [:],
-                           steps: Steps = .live) throws -> PrepareReport {
+    /// `requested` is `--platform`, nil when it is not given: the platform the files
+    /// already there hold is then the run's, and `defaultPlatform` when they hold none.
+    /// Given, it must be the one they hold (`PlatformConflict`).
+    public static func run(folder: URL, platform requested: Platform?, application: String? = nil,
+                           xcconfigSources: [String: URL] = [:], steps: Steps = .live) throws -> PrepareReport {
         let folder = folder.standardizedFileURL
         let dependencies = folder.appendingPathComponent(Vendoring.dependenciesFolderName, isDirectory: true)
+        let configFile   = folder.appendingPathComponent(GeneratedFiles.configFileName)
+        let formulaFile  = folder.appendingPathComponent(GeneratedFiles.formulaFileName)
+        let projectFile  = try Self.projectFile(in: folder)
+        // Before anything is vendored, copied or written: a conflict leaves the folder as
+        // it was.
+        let platform = try Self.platform(requested: requested,
+                                         held: heldPlatforms(config: configFile, formula: projectFile == nil ? nil : formulaFile))
         var report = PrepareReport()
         let facts = try steps.facts()
         let sdkVersion = facts.sdkIdentity(platform.sdkName).map(GeneratedFiles.version(fromSDKIdentity:))
@@ -220,7 +381,7 @@ public enum Preparation {
         // says which packages it reaches, and its application's deployment target is the
         // build's. A folder without one is a tree of packages. The config carries the
         // namespaces the formula's converters read, and no other.
-        if let project = try projectFile(in: folder) {
+        if let project = projectFile {
             report.project = project.lastPathComponent
             report.vendored = try steps.vendorProject(project, dependencies, manifestChecksums)
             forgetReplacedCopies()
@@ -303,7 +464,6 @@ public enum Preparation {
         // A formula already there is kept, and it may select namespaces the one written
         // here would not — a hand-written app formula compiles catalogs. What it selects
         // joins the config, so the file is not the one thing prepare left it to write.
-        let formulaFile = folder.appendingPathComponent(GeneratedFiles.formulaFileName)
         if let kept = try? String(contentsOf: formulaFile, encoding: .utf8) {
             namespaces = Array(Set(namespaces).union(MachineFile.namespaces(selectedIn: kept))).sorted()
         }
@@ -317,15 +477,25 @@ public enum Preparation {
         let config = GeneratedFiles.projectConfig(platform: platform, deploymentVersion: deploymentVersion,
                                                   facts: facts, namespaces: namespaces)
 
-        for (name, contents) in [(GeneratedFiles.formulaFileName, formula), (GeneratedFiles.configFileName, config)] {
-            let file = folder.appendingPathComponent(name)
-            if FileManager.default.fileExists(atPath: file.path) {
+        func writeUnlessThere(_ contents: String, to file: URL) throws -> PrepareReport.FileOrigin {
+            guard !FileManager.default.fileExists(atPath: file.path) else {
                 report.kept.append(file)
-            } else {
-                try contents.write(to: file, atomically: true, encoding: .utf8)
-                report.written.append(file)
+                return .alreadyThere
             }
+            try contents.write(to: file, atomically: true, encoding: .utf8)
+            report.written.append(file)
+            return .written
         }
+        let formulaOrigin = try writeUnlessThere(formula, to: formulaFile)
+        let configOrigin  = try writeUnlessThere(config, to: configFile)
+        // Read back from the files the build reads, whichever wrote them.
+        let converterSDK = projectFile == nil
+            ? nil
+            : try GeneratedFiles.converterSDK(inFormula: String(contentsOf: formulaFile, encoding: .utf8))
+        report.buildsFor = .init(platform: platform, sdkVersion: sdkVersion,
+                                 target: try GeneratedFiles.target(inProjectConfig: String(contentsOf: configFile, encoding: .utf8)),
+                                 config: configOrigin,
+                                 converterSDK: converterSDK.map { .init(sdk: $0, formula: formulaOrigin) })
 
         // Prepare's part of the machine file is rewritten on every run: it is generated,
         // never edited, and the platform named on this run is what it should say (B-109).
@@ -341,6 +511,45 @@ public enum Preparation {
         report.written.append(machineFile)
         report.machineFileKept = merge?.kept ?? []
         return report
+    }
+
+    /// The platform a run is for when neither `--platform` nor a file already there names
+    /// one.
+    public static let defaultPlatform = Platform.macos
+
+    /// What the files prepare never overwrites already say the build is for: the config's
+    /// target, and for a project (`formula` non-nil) the formula's converter `sdk:`. A file
+    /// that is not there, or states neither, holds nothing.
+    static func heldPlatforms(config: URL, formula: URL?) throws -> [HeldPlatform] {
+        var held: [HeldPlatform] = []
+        if FileManager.default.fileExists(atPath: config.path),
+           let target = GeneratedFiles.target(inProjectConfig: try String(contentsOf: config, encoding: .utf8)) {
+            held.append(.init(file: config, setting: .target(target)))
+        }
+        if let formula, FileManager.default.fileExists(atPath: formula.path),
+           let sdk = GeneratedFiles.converterSDK(inFormula: try String(contentsOf: formula, encoding: .utf8)) {
+            held.append(.init(file: formula, setting: .converterSDK(sdk)))
+        }
+        return held
+    }
+
+    /// The run's platform: the one asked for, which every held setting must be for; else
+    /// the one they are all for; else the default.
+    static func platform(requested: Platform?, held: [HeldPlatform]) throws -> Platform {
+        guard let requested else {
+            guard !held.isEmpty else {
+                return defaultPlatform
+            }
+            guard let kept = PlatformConflict.onePlatform(of: held) else {
+                throw PlatformConflict.noOnePlatformHeld(held: held)
+            }
+            return kept
+        }
+        let disagreeing = held.filter { $0.platform != requested }
+        guard disagreeing.isEmpty else {
+            throw PlatformConflict.flagDisagrees(asked: requested, held: held, disagreeing: disagreeing)
+        }
+        return requested
     }
 
     /// A lock beside every copy made on this run, once every copy is in place (B-06):

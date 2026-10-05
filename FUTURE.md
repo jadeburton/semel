@@ -589,6 +589,29 @@ first):
    includes inlined and the macros unexpanded (`-frewrite-includes`), which then needs
    the defines at compile time too.
 
+**B-140** `done` — **`prepare` says what it built for, and refuses a `--platform` the files do not hold.**
+Done 2026-10-05: the owner prepared a package tree with `semel-swift prepare <folder>`,
+which defaulted to macOS, then ran it again with `--platform ios-simulator`; the
+`semel.config` already there was kept, as `prepare` never overwrites it, the run printed
+only a note after `Kept:`, and the build failed with "no such module UIKit". Every run now
+opens its report with the platform, the SDK and the target the build will read —
+`Platform: ios-simulator, SDK iphonesimulator 26.5, target arm64-apple-ios17.0-simulator
+(semel.config written)`, or `(from the semel.config already there)` — read back from
+`semel.config` after the run (`GeneratedFiles.target(inProjectConfig:)`, through the
+config reader the engine uses), and for a project a `Converter: sdk …` line read from the
+formula's `XcodeProjectConverter` (`converterSDK(inFormula:)`). `Platform` reads both back
+as a platform, `init?(target:)` and `init?(sdkName:)`, over the one spelling
+`target(deploymentVersion:)` writes. Before anything is vendored, copied or written,
+`Preparation.run` takes what those files hold (`HeldPlatform`): with `--platform`, each
+must be for it, else `PlatformConflict.flagDisagrees` names the file, the platform it
+holds, the platform asked for and the remedy — delete the file, or omit `--platform` to
+keep its platform; without the flag, their platform is the run's, the machine file is
+written for it, and `macos` (`Preparation.defaultPlatform`) only when they hold none — a
+config and a formula that disagree are `noOnePlatformHeld`. A second identical run still
+changes nothing on disk but the machine file. `PrepareTests` hold the report for a fresh
+write and a config already there, the error and that it writes nothing, a matching flag,
+no flag, and a project formula for another SDK; `PlatformTests` the readers.
+
 **B-138** `done` — **`prepare` notices a moved pin and re-vendors only that copy.**
 Done 2026-10-04: `prepare` resolves as before, then `Vendoring.copyCheckouts` asks of each
 checkout whether the copy under its name is what copying would make again

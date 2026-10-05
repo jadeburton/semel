@@ -964,6 +964,143 @@ final class PrepareTests: XCTestCase {
         XCTAssertTrue(machine.contains("swift.compiler.toolDescriptor.name=swiftc"), "got:\n\(machine)")
     }
 
+    // MARK: - What the build is for
+
+    private func contents(_ relativePath: String) throws -> String {
+        try String(contentsOf: root.appendingPathComponent(relativePath), encoding: .utf8)
+    }
+
+    /// Every run says the platform, the SDK and the target, read back from the config it
+    /// wrote.
+    func test_aFreshRunReportsThePlatformAndTheTargetItWrote() throws {
+        try write("Packages/Timeline/Package.swift")
+        try write("Packages/Models/Package.swift")
+
+        let report = try Preparation.run(folder: folder("Packages"), platform: .iosSimulator, steps: steps())
+
+        XCTAssertEqual(report.buildsFor, .init(platform: .iosSimulator, sdkVersion: "26.5",
+                                               target: "arm64-apple-ios18.0-simulator", config: .written))
+        XCTAssertEqual(report.platformLines,
+                       ["Platform: ios-simulator, SDK iphonesimulator 26.5, target arm64-apple-ios18.0-simulator (semel.config written)"])
+    }
+
+    /// Without `--platform` the config already there decides — not the default — and the
+    /// machine file is written for it. A second run changes nothing but the machine file.
+    func test_withoutTheFlagTheConfigAlreadyThereIsThePlatform() throws {
+        try write("Packages/Timeline/Package.swift")
+        _ = try Preparation.run(folder: folder("Packages"), platform: .iosSimulator, steps: steps())
+        let formula = try contents("Packages/semel.fmla")
+        let config  = try contents("Packages/semel.config")
+
+        let report = try Preparation.run(folder: folder("Packages"), platform: nil, steps: steps())
+
+        XCTAssertEqual(report.buildsFor, .init(platform: .iosSimulator, sdkVersion: "26.5",
+                                               target: "arm64-apple-ios18.0-simulator", config: .alreadyThere))
+        XCTAssertEqual(report.platformLines,
+                       ["Platform: ios-simulator, SDK iphonesimulator 26.5, target arm64-apple-ios18.0-simulator "
+                        + "(from the semel.config already there)"])
+        XCTAssertEqual(try contents("Packages/semel.fmla"), formula)
+        XCTAssertEqual(try contents("Packages/semel.config"), config)
+        XCTAssertTrue(try contents("Packages/semel.machine.config").contains("swift.compiler.sdk=iphonesimulator"))
+    }
+
+    /// No flag and nothing there: the default, which the line names.
+    func test_withoutTheFlagOrAConfigThePlatformIsMacOS() throws {
+        try write("Packages/Models/Package.swift")
+
+        let report = try Preparation.run(folder: folder("Packages"), platform: nil, steps: steps())
+
+        XCTAssertEqual(report.buildsFor?.platform, .macos)
+        XCTAssertEqual(report.platformLines,
+                       ["Platform: macos, SDK macosx 26.5, target arm64-apple-macosx26.5 (semel.config written)"])
+    }
+
+    func test_aFlagThatMatchesTheConfigIsNoError() throws {
+        try write("Packages/Timeline/Package.swift")
+        _ = try Preparation.run(folder: folder("Packages"), platform: .iosSimulator, steps: steps())
+
+        let report = try Preparation.run(folder: folder("Packages"), platform: .iosSimulator, steps: steps())
+
+        XCTAssertEqual(report.buildsFor?.config, .alreadyThere)
+        XCTAssertEqual(report.buildsFor?.target, "arm64-apple-ios18.0-simulator")
+    }
+
+    /// A `--platform` the config already there does not hold stops the run before anything
+    /// is vendored or written, naming the file, both platforms and the remedy.
+    func test_aFlagThatDisagreesWithTheConfigIsAnErrorAndWritesNothing() throws {
+        try write("Packages/Timeline/Package.swift")
+        _ = try Preparation.run(folder: folder("Packages"), platform: .macos, steps: steps())
+        let machine = try contents("Packages/semel.machine.config")
+        var vendored = false
+
+        XCTAssertThrowsError(try Preparation.run(folder: folder("Packages"), platform: .iosSimulator,
+                                                 steps: steps(vendored: { _, _ in
+                                                     vendored = true
+                                                     return []
+                                                 }))) { error in
+            let config = folder("Packages").appendingPathComponent("semel.config")
+            let held = HeldPlatform(file: config, setting: .target("arm64-apple-macosx26.5"))
+            XCTAssertEqual(error as? PlatformConflict, .flagDisagrees(asked: .iosSimulator, held: [held], disagreeing: [held]))
+            XCTAssertEqual("\(error)",
+                           "\(config.path) holds target arm64-apple-macosx26.5, which is macos, and --platform asks for "
+                           + "ios-simulator; delete semel.config to write it for ios-simulator, or omit --platform to keep macos")
+        }
+        XCTAssertFalse(vendored)
+        XCTAssertEqual(try contents("Packages/semel.machine.config"), machine)
+    }
+
+    /// A project formula's converter `sdk:` holds a platform too: a flag it disagrees with
+    /// is an error, and the report names the converter's SDK.
+    func test_aProjectFormulaForAnotherSDKIsAnError() throws {
+        try write("App/App.xcodeproj/project.pbxproj", projectFixture)
+        try write("App/semel.fmla", GeneratedFiles.formula(project: "App.xcodeproj", platform: .macos))
+
+        XCTAssertThrowsError(try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())) { error in
+            let formula = folder("App").appendingPathComponent("semel.fmla")
+            XCTAssertEqual("\(error)",
+                           "\(formula.path) gives its converter sdk 'macosx', which is macos, and --platform asks for "
+                           + "ios-simulator; delete semel.fmla to write it for ios-simulator, or omit --platform to keep macos")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder("App").appendingPathComponent("semel.config").path))
+
+        let report = try Preparation.run(folder: folder("App"), platform: nil, steps: steps())
+
+        XCTAssertEqual(report.buildsFor?.platform, .macos)
+        XCTAssertEqual(report.buildsFor?.converterSDK, .init(sdk: "macosx", formula: .alreadyThere))
+        XCTAssertEqual(report.platformLines.last, "Converter: sdk macosx (from the semel.fmla already there)")
+    }
+
+    /// A config and a formula that disagree leave no platform to keep without the flag.
+    func test_aConfigAndAFormulaThatDisagreeAreAnErrorWithoutTheFlag() throws {
+        try write("App/App.xcodeproj/project.pbxproj", projectFixture)
+        try write("App/semel.fmla", GeneratedFiles.formula(project: "App.xcodeproj", platform: .macos))
+        try write("App/semel.config", "swift.compiler.target=arm64-apple-ios18.5-simulator\n")
+
+        XCTAssertThrowsError(try Preparation.run(folder: folder("App"), platform: nil, steps: steps())) { error in
+            guard case .noOnePlatformHeld(let held)? = error as? PlatformConflict else {
+                return XCTFail("got \(error)")
+            }
+            XCTAssertEqual(held.map(\.platform), [.iosSimulator, .macos])
+        }
+    }
+
+    func test_theConfigsTargetAndTheFormulasSDKAreReadBack() {
+        XCTAssertEqual(GeneratedFiles.target(inProjectConfig: """
+            // a comment
+            // swift.compiler.target=arm64-apple-macosx14.0
+            apple.assetCatalogCompiler.platform=iphonesimulator
+            swift.compiler.target=arm64-apple-ios17.0-simulator
+            """), "arm64-apple-ios17.0-simulator")
+        XCTAssertNil(GeneratedFiles.target(inProjectConfig: "clang.compiler.cStandard=gnu11\n"))
+        XCTAssertEqual(GeneratedFiles.converterSDK(inFormula: GeneratedFiles.formula(project: "App.xcodeproj", platform: .iosSimulator,
+                                                                                     application: "App")),
+                       "iphonesimulator")
+        XCTAssertEqual(GeneratedFiles.converterSDK(inFormula: "include XcodeProjectConverter(path: <A.xcodeproj>, sdk: \"macosx\").formula"),
+                       "macosx")
+        XCTAssertNil(GeneratedFiles.converterSDK(inFormula: "// include XcodeProjectConverter(sdk: 'macosx').formula\n"))
+        XCTAssertNil(GeneratedFiles.converterSDK(inFormula: "include SwiftFormulaConverter(path: <.>, root: <.>).formula\n"))
+    }
+
     /// No manifest declares a macOS version, so the SDK's own version is the deployment
     /// version — everything the SDK has is allowed.
     func test_fallsBackToTheSDKVersionWhenNoPackageDeclaresOne() throws {
