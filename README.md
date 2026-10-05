@@ -227,6 +227,14 @@ Semel never fetches anything: every file a build needs has to be inside the inpu
 cd path/to && semel 'build Packages'        # products land in path/to/semel-out/Packages
 ```
 
+The report starts with what the build is for, read back from the `semel.config` the build reads:
+
+```
+Platform: ios-simulator, SDK iphonesimulator 26.5, target arm64-apple-ios17.0-simulator (semel.config written)
+```
+
+`prepare` never overwrites `semel.config` or `semel.fmla`, so the platform is decided once. Without `--platform`, a `semel.config` already there decides it, and the line ends `(from the semel.config already there)`; with neither, it is `macos`. A `--platform` the files already there do not build for stops the run before anything is written, and the error names the file, the platform it holds and the remedy: delete it to write it for the platform asked for, or omit `--platform` to keep it. For a project, the formula's converter carries the platform as its `sdk:`, which a second line names (`Converter: sdk iphonesimulator (semel.fmla written)`) and which `--platform` must agree with too.
+
 Beside each copy, `prepare` writes a lock — `Dependencies/GRDB.swift.semel-lock` — to check in with it. Its `content` line is the Merkle root of the vendored folder as Semel sees it once pushed, and every build compares the two: a dependency that has moved since it was vendored stops the build, naming the expected and the found hash, rather than being quietly rebuilt against. The `version`, `revision` and `origin` lines are recorded and never enforced by a build: which version a copy should be is the package manager's question, and `prepare` is where it is asked. To accept a change, run `prepare` again, or put the found hash on the `content` line. A vendored folder with no lock beside it builds, with a notice saying nothing checks it.
 
 A second `prepare` touches only what moved. SwiftPM resolves again, and each pin it chose is compared with the lock beside the copy: a copy whose lock records the same version, revision and origin, and whose folder still folds to the lock's `content`, is left as it is with its lock, so its root does not move and nothing built from it rebuilds. A pin that moved is copied and locked again, and so is a copy with no lock, a lock that does not parse, or a copy changed since its lock was written. The report says which, one line per package copied, then a count of the rest:
