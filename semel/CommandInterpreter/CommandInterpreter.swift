@@ -161,6 +161,11 @@ public final class CommandInterpreter: CommandContext {
     /// when this is not zero, which is what makes `semel 'build Packages'` a build step.
     public var errorsReported: Int { errorsLock.withLock { errorsReportedStorage } }
 
+    /// How many batches the lock barrier has refused a command of this session (B-146):
+    /// what `build` reads to stop after a push that did not land, and a program driving the
+    /// interpreter reads to tell a refused batch from any other failure.
+    public private(set) var batchesRefused = 0
+
     /// Whether a settle report has already added to `errorsReported` once since the last
     /// `resetErrorRecordAccounting()` — the reset is per `wait`. See `countErrorRecords`.
     /// Guarded by `errorsLock` alongside the count itself.
@@ -385,7 +390,14 @@ public final class CommandInterpreter: CommandContext {
             defer { printsErrorEvents = true }
             holdSettles()
             defer { _ = releaseSettles() }
+            let refusedBefore = batchesRefused
             try run("push \(folder)")
+            // A refused push changed nothing, so there is nothing to wait for, and what the
+            // last build exported is still what `input:` builds.
+            guard batchesRefused == refusedBefore else {
+                outputMessage("Not built: the push was refused, and nothing was exported.")
+                return
+            }
             let errorsBeforeSettle = errorsReported
             try run("wait")
             if follows {
@@ -431,6 +443,9 @@ public final class CommandInterpreter: CommandContext {
         } catch CommandInterpreterError.quit {
             throw CommandInterpreterError.quit
         } catch let error as ServerError {
+            if case .batchRejected = error.response {
+                batchesRefused += 1
+            }
             outputError(error.description)
         } catch {
             outputError(Self.userFacingMessage(for: error))
@@ -523,6 +538,37 @@ public final class CommandInterpreter: CommandContext {
         }
     }
 
+    /// The locks the input file system holds at or below `folder` — relative to its root,
+    /// the empty string for the root itself — each a file named `<name>.semel-lock` with
+    /// its bytes, and the folder's own beside it: the paths of the locks, which name the
+    /// folders they lock (B-146). One listing for the tree, by the lock's own pattern.
+    public func inputLocks(below folder: String) throws -> [String] {
+        let suffix  = "*.\(DependencyLock.fileExtension)"
+        let pattern = folder.isEmpty ? "\(WildcardPath.anyFolders)/\(suffix)" : "\(folder)/\(WildcardPath.anyFolders)/\(suffix)"
+        var entries: [ListEntry] = []
+        let last: DaemonResponse
+        do {
+            last = try request(.list(fileSystem: .input, pattern: pattern)) { part in
+                if case .list(let partEntries) = part {
+                    entries.append(contentsOf: partEntries)
+                }
+            }.0
+        } catch let failure as ServerError where failure.isTheRequestsOwn {
+            return []
+        }
+        if case .list(let lastEntries) = last {
+            entries.append(contentsOf: lastEntries)
+        }
+        var locks = entries.filter { $0.kind == .file && Self.isHeld($0) }.map(\.path)
+        if !folder.isEmpty {
+            let ownLock = DependencyLock.lockPath(forDependencyAt: folder)
+            if try inputHolds(ownLock) {
+                locks.append(ownLock)
+            }
+        }
+        return locks.sorted()
+    }
+
     /// Whether a listed name stands for something pushed: there, read or not — not a
     /// source removed and still standing, nor a name the graph only asks for.
     private static func isHeld(_ entry: ListEntry) -> Bool {
@@ -597,7 +643,8 @@ public final class CommandInterpreter: CommandContext {
         ]),
         ("Files", [
             HelpEntry(verbs: ["push"], usage: "push <path> ...",
-                      description: "send files or folders under the base into the input file system"),
+                      description: "send files or folders under the base into the input file system; a push that "
+                                 + "changes a locked folder without its lock is refused whole (see commit)"),
             HelpEntry(verbs: ["rm", "remove"], usage: "rm <path> ...", description: "remove pushed files or folders"),
             HelpEntry(verbs: ["cp", "copy"], usage: "cp <path> [<destination>]",
                       description: "copy a file out of the input or output file system"),
@@ -613,7 +660,16 @@ public final class CommandInterpreter: CommandContext {
                       description: "show or set the tree pushes are read from, remembered for the next launch; "
                                  + "--forget stops remembering it, and semel then starts in the current directory"),
             HelpEntry(verbs: ["begin", "commit"], usage: "begin … commit",
-                      description: "hold the engine across several pushes, so it settles once"),
+                      description: "hold the engine across several pushes, so it settles once; commit refuses the whole "
+                                 + "batch, and puts input: back, when it changed a folder locked by a <folder>.semel-lock "
+                                 + "beside it without a lock the folder then matches"),
+            HelpEntry(verbs: ["checkpoint"], usage: "checkpoint [<name>]",
+                      description: "name the tree input: holds, `latest` unless a name is given; a checkpoint is a "
+                                 + "value, the tree's content root, not a moment"),
+            HelpEntry(verbs: ["checkpoints"], usage: "checkpoints", description: "every checkpoint, by name, with its root"),
+            HelpEntry(verbs: ["restore"], usage: "restore <name>",
+                      description: "make input: the checkpoint's tree again, in one batch through the locks; "
+                                 + "the settle it causes is answered from the cache"),
             HelpEntry(verbs: ["quit", "q", "exit"], usage: "quit", description: "leave the prompt, stopping its watcher"),
             HelpEntry(verbs: ["stop"], usage: "semel stop",
                       description: "end the engine semel started; the next semel starts one"),

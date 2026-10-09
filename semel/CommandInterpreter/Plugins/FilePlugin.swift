@@ -122,10 +122,16 @@ final class FilePlugin: CommandPlugin {
             }
         }
 
-        // One batch around the whole push, so the engine coalesces its work signals.
-        _ = try context.request(.beginBatch)
-        defer { _ = try? context.request(.endBatch) }
+        // One batch around the whole push, so the engine coalesces its work signals; and so
+        // a push nobody wrapped in `begin` … `commit` is checked against the locks as one
+        // change, and refused whole when it moves a locked folder (B-146).
+        try context.inBatchOfItsOwn {
+            try push(work, notOnDisk: notOnDisk, context: context)
+        }
+    }
 
+    /// The pushing half of `push`: the work list sent, the outcomes reported.
+    private func push(_ work: [PushWork], notOnDisk: [String], context: any CommandContext) throws {
         // A push of a whole project runs to thousands of files: name each one while the
         // list is short enough to read, and count them when it is not.
         let nameEachPath = work.count <= PathList.namedIndividually
@@ -750,9 +756,13 @@ final class FilePlugin: CommandPlugin {
         // One batch around the removal, as a push takes around its files: the server
         // unpins and marks as it walks the matches, and without a batch the engine drains
         // against a tree the walk is still taking apart.
-        _ = try context.request(.beginBatch)
-        defer { _ = try? context.request(.endBatch) }
+        try context.inBatchOfItsOwn {
+            try remove(pathsOrWildcards, under: base, context: context)
+        }
+    }
 
+    /// The removing half of `rm`: each pattern sent, the removal reported.
+    private func remove(_ pathsOrWildcards: [String], under base: Path, context: any CommandContext) throws {
         // The reply to a removal of a whole tree streams (B-137): each part is counted as it
         // comes and says how far the removal has got, and no more paths are kept than the
         // report can name.

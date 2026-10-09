@@ -80,7 +80,7 @@ cd -i sources/
 
 | Command | Description |
 |---------|-------------|
-| `push <path> ...` | Push files or directories from disk into the input file system: several paths are one push and one report. A push only adds — a file gone from disk stays in `input:` until `rm` removes it; wrap the two in `begin` … `commit` to settle once |
+| `push <path> ...` | Push files or directories from disk into the input file system: several paths are one push and one report. A push only adds — a file gone from disk stays in `input:` until `rm` removes it; wrap the two in `begin` … `commit` to settle once. A push is a batch of its own, so one that changes a locked folder without its lock is refused whole — see [locked folders](#locked-folders) |
 | `rm <path> ...` (`remove`) | Remove files or directories from the input file system: the one way a source leaves it |
 | `cp [-i\|-o] <src> [dest]` (`copy`) | Copy a file out of the internal file system to disk |
 | `export <folder> --into <dir>` | Copy every product under `<folder>` of the output file system into `<dir>`, keeping the tree below it |
@@ -115,7 +115,10 @@ rm build/**
 | Command | Description |
 |---------|-------------|
 | `base [path]` / `base --forget` | Show or set the external base directory `push`, `build` and `export` read the disk from. A base that is set is remembered in `semel.base` in the Semel home, and the next `semel` starts from it while the directory exists — the banner's `Base:` line says `(remembered)`; otherwise it starts from the current directory. `--forget` removes the file and leaves this session's base as it is |
-| `begin` … `commit` | Hold the engine between several pushes so it settles once, on the `commit`, which also waits for that settle. Every `push` already does this for its own files; this is for a script whose tree arrives over several commands. `wait` refuses while a batch is open |
+| `begin` … `commit` | Hold the engine between several pushes so it settles once, on the `commit`, which also waits for that settle. Every `push` already does this for its own files; this is for a script whose tree arrives over several commands. `wait` refuses while a batch is open. The outermost `commit` refuses the whole batch, and puts `input:` back as it was before `begin`, when the batch changed a [locked folder](#locked-folders) without bringing the lock the folder then matches; no batch is open after a refusal |
+| `checkpoint [<name>]` | Name the tree `input:` holds — its content root, one hash, `latest` unless a name is given — and print the hash. A checkpoint is a value, not a moment: two checkpoints of one tree are one hash, whenever they were taken, and nothing lists them by time. Kept in the graph's database; every object below it is already in the store, so recording one copies nothing |
+| `checkpoints` | Every checkpoint, by name, with the hash it names |
+| `restore <name>` | Make `input:` the checkpoint's tree again — files, links and modes pushed where they differ, what the checkpoint lacks removed — in one batch, through the locks like any other, and wait for the settle it causes, which every node downstream answers from the cache |
 | `q` / `quit` / `exit` | Exit, stopping the watcher `watch <folder>` started |
 
 Commands can be prefixed with `semel` (e.g. `semel ls`) for scripting.
@@ -144,7 +147,12 @@ its summary, per burst. It follows the formula's inputs as `build` does, and wit
 exports after each settle without errors — after one with errors it names the products
 they stop instead. What it watches is what `push` would push;
 `--only` and `--except` narrow that with the wildcards a for-each takes, and the export
-folder and `semel-out` are never pushed. At the prompt, `watch Packages --into ./out` starts
+folder and `semel-out` are never pushed. A [locked folder](#locked-folders) is not watched
+unless an `--only` names it, and the launch line says which are locked and that
+`semel-swift prepare` is how they change; a change to a lock brings its folder with it, so a
+re-vendor lands in one batch. A batch the lock refuses at `commit` is reported as the error
+it is, and nothing is built or exported from it; the next burst of saves is a batch of its
+own. At the prompt, `watch Packages --into ./out` starts
 one for the session's base; `unwatch` or `quit` stops it.
 
 ```sh
@@ -237,6 +245,21 @@ Platform: ios-simulator, SDK iphonesimulator 26.5, target arm64-apple-ios17.0-si
 `prepare` never overwrites `semel.config` or `semel.fmla`, so the platform is decided once. Without `--platform`, a `semel.config` already there decides it, and the line ends `(from the semel.config already there)`; with neither, it is `macos`. A `--platform` the files already there do not build for stops the run before anything is written, and the error names the file, the platform it holds and the remedy: delete it to write it for the platform asked for, or omit `--platform` to keep it. For a project, the formula's converter carries the platform as its `sdk:`, which a second line names (`Converter: sdk iphonesimulator (semel.fmla written)`) and which `--platform` must agree with too.
 
 Beside each copy, `prepare` writes a lock — `Dependencies/GRDB.swift.semel-lock` — to check in with it. Its `content` line is the Merkle root of the vendored folder as Semel sees it once pushed, and every build compares the two: a dependency that has moved since it was vendored stops the build, naming the expected and the found hash, rather than being quietly rebuilt against. The `version`, `revision` and `origin` lines are recorded and never enforced by a build: which version a copy should be is the package manager's question, and `prepare` is where it is asked. To accept a change, run `prepare` again, or put the found hash on the `content` line. A vendored folder with no lock beside it builds, with a notice saying nothing checks it.
+
+#### Locked folders
+
+A folder is locked when a lock is in `input:` beside it — `Dependencies/GRDB.swift.semel-lock` beside `Dependencies/GRDB.swift`, the rule a build finds a lock by — and the lock is a write barrier. A batch that changes anything below a locked folder (a push, an `rm`, a link) lands only if it also brings the lock the folder then matches, or removes the lock; otherwise the outermost `commit` refuses it whole — every path it touched is put back, and nothing is built from it — and says why:
+
+```
+input:/Packages/Dependencies/GRDB.swift is locked, and the batch changed it without a lock it matches: the batch was not committed, input: is as it was before it, and no batch is open.
+  lock:     input:/Packages/Dependencies/GRDB.swift.semel-lock
+  expected: sha256:9c1f…
+  found:    sha256:47d0…
+  paths:    input:/Packages/Dependencies/GRDB.swift/GRDB/Core/Database.swift
+  `semel-swift prepare` vendors the folder again and writes its lock with it; removing the lock unlocks the folder.
+```
+
+A push outside `begin` … `commit` is a batch of its own, so `push` and `build` are refused the same way, and `build` then stops with `Not built: the push was refused, and nothing was exported.` A lock that does not parse refuses the batch naming its line: a folder with a broken lock is locked shut, not open. `prepare` writes a copy and its lock together, so a `build` after it pushes both in one batch and lands. To change vendored code on purpose, take the lock out (`rm` it, and delete it from disk), which is a visible change to review; `prepare` puts the copy back as the lock describes it. `checkpoint` and `restore` go through the barrier too: a restore across a re-vendor brings the old lock back with the old copy.
 
 A second `prepare` touches only what moved. SwiftPM resolves again, and each pin it chose is compared with the lock beside the copy: a copy whose lock records the same version, revision and origin, and whose folder still folds to the lock's `content`, is left as it is with its lock, so its root does not move and nothing built from it rebuilds. A pin that moved is copied and locked again, and so is a copy with no lock, a lock that does not parse, or a copy changed since its lock was written. The report says which, one line per package copied, then a count of the rest:
 
