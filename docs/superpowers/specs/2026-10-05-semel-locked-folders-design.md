@@ -183,3 +183,54 @@ batch a replay rather than a second code path, and is the record `restore` wants
 - Whether `checkpoint` names live in the graph database or as files in the tree. Proposed:
   the database, since a checkpoint is a property of this engine's `input:`, not of the
   tree, and a tree checked out elsewhere has its own.
+
+## As built (B-146, 2026-10-10)
+
+The two open questions were decided as proposed: a refused `commit` leaves the session's
+batch depth at zero, and the error says no batch is open; checkpoint names live in the
+graph database. Where the code differs from the text above:
+
+- **The journal's record is the node's own rows, not a tree entry.** A path is recorded
+  as absent, as a file with its `output` and `fileMetadata` rows, or as a folder with its
+  `pinned` and `symbolicLink` rows (`JournalRecord`). A `TreeManifestEntry` says what a
+  file *is*; a replay has to put back what the graph *had*, including the states a tree
+  has no word for — a name a formula asked for and nobody pushed, a removed source still
+  wired, a folder nobody pinned — and a file link's bytes, which a tree entry does not
+  carry. Rows written back as they were compare equal and wake nothing.
+- **Where the rows live.** In the graph's `Metadata` table, `batchJournal/<session>/<path>`,
+  written in the batch's own transaction. A server starting up drops every journal the
+  process before it left: a batch it never committed stands as it was pushed, as before.
+- **A refused batch still sends its one wake-up.** The engine counts the wake-ups a batch
+  asks for, and `wait` tells a settled loop from one about to wake by that count; a
+  wake-up held back for good left every later `wait` waiting. So the replay is followed by
+  a flush that folds the folders back to what they held, and the pass the wake-up causes
+  finds nothing to do — unless the batch's writes had already scheduled a consumer, which
+  then reads what it read before and is answered from the cache.
+- **The fold at `commit`** is the flush the next pass would have made, run inside a
+  savepoint that a refusal rolls back, so a refused batch's roots are never published; on
+  a re-vendor of GRDB.swift (771 files, 266 changed, 246 gone) the whole commit takes 117 ms
+  in a debug build, against about a second for the push.
+- **A lock folded under another format refuses the batch** (`otherFold`) rather than
+  being compared: the barrier cannot say the folder matches, and a folder it cannot judge
+  is locked shut, as one with an unreadable lock is.
+- **Which folders, which paths.** A path's own lock is looked for too, so a lock edited
+  alone is checked against its folder. The paths named are the batch's at or below the
+  folder, and the lock's, whose rows the batch changed: a file pushed again unchanged and
+  a folder made on the way to a file are left out. Only the first refused folder, in path
+  order, is named.
+- **The watcher.** A change to a lock mirrors its folder and pushes it in the lock's batch,
+  which is how a re-vendor lands while the folder itself is not watched; the initial
+  mirror leaves locked folders alone, so a copy edited by hand while no watcher ran does
+  not have the whole launch refused.
+- **`build`** stops after a refused push: nothing has changed to wait for, and it says
+  `Not built: the push was refused, and nothing was exported.`
+- **The reply** is an `ErrorResponse` case, since `commit` fails: every client already
+  prints an `ErrorResponse`, and the refusal is the request's own failure, not an answer.
+  The error report's `ErrorCondition` was not on main when this was built, so the refusal
+  is its own typed case, rendered in that report's shape — a statement, then `lock:`,
+  `expected:`, `found:` and `paths:` lines; when the two meet, it becomes a condition.
+- **The end-to-end case** gives `swift-binary-target-app`'s `Greeting` a dependency on a
+  repository the test makes, which `prepare` vendors and locks; the dependency is declared
+  and not imported, since an Xcode project's local package has its remote dependencies
+  vendored but not yet built against by the project's converter. The barrier is at the
+  push, whatever reads the folder.
