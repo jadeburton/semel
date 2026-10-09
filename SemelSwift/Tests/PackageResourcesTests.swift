@@ -112,6 +112,40 @@ final class PackageResourcesTests: SemelSwiftTestCase {
                        "input:/pkg/Sources/../../../above", "a path above the file system is left for the report to show")
     }
 
+    /// A catalog or a bundle declared by its path is a folder the walk does not enter, so it
+    /// has no manifest of its own; its folder's manifest says what it is. Read as a file of
+    /// its name, it was a `StaticFile` demand on the path of a folder the push made: a
+    /// second node on one path, and a catalog copied as bytes it does not have (B-143).
+    func test_aDeclaredCatalogOrBundleIsTheFolderItIs() {
+        let manifests = [targetFolder:                manifest(targetFolder, files: ["Kit.swift"], folders: ["Resources", "Foo.bundle"]),
+                         "\(targetFolder)/Resources": manifest("\(targetFolder)/Resources", folders: ["Media.xcassets"])]
+        let rules = PackageResources.Rules(declared: [.init(path: "Resources/Media.xcassets", isCopy: false),
+                                                      .init(path: "Foo.bundle", isCopy: true)])
+        let found = PackageResources.detect(rules: rules, targetFolder: targetFolder, manifests: manifests)
+
+        XCTAssertEqual(found, [
+            PackageResource(kind: .folder, path: "Foo.bundle", bundlePath: "Foo.bundle"),
+            PackageResource(kind: .assetCatalog, path: "Resources/Media.xcassets", bundlePath: ""),
+        ])
+    }
+
+    /// A declared resource the folder does not hold is SwiftPM's warning, and the target
+    /// builds without it: it is not asked for — which made a ghost under the package — and
+    /// is named instead. A dot-named one is asked for as declared, which is how `build`'s
+    /// follow pushes it by its name (B-143).
+    func test_aDeclaredResourceTheFolderLacksIsNamedNotAskedFor() {
+        let manifests = [targetFolder: manifest(targetFolder, files: ["Kit.swift", "present.json"])]
+        let rules = PackageResources.Rules(declared: [.init(path: "missing.json", isCopy: true),
+                                                      .init(path: "present.json", isCopy: true),
+                                                      .init(path: ".well-known/config", isCopy: true)])
+
+        let found = PackageResources.detect(rules: rules, targetFolder: targetFolder, manifests: manifests)
+
+        XCTAssertEqual(found.map(\.path), [".well-known/config", "present.json"])
+        XCTAssertEqual(PackageResources.absentDeclared(rules: rules, targetFolder: targetFolder, manifests: manifests),
+                       ["missing.json"])
+    }
+
     func test_aFolderThatIsAResourceWholeIsNotWalked() {
         XCTAssertFalse(PackageResources.isWalked(folderName: "Assets.xcassets"))
         XCTAssertFalse(PackageResources.isWalked(folderName: "en.lproj"))

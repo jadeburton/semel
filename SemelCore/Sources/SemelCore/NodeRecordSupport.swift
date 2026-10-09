@@ -220,7 +220,8 @@ extension NodeRecord {
         if kind == Folder.kind {
             switch outputPort {
             case Folder.folderManifestOutputPort:  try Folder.flushManifestIfDirty(nodeID: try requireID())
-            case Folder.contentRootOutputPort:     try Folder.flushContentRootIfDirty(nodeID: try requireID())
+            case Folder.contentRootOutputPort, Folder.pushedContentRootOutputPort:
+                try Folder.flushContentRootIfDirty(nodeID: try requireID())
             case Folder.subtreeManifestOutputPort: try Folder.flushSubtreeManifestIfDirty(nodeID: try requireID())
             default: break
             }

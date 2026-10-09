@@ -71,6 +71,7 @@ public enum FileSystemNodes {
     public static let folderTypeName = "Folder"
     public static let folderManifestPort = "manifest"
     public static let folderContentRootPort = "contentRoot"
+    public static let folderPushedContentRootPort = "pushedContentRoot"
     public static let folderSubtreeManifestPort = "subtreeManifest"
 }
 
@@ -163,6 +164,16 @@ public extension GraphSpecNode {
         GraphSpecNode(typeName: FileSystemNodes.folderTypeName,
                       properties: [GraphSpecProperty(key: "path", value: path)],
                       outputPort: FileSystemNodes.folderContentRootPort)
+    }
+
+    /// A pushed folder's content root over what a push of it sends — its dot-names, the
+    /// names nobody pushed and its products left out (B-143) — read at its pushed-root port:
+    /// the root `FolderContentRoot.root(ofFolderAt:)` folds from the disk, and so the one a
+    /// dependency's lock is compared with.
+    static func folderPushedContentRoot(at path: String) -> GraphSpecNode {
+        GraphSpecNode(typeName: FileSystemNodes.folderTypeName,
+                      properties: [GraphSpecProperty(key: "path", value: path)],
+                      outputPort: FileSystemNodes.folderPushedContentRootPort)
     }
 
     /// A pushed folder's subtree manifest — what it holds at every depth, by name (B-135) —

@@ -169,15 +169,48 @@ final class VendoredPackageSettleTests: XCTestCase {
     }
 
     /// The loop was never about binary targets: any folder a vendored package's manifest
-    /// names and the package lacks is a ghost under it. The build still ends — on the lock,
-    /// whose root now folds the ghost, and says so once.
+    /// names and the package lacks is a ghost under it. The build still ends — and not on
+    /// the lock, whose comparison leaves a name nobody pushed out (B-143), but on the folder
+    /// itself, named by its path as one nobody pushed.
     func test_aVendoredPackageNamingAFolderItLacksSettles() throws {
         try writeTree(target: #"{"name": "Sparkle", "type": "regular", "path": "Sources/Sparkle", "dependencies": []}"#)
 
         let (ended, transcript) = try buildEnds(within: 30)
 
         XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
-        XCTAssertTrue(transcript.contains("is not the tree its lock records"), transcript)
+        XCTAssertFalse(transcript.contains("is not the tree its lock records"), transcript)
+        XCTAssertTrue(transcript.contains("Packages/Dependencies/Sparkle/Sources/Sparkle/ has not been pushed"), transcript)
+    }
+
+    /// A vendored checkout as `prepare` leaves one: its sources beside dot-files and
+    /// dot-folders at several levels — a dot-folder of plain files, a plain folder inside a
+    /// dot-folder — and a file hidden by its flag rather than its name. `build` pushes the
+    /// tree through the client, follows what the settle found missing and runs the real
+    /// converter, and the root its lock check reads is the one `prepare` recorded (B-143).
+    func test_aVendoredPackageHoldingDotNamesBuildsWithItsLockHolding() throws {
+        let sources = ["Sources/Sparkle/Sparkle.swift": "public struct Sparkle {}\n",
+                       "Sources/Sparkle/.swiftlint.yml": "disabled_rules: []\n",
+                       "Sources/Sparkle/Resources/.keep": "",
+                       "Sources/Sparkle/Hidden.swift": "struct Hidden {}\n",
+                       ".gitignore": ".build\n",
+                       ".spi.yml": "version: 1\n",
+                       ".swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata": "<Workspace/>\n",
+                       ".github/workflows/ci.yml": "on: push\n",
+                       ".config/Plain/Settings.swift": "let inDotFolder = 1\n",
+                       "Tests/.only-dots/.inside": "dots\n"]
+        try writeTree(target: #"{"name": "Sparkle", "type": "regular", "path": "Sources/Sparkle", "dependencies": []}"#,
+                      packageFiles: sources)
+        let hidden = externalRoot.appendingPathComponent("Packages/Dependencies/Sparkle/Sources/Sparkle/Hidden.swift")
+        XCTAssertEqual(chflags(hidden.path, UInt32(UF_HIDDEN)), 0)
+        let packageFolder = externalRoot.appendingPathComponent("Packages/Dependencies/Sparkle")
+        let recorded = try FolderContentRoot.root(ofFolderAt: packageFolder)
+
+        let (ended, transcript) = try buildEnds(within: 30)
+
+        XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
+        XCTAssertFalse(transcript.contains("is not the tree its lock records"), transcript)
+        let folder = try XCTUnwrap(try engine.inputFileSystem.childNode(path: Path("Packages/Dependencies/Sparkle")))
+        XCTAssertEqual(try folder.readFromOutputPort(Folder.pushedContentRootOutputPort).expectValue(), recorded, transcript)
     }
 }
 

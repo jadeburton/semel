@@ -16,10 +16,17 @@ import SemelDatabaseModels
 /// is told their dependency moved; with it the build stops and names the expected and the
 /// found root, which is what `Package.resolved` and `yarn.lock` are for.
 ///
-/// Two wires per package, both demanded by the converter on dynamic ports: the lock file,
-/// and — only once the lock turns out to be there — the folder's content root. A tree
-/// without locks is therefore not woken by every edit below its vendored folders, and a
-/// tree with them is, which is the point of having them.
+/// Three wires per package, all demanded by the converter on dynamic ports: the lock file,
+/// and — only once the lock turns out to be there — the folder's pushed content root, which
+/// is compared, and its whole one, which is read only to say what the comparison left out.
+/// A tree without locks is therefore not woken by every edit below its vendored folders,
+/// and a tree with them is, which is the point of having them.
+///
+/// The pushed root, because the lock is folded from a copy on disk by the walk a push
+/// makes, and the graph can hold below the folder what that walk never sees: a dot-named
+/// file something asked for by name, a name the converter demanded that the copy lacks.
+/// The pushed root leaves out exactly those (B-143), so a copy nobody touched matches its
+/// lock whatever else the build asked of it.
 struct DependencyLockCheck {
 
     /// The package folders compared, sorted: every one directly under the dependencies
@@ -46,14 +53,28 @@ struct DependencyLockCheck {
         return specs
     }
 
-    /// The content root of each package whose lock arrived with something in it, by the
-    /// folder's path.
+    /// The pushed content root of each package whose lock arrived with something in it, by
+    /// the folder's path: what the lock is compared with.
     func contentRootSpecs(locks: [String: NodeValue]) -> [String: GraphSpecNode] {
         var specs: [String: GraphSpecNode] = [:]
-        for folder in folders where locks[DependencyLock.lockPath(forDependencyAt: folder)]?.isNoValue == false {
+        for folder in lockedFolders(locks: locks) {
+            specs[folder] = .folderPushedContentRoot(at: folder)
+        }
+        return specs
+    }
+
+    /// The whole content root of the same packages, by the folder's path: read when a lock
+    /// fails, to name what the graph holds below the folder that the comparison left out.
+    func wholeContentRootSpecs(locks: [String: NodeValue]) -> [String: GraphSpecNode] {
+        var specs: [String: GraphSpecNode] = [:]
+        for folder in lockedFolders(locks: locks) {
             specs[folder] = .folderContentRoot(at: folder)
         }
         return specs
+    }
+
+    private func lockedFolders(locks: [String: NodeValue]) -> [String] {
+        folders.filter { locks[DependencyLock.lockPath(forDependencyAt: $0)]?.isNoValue == false }
     }
 
     enum Outcome: Equatable {
@@ -68,8 +89,10 @@ struct DependencyLockCheck {
     /// What is wrong with one package's lock, by case: the converter's message is rendered
     /// from these, and a test asks which case it got.
     enum Problem: Equatable, CustomStringConvertible {
-        /// The folder's root is not the root the lock records.
-        case mismatch(folder: String, lock: DependencyLock, found: DataObjectHash)
+        /// The folder's pushed root is not the root the lock records. `leftOut` is what the
+        /// graph holds below the folder that neither root folds, when its whole root could
+        /// be read.
+        case mismatch(folder: String, lock: DependencyLock, found: DataObjectHash, leftOut: [LeftOutEntry])
         /// The lock was taken under another fold, so its root cannot be compared with this
         /// Semel's: the tree may be exactly what was vendored.
         case foldChanged(folder: String, lock: DependencyLock)
@@ -78,11 +101,12 @@ struct DependencyLockCheck {
 
         var description: String {
             switch self {
-            case .mismatch(let folder, let lock, let found):
+            case .mismatch(let folder, let lock, let found, let leftOut):
                 return "\(folder) is not the tree its lock records.\n"
                      + "  lock:     \(Self.describe(lockOf: folder, lock))\n"
                      + "  expected: \(DependencyLock.contentScheme)\(lock.contentRoot)\n"
                      + "  found:    \(DependencyLock.contentScheme)\(found)\n"
+                     + Self.describe(leftOut: leftOut)
                      + "If the change is meant — the dependency updated or patched — `semel-swift prepare` on the "
                      + "project vendors it again and rewrites the lock, or put the found hash on the lock's `content` "
                      + "line. If it is not, vendor it again: the copy is not what was locked."
@@ -97,6 +121,38 @@ struct DependencyLockCheck {
                      + "`semel-swift prepare` on the project writes it again."
             }
         }
+
+        /// What the comparison did not fold, by reason, a few paths each. None of it is what
+        /// differs — a push of the folder sends none of it, and the copy's fold leaves it
+        /// out alike — so the difference is in what both read: a file edited, or one the
+        /// graph keeps from an earlier copy because a push only adds.
+        static func describe(leftOut: [LeftOutEntry]) -> String {
+            guard !leftOut.isEmpty else {
+                return ""
+            }
+            let groups: [(reason: LeftOutEntry.Reason, label: String)] = [
+                (.dotNamed,     "dot-named"),
+                (.notPushed,    "asked for and never pushed"),
+                (.removed,      "removed"),
+                (.product,      "products"),
+                (.failed,       "failed"),
+                (.holdsNothing, "folders holding nothing a push sends"),
+            ]
+            var text = "  Not compared, as a push of the folder sends none of it and the lock leaves it out:\n"
+            for group in groups {
+                let paths = leftOut.filter { $0.reason == group.reason }.map(\.path)
+                guard !paths.isEmpty else {
+                    continue
+                }
+                let shown = paths.prefix(pathsNamed).joined(separator: ", ")
+                let more  = paths.count > pathsNamed ? ", and \(paths.count - pathsNamed) more" : ""
+                text += "    \(paths.count) \(group.label): \(shown)\(more)\n"
+            }
+            return text
+        }
+
+        /// How many paths of each kind a failed lock names before it counts the rest.
+        static let pathsNamed = 5
 
         /// The lock's path, with what it records about where the package came from.
         private static func describe(lockOf folder: String, _ lock: DependencyLock) -> String {
@@ -113,7 +169,8 @@ struct DependencyLockCheck {
     /// is in that state, and so is one vendored by hand; the converter says so in a notice
     /// and builds. A lock that is there is the user's statement of what the folder holds,
     /// and a folder holding anything else stops the build.
-    func outcome(locks: [String: NodeValue], contentRoots: [String: NodeValue]) throws -> Outcome {
+    func outcome(locks: [String: NodeValue], contentRoots: [String: NodeValue],
+                 wholeContentRoots: [String: NodeValue]) throws -> Outcome {
         var waiting:  [String] = []
         var unlocked: [String] = []
         var problems: [Problem] = []
@@ -144,7 +201,13 @@ struct DependencyLockCheck {
                 continue
             }
             if lock.contentRoot != found {
-                problems.append(.mismatch(folder: folder, lock: lock, found: found))
+                // What was not compared is said when it can be read, and the mismatch is
+                // the error either way.
+                var leftOut: [LeftOutEntry] = []
+                if case .value(let wholeRoot)? = wholeContentRoots[folder] {
+                    leftOut = (try? FolderContentRoot.entriesLeftOutOfThePushedRoot(below: wholeRoot)) ?? []
+                }
+                problems.append(.mismatch(folder: folder, lock: lock, found: found, leftOut: leftOut))
             }
         }
 

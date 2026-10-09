@@ -40,6 +40,10 @@ struct SwiftFormulaConverter: Node {
     /// a catalog at its top, `Resources/en.lproj` two levels down (B-77) — so the whole
     /// tree is asked for, on one wire, and has arrived on the next pass however deep it is.
     static let targetFolders        = "targetFolders"
+    /// The manifest of every package folder with a target that names no `path:`, and of
+    /// each of SwiftPM's predefined source folders it holds, keyed by path: what the
+    /// target's folder is found in (`DefaultTargetFolders`, B-143).
+    static let targetFolderParents  = "targetFolderParents"
     /// The folder of every dependency package whose manifest has not arrived, keyed by
     /// path, wired for as long as the converter waits for it. The value is never read: the
     /// wire is how the stall names what it waits for, typed. A folder nobody has pushed
@@ -48,10 +52,12 @@ struct SwiftFormulaConverter: Node {
     /// target folder, a settle apiece (B-110).
     static let awaitedPackageFolders = "awaitedPackageFolders"
     /// The lock beside every package read from the root's `Dependencies` folder, keyed by
-    /// the lock's path, and the content root of each whose lock is there, keyed by the
-    /// package's folder (B-06, `DependencyLockCheck`).
-    static let dependencyLocks        = "dependencyLocks"
-    static let dependencyContentRoots = "dependencyContentRoots"
+    /// the lock's path, and the pushed content root of each whose lock is there, keyed by
+    /// the package's folder (B-06, `DependencyLockCheck`), with its whole root beside it,
+    /// read only to name what a failed lock did not compare (B-143).
+    static let dependencyLocks             = "dependencyLocks"
+    static let dependencyContentRoots      = "dependencyContentRoots"
+    static let dependencyWholeContentRoots = "dependencyWholeContentRoots"
     /// The Swift linker's settings, the root's config as the product's linker reads it,
     /// asked for only when a manifest has a linker or Swift setting conditional on a
     /// platform: its `sdk` is the platform being built, which says whether the setting holds
@@ -121,8 +127,12 @@ struct SwiftFormulaConverter: Node {
     /// dynamic frameworks, which an app embeds where it embedded `frameworks_<Product>()`
     /// (B-77 item 12); at 20, a Swift target with build-tool plugins and no Swift source of
     /// its own is the conversion's error, naming the target and its plugins, where it was
-    /// compiled with nothing to compile (B-77 item 3).
-    public static let implementationVersion = 20
+    /// compiled with nothing to compile (B-77 item 3); at 21, a vendored package's lock is
+    /// compared with its folder's pushed content root, and its whole root is asked for to
+    /// name what that leaves out; a target that names no folder is found under SwiftPM's
+    /// predefined folders from their manifests, and a declared resource its folder lacks is
+    /// named rather than asked for (B-143).
+    public static let implementationVersion = 21
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -160,6 +170,8 @@ struct SwiftFormulaConverter: Node {
             .dynamic(awaitedPackageFolders),
             .dynamic(dependencyLocks),
             .dynamic(dependencyContentRoots),
+            .dynamic(dependencyWholeContentRoots),
+            .dynamic(targetFolderParents),
             .dynamic(linkerConfiguration),
             .dynamic(binaryArtifactFolders),
         ],
@@ -226,7 +238,7 @@ struct SwiftFormulaConverter: Node {
         // ── root packageJSON ──────────────────────────────────────────────────
         let jsonEntry = try jsonValue.expectValue()
 
-        let rootManifest: SPMManifest
+        var rootManifest: SPMManifest
 
         do {
             rootManifest = try SPMManifest.decode(try jsonEntry.resolveAsString())
@@ -303,7 +315,22 @@ struct SwiftFormulaConverter: Node {
         let lockValues = input.inputValues[Self.dependencyLocks] ?? [:]
         var demands = Demands(packageManifests: specs,
                               locks: lockCheck.lockSpecs,
-                              contentRoots: lockCheck.contentRootSpecs(locks: lockValues))
+                              contentRoots: lockCheck.contentRootSpecs(locks: lockValues),
+                              wholeContentRoots: lockCheck.wholeContentRootSpecs(locks: lockValues))
+
+        // ── where each target that names no folder keeps its sources (B-143) ──────
+        // A package's folder is asked for as soon as its manifest is in, alongside the
+        // manifests still on their way.
+        var unplacedTargets: [DefaultTargetFolders.Package] = []
+        for (packageFolder, manifest) in [(rootPackageFolder, rootManifest)] + availableManifests.sorted(by: { $0.key < $1.key }) {
+            unplacedTargets.append(DefaultTargetFolders.Package(folder: packageFolder, name: manifest.name,
+                                                                targets: manifest.targets.filter(\.needsDefaultFolder).map(\.name)))
+        }
+        let defaultFolders = DefaultTargetFolders(
+            packages: unplacedTargets,
+            manifests: Dictionary(FolderTreeWalk.manifests(in: input, port: Self.targetFolderParents).map { ($0.key, $0.manifest) },
+                                  uniquingKeysWith: { first, _ in first }))
+        demands.targetFolderParents = defaultFolders.specs
 
         // ── wait until every expected manifest has been received ──────────────
         let missing = specs.keys.filter { availableManifests[$0] == nil }
@@ -312,6 +339,24 @@ struct SwiftFormulaConverter: Node {
             demands.awaitedPackageFolders = Dictionary(uniqueKeysWithValues: missing.map { ($0, .folderManifest(at: $0)) })
             return try pendingOutput(reason: describeStall(missingPaths: missing.sorted(), origins: originOfExpectedPath),
                                      demands: demands)
+        }
+
+        guard defaultFolders.awaited.isEmpty else {
+            return try pendingOutput(
+                reason: "SwiftFormulaConverter: waiting for \(defaultFolders.awaited.count) folder(s) a target's sources may be in:\n"
+                      + defaultFolders.awaited.map { "  \($0)" }.joined(separator: "\n"),
+                demands: demands)
+        }
+        // Before anything below asks for a target's folder: a folder that is not there is
+        // said, not demanded.
+        guard defaultFolders.missing.isEmpty else {
+            return try pendingOutput(reason: "SwiftFormulaConverter: "
+                                           + defaultFolders.missing.map(\.description).joined(separator: "\n"),
+                                     demands: demands)
+        }
+        rootManifest = rootManifest.placingTargets(in: defaultFolders.found[rootPackageFolder] ?? [:])
+        for folder in availableManifests.keys.sorted() {
+            availableManifests[folder] = availableManifests[folder]?.placingTargets(in: defaultFolders.found[folder] ?? [:])
         }
 
         // ── the platform, when a setting depends on it (B-55, B-77) ────────
@@ -401,7 +446,8 @@ struct SwiftFormulaConverter: Node {
         // root it reads.
         let unlockedFolders: [String]
         switch try lockCheck.outcome(locks: lockValues,
-                                     contentRoots: input.inputValues[Self.dependencyContentRoots] ?? [:]) {
+                                     contentRoots: input.inputValues[Self.dependencyContentRoots] ?? [:],
+                                     wholeContentRoots: input.inputValues[Self.dependencyWholeContentRoots] ?? [:]) {
         case .waiting(let folders):
             return try pendingOutput(
                 reason: "SwiftFormulaConverter: waiting for the lock of \(folders.count) vendored package(s):\n"
@@ -446,6 +492,10 @@ struct SwiftFormulaConverter: Node {
         if let notice = Self.pluginNotice(manifests: everyManifest) {
             NodeNotice.post(notice)
         }
+        let packages = [(rootPackageFolder, rootManifest)] + availableManifests.sorted(by: { $0.key < $1.key }).map { ($0.key, $0.value) }
+        if let notice = Self.absentResourceNotice(packages: packages, manifests: folderManifests) {
+            NodeNotice.post(notice)
+        }
         return .init(
             outputValues: [Self.formulaOutput: .value(try formula.intern()),
                            Self.infoLog: .value("")],
@@ -459,6 +509,8 @@ struct SwiftFormulaConverter: Node {
         var packageManifests:      [String: GraphSpecNode] = [:]
         var locks:                 [String: GraphSpecNode] = [:]
         var contentRoots:          [String: GraphSpecNode] = [:]
+        var wholeContentRoots:     [String: GraphSpecNode] = [:]
+        var targetFolderParents:   [String: GraphSpecNode] = [:]
         var awaitedPackageFolders: [String: GraphSpecNode] = [:]
         var targetFolders:         [String: GraphSpecNode] = [:]
         var linkerConfiguration:   [String: GraphSpecNode] = [:]
@@ -470,6 +522,8 @@ struct SwiftFormulaConverter: Node {
             selfWiring.merging([SwiftFormulaConverter.externalPackageJSONs:   packageManifests,
                                 SwiftFormulaConverter.dependencyLocks:        locks,
                                 SwiftFormulaConverter.dependencyContentRoots: contentRoots,
+                                SwiftFormulaConverter.dependencyWholeContentRoots: wholeContentRoots,
+                                SwiftFormulaConverter.targetFolderParents:    targetFolderParents,
                                 SwiftFormulaConverter.targetFolders:          targetFolders,
                                 SwiftFormulaConverter.awaitedPackageFolders:  awaitedPackageFolders,
                                 SwiftFormulaConverter.linkerConfiguration:    linkerConfiguration,
@@ -484,6 +538,33 @@ struct SwiftFormulaConverter: Node {
         .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(messageDataObjectHash: try reason.intern())),
                              Self.infoLog: .value("")],
               inputWireSpecs: demands.wireSpecs(selfWiring: selfWiringSpecs))
+    }
+
+    // MARK: - Resources a target lacks
+
+    /// What the conversion says about the resources manifests declare that their targets'
+    /// folders do not hold (`PackageResources.presence`); nil when there are none. SwiftPM
+    /// warns and builds the bundle without them, and so does the conversion, rather than
+    /// ask for a name nobody pushed.
+    private static func absentResourceNotice(packages: [(folder: String, manifest: SPMManifest)],
+                                             manifests: [String: FolderManifest]) -> String? {
+        var named: [String] = []
+        for (packageFolder, manifest) in packages {
+            for target in manifest.targets where target.isCompilable {
+                let absent = PackageResources.absentDeclared(rules: target.resourceRules,
+                                                             targetFolder: target.folder(in: packageFolder),
+                                                             manifests: manifests)
+                guard !absent.isEmpty else {
+                    continue
+                }
+                named.append("\(target.name) of \(manifest.name): \(absent.joined(separator: ", "))")
+            }
+        }
+        guard !named.isEmpty else {
+            return nil
+        }
+        return "Resources a manifest declares and its target's folder does not hold, left out of the bundle as "
+             + "SwiftPM leaves them (B-143): " + named.joined(separator: "; ")
     }
 
     // MARK: - Plugins
@@ -796,7 +877,7 @@ struct SwiftFormulaConverter: Node {
 
     private struct SPMManifest: Decodable {
         let name: String
-        let targets: [SPMTarget]
+        var targets: [SPMTarget]
         let products: [SPMProduct]
         /// Package dependencies as local paths relative to this manifest, each carrying
         /// enough of where it came from to explain itself when nothing is at that path.
@@ -807,6 +888,16 @@ struct SwiftFormulaConverter: Node {
         /// `swift-tools-version:6.0`, 5 from 5.x. nil when neither says, which passes no
         /// `-swift-version` and leaves swiftc its default.
         let languageMode: String?
+
+        /// The manifest with each target that names no folder given the one found for it,
+        /// relative to the package, by target name (`DefaultTargetFolders`).
+        func placingTargets(in folders: [String: String]) -> SPMManifest {
+            var placed = self
+            for index in placed.targets.indices where placed.targets[index].needsDefaultFolder {
+                placed.targets[index].path = folders[placed.targets[index].name]
+            }
+            return placed
+        }
 
         enum CodingKeys: String, CodingKey {
             case name, targets, products, dependencies, toolsVersion, swiftLanguageVersions, traits
@@ -1048,7 +1139,7 @@ struct SwiftFormulaConverter: Node {
     private struct SPMTarget: Decodable {
         let name: String
         let type: String?
-        let path: String?
+        var path: String?
         var dependencies: [SPMTargetDependency]
         /// Explicit `sources:` list, relative to the target's path.  Empty means the whole
         /// directory, which is the usual case.
@@ -1376,8 +1467,15 @@ struct SwiftFormulaConverter: Node {
             overridePackageFolder = nil
         }
 
-        // SPM default: Sources/<TargetName> relative to the package root.
+        // SPM default: Sources/<TargetName> relative to the package root, where the converter
+        // has not found the target under another of SwiftPM's folders (`DefaultTargetFolders`).
         var sourcesRelativePath: String { path ?? "Sources/\(name)" }
+
+        /// A target with sources in the package that names no folder for them: the ones
+        /// `DefaultTargetFolders` finds a folder for.
+        var needsDefaultFolder: Bool {
+            path == nil && (isCompilable || isSystemLibrary)
+        }
 
         /// The target's folder under `packageFolder`, spelled as the walk spells a folder.
         /// A manifest may put a target at the package root — `path: ""` or `"."`

@@ -106,7 +106,7 @@ final class DictionaryOrderTests: XCTestCase {
             "an array of the decoded manifests",
         "SemelCore/Sources/SemelCore/Nodes/Folder.swift: [(Folder.kind,     Folder.pinnedOutputPort),":
             "a literal array of the two kinds a child can be",
-        "SemelCore/Sources/SemelCore/Nodes/Folder.swift: [(Folder.kind,     Folder.contentRootOutputPort),":
+        "SemelCore/Sources/SemelCore/Nodes/Folder.swift: [(Folder.kind,     folderPort),":
             "a literal array of the two kinds a child can be, each with the port its content is on",
         "SemelCore/Sources/SemelCore/Nodes/Folder.swift: [(Folder.kind,     Folder.symbolicLinkOutputPort),":
             "a literal array of the two kinds a child can be, each with the port a link's target is on",

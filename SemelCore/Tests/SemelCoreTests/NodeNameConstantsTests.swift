@@ -22,6 +22,8 @@ final class NodeNameConstantsTests: SemelCoreTestCase {
         XCTAssertTrue(Folder.descriptor.outputPorts.contains(FileSystemNodes.folderManifestPort))
         XCTAssertEqual(FileSystemNodes.folderContentRootPort, Folder.contentRootOutputPort)
         XCTAssertTrue(Folder.descriptor.outputPorts.contains(FileSystemNodes.folderContentRootPort))
+        XCTAssertEqual(FileSystemNodes.folderPushedContentRootPort, Folder.pushedContentRootOutputPort)
+        XCTAssertTrue(Folder.descriptor.outputPorts.contains(FileSystemNodes.folderPushedContentRootPort))
     }
 
     func test_theSettingsNodeNamesAreTheTypes() {
