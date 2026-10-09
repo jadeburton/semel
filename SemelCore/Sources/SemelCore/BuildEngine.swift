@@ -705,21 +705,13 @@ public final class BuildEngine {
 
     /// End a batch. Sends a single coalesced signal if any were suppressed inside.
     public func endBatch() {
-        endBatch(wakingTheLoop: true)
-    }
-
-    /// End a batch, sending its coalesced signal only when `wakingTheLoop`: a batch the
-    /// lock barrier refused has been replayed, and whether anything is left for the loop
-    /// is the caller's to say (B-146). A batch that leaves others open leaves the signal
-    /// pending for them either way, since what they pushed still wants its pass.
-    public func endBatch(wakingTheLoop: Bool) {
         let shouldSignal = batchLock.withLock { () -> Bool in
             batchDepth -= 1
             guard batchDepth == 0, signalPendingInBatch else {
                 return false
             }
             signalPendingInBatch = false
-            return wakingTheLoop
+            return true
         }
         if shouldSignal {
             sendLoopSignal()

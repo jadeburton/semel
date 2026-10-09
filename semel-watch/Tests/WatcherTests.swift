@@ -44,6 +44,9 @@ final class WatcherTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        // Settled before it is stopped: a pass still running writes into the store this
+        // teardown removes, and the removal fails on what appears behind it.
+        engine?.waitUntilIdleBlocking()
         engine?.stopProcessingLoop()
         engine = nil
         BuildEngine.shared = nil

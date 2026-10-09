@@ -43,16 +43,16 @@ extension RequestHandler {
         session.journal = nil
         session.batchClosed()
 
-        var wakesTheLoop = true
-        defer { engine.endBatch(wakingTheLoop: wakesTheLoop) }
+        // The batch's wake-up is sent whether or not the barrier refused it. A refused batch
+        // has been replayed and its folders folded back to what they held, so the pass it
+        // wakes finds nothing to do — unless the batch's writes scheduled a consumer before
+        // the refusal, which then reads what it read before and is answered from the cache.
+        // Held back, the wake-ups the batch asked for would stay counted and never be
+        // answered, and every later `wait` would wait for them.
+        defer { engine.endBatch() }
         guard let journal, let rejection = try LockBarrier.commit(journal) else {
             return
         }
-        // The replay put `input:` back, and its flush folded the folders back to what they
-        // held. What it cannot take back is a consumer the batch's writes scheduled before
-        // it was refused; that one wants a pass, whose every node reads what it read before
-        // and is answered from the cache. Nothing else was changed, and nothing wakes.
-        wakesTheLoop = try database.node.countScheduled() > 0
         throw HandlerFailure.batchRejected(rejection)
     }
 

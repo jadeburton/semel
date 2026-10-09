@@ -94,15 +94,30 @@ public enum LockBarrier {
     /// holds a value in `input:` — the lock as the batch left it, so a batch that brought a
     /// lock is checked against it and one that took the lock away is free. A path that is
     /// itself a lock names its folder too: a lock edited alone must still match.
+    ///
+    /// A folder's lock is a file of the folder above it, so the locks are read a folder at
+    /// a time: the names of the children of each folder the walk passes through, however
+    /// many of the batch's paths share it, all in one read snapshot. Asking for each
+    /// candidate's lock by its path is a walk from the root per path; outside a snapshot,
+    /// each of the hundreds of reads a re-vendor makes expires every prepared statement,
+    /// and on GRDB's eight hundred files either costs more than the fold.
     static func lockedFolders(touchedBy paths: [Path]) throws -> [(folder: Path, lock: DataObjectHash)] {
-        var lockByFolder: [Path: DataObjectHash?] = [:]
+        try DatabaseLayer.shared.withReadSnapshot {
+            try readLockedFolders(touchedBy: paths)
+        }
+    }
+
+    private static func readLockedFolders(touchedBy paths: [Path]) throws -> [(folder: Path, lock: DataObjectHash)] {
+        var locksByParent: [Path: [String: DataObjectHash]] = [:]
         func lockHash(of folder: Path) throws -> DataObjectHash? {
-            if let known = lockByFolder[folder] {
-                return known
+            guard let name = folder.lastComponent else {
+                return nil
             }
-            let hash = try heldValue(at: lockPath(of: folder))
-            lockByFolder[folder] = hash
-            return hash
+            let parent = folder.deletingLastComponent ?? .empty
+            if locksByParent[parent] == nil {
+                locksByParent[parent] = try heldLocks(in: parent)
+            }
+            return locksByParent[parent]?[DependencyLock.lockPath(forDependencyAt: name)]
         }
 
         var locked: [Path: DataObjectHash] = [:]
@@ -139,15 +154,31 @@ public enum LockBarrier {
         return (path.deletingLastComponent ?? .empty) / folderName
     }
 
-    /// The hash a file in `input:` holds, nil when there is no file there or it holds no
-    /// value: a lock nobody pushed, or one taken back out, locks nothing.
-    private static func heldValue(at path: Path) throws -> DataObjectHash? {
-        guard let nodeRecord = try Folder.inputFileSystem.childNode(path: path),
-              let file = try nodeRecord.nodeAsAny() as? StaticFile,
-              case .value(let hash)? = try file.read() else {
-            return nil
+    /// The locks a folder of `input:` holds, by name, each with its hash: the files whose
+    /// name is a lock's and that hold a value. A lock nobody pushed, or one taken back out,
+    /// locks nothing.
+    ///
+    /// The children's names first, in one light query, and a port read only for a name
+    /// that is a lock's: a folder of a vendored package holds hundreds of files and, as a
+    /// rule, no lock at all.
+    private static func heldLocks(in folder: Path) throws -> [String: DataObjectHash] {
+        let database: DatabaseLayer = DatabaseLayer.shared
+        let suffix = ".\(DependencyLock.fileExtension)"
+        guard let folderRecord = try Folder.inputFileSystem.childNode(path: folder), folderRecord.kind == Folder.kind else {
+            return [:]
         }
-        return hash
+        var locks: [String: DataObjectHash] = [:]
+        let contentPort = StaticFile.outputPort.asSymbolID()
+        for child in try database.node.selectChildSummaries(parentNodeID: try folderRecord.requireID())
+            where child.kind == StaticFile.kind && child.name?.hasSuffix(suffix) == true {
+            guard let name = child.name,
+                  let port = try database.outputPort.select(nodeID: child.id, nameSymbolID: contentPort),
+                  case .value(let hash) = try port.asNodeValue() else {
+                continue
+            }
+            locks[name] = hash
+        }
+        return locks
     }
 
     // MARK: - One folder

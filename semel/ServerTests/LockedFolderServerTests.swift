@@ -162,17 +162,36 @@ final class LockedFolderServerTests: RequestHandlerTestCase {
 
     // MARK: - Waking
 
-    func test_aRefusedBatchThatReachedNoConsumerWakesNothing() throws {
+    /// A refused batch leaves the loop nothing to do: its folders are folded back and no
+    /// node is scheduled. Its one wake-up is still sent, so that the wake-ups it asked for
+    /// are answered and a later `wait` does not wait for them.
+    func test_aRefusedBatchThatReachedNoConsumerLeavesNothingToSettle() throws {
         let signalsBefore = engine.loopSignalsSent
         try daemon(.beginBatch)
         try daemon(.pushFile(path: source, mode: 0o644), body: Data("edited\n".utf8))
         XCTAssertNotNil(daemonError(.endBatch))
-        XCTAssertEqual(engine.loopSignalsSent, signalsBefore, "a refused batch changed nothing the loop must see")
+        XCTAssertEqual(try database.node.countScheduled(), 0, "a refused batch schedules nothing")
+        XCTAssertTrue(try database.metadata.selectKeys(withPrefix: "contentRootDirty/").isEmpty,
+                      "and leaves no folder to fold")
+        XCTAssertEqual(engine.loopSignalsSent, signalsBefore + 1, "one wake-up, as any batch sends")
+    }
 
+    /// With a running loop, a `wait` after a refused batch returns: the batch's wake-ups
+    /// were answered.
+    func test_aWaitAfterARefusedBatchReturns() throws {
+        engine.startProcessingLoop()
+        defer { engine.stopProcessingLoop() }
+        engine.waitUntilIdleBlocking()
         try daemon(.beginBatch)
-        try daemon(.pushFile(path: "App/main.swift", mode: 0o644), body: Data("print(1)\n".utf8))
-        try daemon(.endBatch)
-        XCTAssertEqual(engine.loopSignalsSent, signalsBefore + 1, "an accepted one wakes it once")
+        try daemon(.pushFile(path: source, mode: 0o644), body: Data("edited\n".utf8))
+        XCTAssertNotNil(daemonError(.endBatch))
+
+        let returned = expectation(description: "the wait returned")
+        DispatchQueue.global().async {
+            _ = self.handler.handle(.daemon(.wait), body: nil, session: self.session)
+            returned.fulfill()
+        }
+        wait(for: [returned], timeout: 10)
     }
 
     // MARK: - A closing connection
