@@ -3108,18 +3108,52 @@ fixture tier.
    add nothing simdjson does not: a C++ library and a program over it through the same
    four nodes.
 
-**B-80** `open` — **Projects that need macros.** The converter skips `macro` and `plugin`
+**B-80** `open` — **Projects that need macros.** The converter skipped `macro` and `plugin`
 targets (`SwiftFormulaConverter.isCompilable`); since B-77 item 3 it names the build-tool
-plugins a target uses as not run, where it dropped them unsaid. These are the acceptance
-tests for the day that changes, in rising cost:
+plugins a target uses as not run, where it dropped them unsaid. Since 2026-10-10 it builds
+macros (items 1 and 3 below); build-tool plugins are still not run, as B-77 decided. These
+are the acceptance tests, in rising cost:
 
 1. *apple/sample-backyard-birds* — SwiftData's `@Model` comes from plugins shipped in the
    toolchain, so macro expansion is tested without building swift-syntax. Also widgets, a
    StoreKit configuration file, local packages.
+
+   *Toolchain macros, landed 2026-10-10.* Nothing on the command line: the driver finds
+   the toolchain's plugins (`lib/swift/host/plugins`, `@Observable`) through `-plugin-path`
+   and the platform's (`Developer/usr/lib/swift/host/plugins`, `@Model`) through
+   `-external-plugin-path` and the platform's `swift-plugin-server`, the platform found
+   from `-sdk`, and the sandbox hides none of them. What was missing was the key: the
+   compiler's fingerprint covered `swift-frontend` alone. A `ToolFinder` now names a
+   companion fingerprint that `ToolDiscovery` folds into the descriptor's, and the
+   compiler's covers everything under the toolchain's `lib/swift/host` and every
+   platform's plugin folders and plugin server, by content (`SwiftCompilerPlugins`; about
+   0.1 s once per process on Xcode 26.6). Accepted by the `swift-macro-app` fixture, whose
+   app uses `@Observable` and `@Model`; the sample itself is not in the roster.
 2. *swift-syntax* alone — no macro support needed to build it; a large pure-Swift build and
    a useful performance benchmark in its own right.
 3. *swift-dependencies* or *swift-composable-architecture* — package-defined macros built
    from swift-syntax and run as compiler plugins.
+
+   *Package macros, landed 2026-10-10* (Swift converter v23). A `macro` target is compiled
+   as a library is, against the swift-syntax targets it reaches — an ordinary dependency,
+   its C shims through the clang nodes — and linked with them by a `SwiftLinker` into an
+   executable, `macroExecutable<Target>()`, a value of the graph and no product. Every
+   Swift target that reaches the macro, through any chain of other targets, as SwiftPM
+   hands a target the macros of its recursive dependencies, takes the executable on
+   `SwiftCompiler.macroExecutables`, laid at `macros/<Module>` and loaded with
+   `-load-plugin-executable macros/<Module>#<Module>`; a changed macro moves the key of the
+   compiles that load it and of nothing else. What a product links and vends for import
+   stops at a macro. A macro is built only in a build for macOS, where the compiler runs
+   it: a package with one asks for the platform, and a macro a product reaches in a build
+   for another is the conversion's error, `macroForAnotherPlatform`, naming it — building
+   the macro and its swift-syntax for the Mac beside the platform's build is the work left
+   for an iOS app with package macros. Nor does a formula consuming a package's products —
+   an app through `XcodeProjectConverter` — get its macros yet: the product's public face
+   has no `macros_<Product>()`, so an app expanding a package's macro fails to find it.
+   Accepted by the `swift-macro-app` fixture, a package macro speaking the plugin
+   protocol by hand, loaded two targets away and run, its executable byte-identical over
+   the four hermeticity builds; and by `swift-dependencies` 1.17.0 in the roster, its
+   `DependenciesMacrosPlugin` built from swift-syntax 603.0.2 (44 s cold).
 4. *isowords* — one `Package.swift` with some ninety targets and heavy resources (audio,
    fonts): graph scale and `Bundle.module`. Pulls in TCA, so it waits for 3.
 

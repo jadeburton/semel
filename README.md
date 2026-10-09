@@ -186,6 +186,12 @@ includes builds nothing, and a settle with no errors says so once, naming the in
 
 `semel.machine.config` is the machine's half of those settings, written by `semel-swift prepare` (or `semel-clang` for a C project) and never edited: the tool descriptors, and for every tool that reads the SDK its name or path, its version and build, and `sdkFingerprint` — a hash of every file's path, size and modification time under the SDK. The fingerprint is what makes an SDK that changes under one version and build — an Xcode update that keeps them, a header edited in place — a changed input: `prepare` rewrites the line on every run, the file is pushed (by `semel-watch` when it changes, or by a `push`), and every compile and link reading that namespace runs again without a `reset`. `semel-clang` keeps a file that already holds its namespaces, so after an Xcode update it is `semel-clang <folder> --force`.
 
+The converter builds a package's Swift and C-family targets, their resources into bundles, and the `.xcframework` of a binary target. A macro
+target is compiled and linked into an executable, which every compile reaching it loads with `-load-plugin-executable`; swift-syntax, which a
+macro links, is an ordinary dependency built from its sources, and a macro is built only in a build for macOS, the Mac the compiler runs it on. The
+macros a toolchain or a platform ships, `@Observable` and SwiftData's `@Model`, need nothing: the compiler finds them itself, and their files are
+part of the compiler's fingerprint in the cache key. Build-tool plugins are not run; the conversion names them, and each target builds without them.
+
 The following includes multiple packages in the formula:
 
 ```
