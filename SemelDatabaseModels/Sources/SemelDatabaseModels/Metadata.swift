@@ -72,4 +72,33 @@ public struct MetadataDataAccess: DataAccessType {
             try db.cachedExecute("DELETE FROM Metadata WHERE key = ?", arguments: [key])
         }
     }
+
+    /// Writes the row only when `key` has none, and says whether it did: the first record
+    /// of a path in a batch's journal is the one that stands.
+    @discardableResult
+    public func insertIfAbsent(key: String, value: String) throws -> Bool {
+        try write { db in
+            try db.cachedExecute("INSERT OR IGNORE INTO Metadata (key, value) VALUES (?, ?)", arguments: [key, value])
+            return db.changesCount > 0
+        }
+    }
+
+    /// Every row whose key starts with `prefix`, compared byte for byte rather than with
+    /// `LIKE`: the rest of such a key is a path or a name a person chose, and `%` or `_` in
+    /// it must not match anything but itself. Sorted by key.
+    public func selectEntries(withExactPrefix prefix: String) throws -> [(key: String, value: String)] {
+        try read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT key, value FROM Metadata WHERE substr(key, 1, ?) = ? ORDER BY key
+                """, arguments: [prefix.unicodeScalars.count, prefix])
+            return rows.map { (key: $0["key"], value: $0["value"]) }
+        }
+    }
+
+    /// Removes every row whose key starts with `prefix`, compared as `selectEntries` does.
+    public func deleteAll(withExactPrefix prefix: String) throws {
+        try write { db in
+            try db.execute(sql: "DELETE FROM Metadata WHERE substr(key, 1, ?) = ?", arguments: [prefix.unicodeScalars.count, prefix])
+        }
+    }
 }
