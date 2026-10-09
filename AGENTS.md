@@ -282,6 +282,15 @@ the nearest standard equivalent and how Semel's differs.
 
 These cost real debugging to learn. Violating one usually compiles fine.
 
+**The engine is a time-free zone.** A node is a function of its inputs, a product has a
+value or has none, and a cache entry is keyed by content; nothing inside the engine is
+keyed by, ordered by or described in terms of a moment. A checkpoint is a content root,
+not a time; a product downstream of a failure has no value, it is not "stale"; a report
+says what has no value and why, never what happened "while" or "after". Time lives in the
+clients — the watcher's quiet interval, the progress line, the log — where a process runs.
+The one exception inside is the object collector's age margin, a guard against collecting
+an object mid-write; reachability from the graph's roots is what decides.
+
 **Static topology is node identity.** A node's `graphSpec` is written once at creation and
 never recomputed. That is correct: static wiring and args are immutable, so different
 static wiring means a *different node*, not the same node with a new key. Only `.dynamic`
