@@ -156,9 +156,22 @@ final class ExternalProjectTests: XCTestCase {
         }
     }
 
+    /// B-80: package macros built from swift-syntax — the macro's executable linked from
+    /// every swift-syntax target it reaches and loaded by the library declaring its macros.
+    func test_swiftDependenciesBuildsItsMacroFromSwiftSyntax() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.swiftDependencies)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("swift-dependencies\n\(error)")
+        }
+    }
+
     func test_everyExternalProjectInTheRosterHasATestHere() {
         XCTAssertEqual(Set(Projects.external.map(\.name)),
                        ["icecubes", "icecubes-app", "semel", "lua", "sqlite", "simdjson", "food-truck", "food-truck-mac",
-                        "netnewswire-mac", "netnewswire-ios", "codeedit"])
+                        "netnewswire-mac", "netnewswire-ios", "codeedit", "swift-dependencies"])
     }
 }
