@@ -445,14 +445,11 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
     // MARK: - What a rejected argument says (B-98)
 
     // swiftc's complaint names the argument it rejected and never the setting that produced
-    // it. The failed output carries swiftc's line and then the key and value behind it.
+    // it. The failed output carries swiftc's text, and the key behind it as the remedy.
 
-    private func failureMessage(_ output: ProcessOutput, port: String) throws -> String {
-        guard case .noValue(.error(let hash)) = output.outputValues[port] else {
-            XCTFail("expected an error on \(port), got \(String(describing: output.outputValues[port]))")
-            return ""
-        }
-        return try hash.resolveAsString()
+    private func failureDocument(_ output: ProcessOutput, port: String) throws -> ErrorDocument {
+        try XCTUnwrap(output.outputValues[port]?.errorDocument,
+                      "expected an error on \(port), got \(String(describing: output.outputValues[port]))")
     }
 
     func test_aTripleSwiftcRejectsIsReportedWithTheSettingItCameFrom() throws {
@@ -465,14 +462,14 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
 
         let output = try makeTool().process(input: ProcessInput(inputValues: input))
 
-        let message = try failureMessage(output, port: SwiftCompiler.outputObject)
-        XCTAssertTrue(message.contains("error: unknown target 'nonsense'"), "got \(message)")
-        XCTAssertTrue(message.contains("`swift.compiler.target` is `nonsense`"), "got \(message)")
-        XCTAssertTrue(message.contains("swiftc -print-target-info"), "got \(message)")
+        let document = try failureDocument(output, port: SwiftCompiler.outputObject)
+        XCTAssertEqual(document.diagnostic, .tool(text: "error: unknown target 'nonsense'", tool: "swiftc"))
+        XCTAssertEqual(document.remedy, .setting(keys: ["swift.compiler.target"]))
+        XCTAssertEqual(document.subject, .target(name: "GRDB"), "a compile belongs to the module it builds")
     }
 
     /// The SDK reaches the command line as the path xcrun resolved the name to, so the
-    /// sentence is the only place the name the config file states appears.
+    /// remedy is the only place the key the config file states appears.
     ///
     /// The failure this stands in for is an SDK that resolves but cannot serve the target —
     /// a macOS SDK under an iOS triple, which is what a half-converted iOS package builds
@@ -491,9 +488,8 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
 
         let output = try makeTool().process(input: ProcessInput(inputValues: input))
 
-        let message = try failureMessage(output, port: SwiftCompiler.outputObject)
-        XCTAssertTrue(message.contains("`swift.compiler.sdk` is `macosx`"), "got \(message)")
-        XCTAssertTrue(message.contains("xcrun --sdk macosx --show-sdk-path"), "got \(message)")
+        XCTAssertEqual(try failureDocument(output, port: SwiftCompiler.outputObject).remedy,
+                       .setting(keys: ["swift.compiler.sdk"]))
     }
 
     /// An error in the source is about the source: nothing is added.
@@ -507,10 +503,10 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
 
         let output = try makeTool().process(input: ProcessInput(inputValues: input))
 
-        XCTAssertEqual(try failureMessage(output, port: SwiftCompiler.outputObject), """
-            swiftc exited with status 1:
-            input:/app/Sources/App.swift:1:1: error: cannot find 'foo' in scope
-            """)
+        let document = try failureDocument(output, port: SwiftCompiler.outputObject)
+        XCTAssertEqual(document.diagnostic, .tool(text: "input:/app/Sources/App.swift:1:1: error: cannot find 'foo' in scope",
+                                                  tool: "swiftc"))
+        XCTAssertNil(document.remedy)
     }
 
     // MARK: - A package target's Swift settings
@@ -593,9 +589,9 @@ final class SwiftOptimisationLevelTests: SemelSwiftTestCase {
     /// compiled unoptimised would be discovered by someone benchmarking, not by the build.
     func test_anUnknownLevelFailsAndNamesTheValidOnes() {
         XCTAssertThrowsError(try swiftOptimisationFlag("-Ofast")) { error in
-            let message = String(describing: error)
-            XCTAssertTrue(message.contains("-Ofast"), "should name what was declared, got \(message)")
-            XCTAssertTrue(message.contains("none, speed or size"), "got \(message)")
+            XCTAssertEqual(error as? ErrorCondition,
+                           .settingNotAccepted(key: "swift.compiler.optimisationLevel", value: "-Ofast",
+                                               accepted: ["none", "speed", "size"]))
         }
     }
 

@@ -314,22 +314,20 @@ final class ClangCompilerTests: SemelClangTestCase {
         XCTAssertEqual(try value.expectValue().resolveAsString(), "OBJECT-BYTES")
     }
 
-    /// B-98: the triple on the command line came from a setting, and the failure says so
-    /// under this node's own namespace.
+    /// B-98: the triple on the command line came from a setting, and the failure's remedy
+    /// names it under this node's own namespace; the compile belongs to the source, named
+    /// without the preprocessor's `.p`.
     func test_aTripleClangRejectsIsReportedWithTheSettingItCameFrom() throws {
         executor.exitCode = 1
         executor.errorOutput = "error: unknown target triple 'nonsense-triple'"
 
         let output = try makeTool().process(input: try makeInput(target: "nonsense-triple"))
 
-        guard case .noValue(.error(let hash)) = output.outputValues[ClangCompiler.output] else {
-            return XCTFail("a failed compile carries an error: \(String(describing: output.outputValues))")
-        }
-        XCTAssertEqual(try hash.resolveAsString(), """
-            clang exited with status 1:
-            error: unknown target triple 'nonsense-triple'
-            `clang.compiler.target` is `nonsense-triple`; `clang -print-target-triple` prints the triple this toolchain builds for when none is given.
-            """)
+        let document = try XCTUnwrap(output.outputValues[ClangCompiler.output]?.errorDocument,
+                                     "a failed compile carries an error: \(String(describing: output.outputValues))")
+        XCTAssertEqual(document, ErrorDocument(diagnostic: .tool(text: "error: unknown target triple 'nonsense-triple'", tool: "clang"),
+                                               subject: .source(path: "src/hello.c"),
+                                               remedy: .setting(keys: ["clang.compiler.target"])))
     }
 
     func test_missingToolNamesWhatWasRequestedAndWhatIsRegistered() throws {

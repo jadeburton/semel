@@ -86,12 +86,13 @@ struct DependencyLockCheck {
         case failed([Problem])
     }
 
-    /// What is wrong with one package's lock, by case: the converter's message is rendered
-    /// from these, and a test asks which case it got.
-    enum Problem: Equatable, CustomStringConvertible {
+    /// What is wrong with one package's lock, by case: the converter publishes the document
+    /// each one names, and a test asks which case it got.
+    enum Problem: Equatable {
         /// The folder's pushed root is not the root the lock records. `leftOut` is what the
         /// graph holds below the folder that neither root folds, when its whole root could
-        /// be read.
+        /// be read: none of it is what differs — a push of the folder sends none of it, and
+        /// the copy's fold leaves it out alike — so the difference is in what both read.
         case mismatch(folder: String, lock: DependencyLock, found: DataObjectHash, leftOut: [LeftOutEntry])
         /// The lock was taken under another fold, so its root cannot be compared with this
         /// Semel's: the tree may be exactly what was vendored.
@@ -99,66 +100,37 @@ struct DependencyLockCheck {
         /// The lock's text is not a lock.
         case unreadable(folder: String, error: DependencyLockError)
 
-        var description: String {
+        /// The document the converter publishes for it, under the package it is about.
+        var document: ErrorDocument {
+            .engine(condition, subject: .package(name: Path(folder).lastComponent ?? folder))
+        }
+
+        var condition: ErrorCondition {
             switch self {
             case .mismatch(let folder, let lock, let found, let leftOut):
-                return "\(folder) is not the tree its lock records.\n"
-                     + "  lock:     \(Self.describe(lockOf: folder, lock))\n"
-                     + "  expected: \(DependencyLock.contentScheme)\(lock.contentRoot)\n"
-                     + "  found:    \(DependencyLock.contentScheme)\(found)\n"
-                     + Self.describe(leftOut: leftOut)
-                     + "If the change is meant — the dependency updated or patched — `semel-swift prepare` on the "
-                     + "project vendors it again and rewrites the lock, or put the found hash on the lock's `content` "
-                     + "line. If it is not, vendor it again: the copy is not what was locked."
+                return .lockMismatch(folder: folder, lock: Self.facts(lockOf: folder, lock),
+                                     expected: DependencyLock.contentScheme + lock.contentRoot,
+                                     found: DependencyLock.contentScheme + found,
+                                     leftOut: leftOut)
             case .foldChanged(let folder, let lock):
-                return "\(folder) cannot be compared with its lock.\n"
-                     + "  lock:     \(Self.describe(lockOf: folder, lock))\n"
-                     + "  The lock's content root was folded as '\(lock.fold)', and this Semel folds as "
-                     + "'\(FolderContentRoot.formatTag)', so the tree may well be unchanged. "
-                     + "`semel-swift prepare` on the project writes the lock again under the current fold."
+                return .lockFoldChanged(folder: folder, lock: Self.facts(lockOf: folder, lock),
+                                        lockFold: lock.fold, currentFold: FolderContentRoot.formatTag)
             case .unreadable(let folder, let error):
-                return "\(DependencyLock.lockPath(forDependencyAt: folder)) is not a lock: \(error). "
-                     + "`semel-swift prepare` on the project writes it again."
+                return .lockUnreadable(folder: folder, lockPath: DependencyLock.lockPath(forDependencyAt: folder),
+                                       problem: error.problem)
             }
         }
 
-        /// What the comparison did not fold, by reason, a few paths each. None of it is what
-        /// differs — a push of the folder sends none of it, and the copy's fold leaves it
-        /// out alike — so the difference is in what both read: a file edited, or one the
-        /// graph keeps from an earlier copy because a push only adds.
-        static func describe(leftOut: [LeftOutEntry]) -> String {
-            guard !leftOut.isEmpty else {
-                return ""
+        var folder: String {
+            switch self {
+            case .mismatch(let folder, _, _, _), .foldChanged(let folder, _), .unreadable(let folder, _):
+                return folder
             }
-            let groups: [(reason: LeftOutEntry.Reason, label: String)] = [
-                (.dotNamed,     "dot-named"),
-                (.notPushed,    "asked for and never pushed"),
-                (.removed,      "removed"),
-                (.product,      "products"),
-                (.failed,       "failed"),
-                (.holdsNothing, "folders holding nothing a push sends"),
-            ]
-            var text = "  Not compared, as a push of the folder sends none of it and the lock leaves it out:\n"
-            for group in groups {
-                let paths = leftOut.filter { $0.reason == group.reason }.map(\.path)
-                guard !paths.isEmpty else {
-                    continue
-                }
-                let shown = paths.prefix(pathsNamed).joined(separator: ", ")
-                let more  = paths.count > pathsNamed ? ", and \(paths.count - pathsNamed) more" : ""
-                text += "    \(paths.count) \(group.label): \(shown)\(more)\n"
-            }
-            return text
         }
-
-        /// How many paths of each kind a failed lock names before it counts the rest.
-        static let pathsNamed = 5
 
         /// The lock's path, with what it records about where the package came from.
-        private static func describe(lockOf folder: String, _ lock: DependencyLock) -> String {
-            let recorded = [lock.version.map { "version \($0)" }, lock.origin.map { "from \($0)" }].compactMap { $0 }
-            let path = DependencyLock.lockPath(forDependencyAt: folder)
-            return recorded.isEmpty ? path : "\(path) (\(recorded.joined(separator: ", ")))"
+        private static func facts(lockOf folder: String, _ lock: DependencyLock) -> LockFacts {
+            LockFacts(lockPath: DependencyLock.lockPath(forDependencyAt: folder), version: lock.version, origin: lock.origin)
         }
     }
 

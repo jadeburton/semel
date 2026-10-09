@@ -253,7 +253,7 @@ final class ClangPreprocessorTests: SemelClangTestCase {
     /// Only a file nobody pushed is absent: a header that failed upstream, or one that was
     /// pushed and then removed, still stops the preprocessor.
     func test_aHeaderInErrorOrDeletedStillFails() throws {
-        for reason in [NoValueReason.inputInError, .deleted, .error(messageDataObjectHash: try "broken".intern())] {
+        for reason in [NoValueReason.inputInError, .deleted, .error(documentHash: try "broken".intern())] {
             XCTAssertThrowsError(try makeTool().process(input: try makeInputNaming(headers: [
                 "src/sqlite3.h": .noValue(reason: reason),
             ])), "\(reason)")
@@ -304,14 +304,11 @@ final class ClangPreprocessorTests: SemelClangTestCase {
 
     // clang's complaint names the argument it rejected and never the setting that produced
     // it, so the reader is left holding a triple they did not type. The failed output
-    // carries clang's line and then the key and value behind it.
+    // carries clang's text, and the key behind it as the remedy.
 
-    private func failureMessage(_ output: ProcessOutput, port: String) throws -> String {
-        guard case .noValue(.error(let hash)) = output.outputValues[port] else {
-            XCTFail("expected an error on \(port), got \(String(describing: output.outputValues[port]))")
-            return ""
-        }
-        return try hash.resolveAsString()
+    private func failureDocument(_ output: ProcessOutput, port: String) throws -> ErrorDocument {
+        try XCTUnwrap(output.outputValues[port]?.errorDocument,
+                      "expected an error on \(port), got \(String(describing: output.outputValues[port]))")
     }
 
     func test_aTripleClangRejectsIsReportedWithTheSettingItCameFrom() throws {
@@ -320,10 +317,10 @@ final class ClangPreprocessorTests: SemelClangTestCase {
 
         let output = try makeTool().process(input: try makeInput(target: "nonsense-triple"))
 
-        let message = try failureMessage(output, port: ClangPreprocessor.output)
-        XCTAssertTrue(message.contains("error: unknown target triple 'nonsense-triple'"), "got \(message)")
-        XCTAssertTrue(message.contains("`clang.preprocessor.target` is `nonsense-triple`"), "got \(message)")
-        XCTAssertTrue(message.contains("clang -print-target-triple"), "got \(message)")
+        XCTAssertEqual(try failureDocument(output, port: ClangPreprocessor.output),
+                       ErrorDocument(diagnostic: .tool(text: "error: unknown target triple 'nonsense-triple'", tool: "clang"),
+                                     subject: .source(path: "src/hello.c"),
+                                     remedy: .setting(keys: ["clang.preprocessor.target"])))
     }
 
     func test_anSDKPathClangCannotFindIsReportedWithTheSettingItCameFrom() throws {
@@ -335,24 +332,21 @@ final class ClangPreprocessorTests: SemelClangTestCase {
 
         let output = try makeTool().process(input: try makeInput(sdkPath: "/no/such/sdk"))
 
-        let message = try failureMessage(output, port: ClangPreprocessor.output)
-        XCTAssertTrue(message.contains("`clang.preprocessor.sdkPath` is `/no/such/sdk`"), "got \(message)")
-        XCTAssertTrue(message.contains("xcrun --sdk <name> --show-sdk-path"), "got \(message)")
+        XCTAssertEqual(try failureDocument(output, port: ClangPreprocessor.output).remedy,
+                       .setting(keys: ["clang.preprocessor.sdkPath"]))
     }
 
     /// An ordinary compile error is about the source, not the command line, and gains
-    /// nothing: a sentence about the target under every broken file would be noise.
+    /// nothing: a remedy naming the target under every broken file would be noise.
     func test_anErrorInTheSourceNamesNoSetting() throws {
         executor.exitCode = 1
         executor.errorOutput = "src/hello.c:1:1: error: unknown type name 'itn'"
 
         let output = try makeTool().process(input: try makeInput())
 
-        let message = try failureMessage(output, port: ClangPreprocessor.output)
-        XCTAssertEqual(message, """
-            clang exited with status 1:
-            src/hello.c:1:1: error: unknown type name 'itn'
-            """)
+        let document = try failureDocument(output, port: ClangPreprocessor.output)
+        XCTAssertEqual(document.diagnostic, .tool(text: "src/hello.c:1:1: error: unknown type name 'itn'", tool: "clang"))
+        XCTAssertNil(document.remedy)
     }
 
     // MARK: - Which language a file is

@@ -191,9 +191,10 @@ final class WatcherTests: XCTestCase {
         XCTAssertTrue(lines.contains("export: src: no such folder in the output file system"), lines.joined(separator: "\n"))
     }
 
-    /// B-142. A settle that leaves errors exports nothing, and says which products the
-    /// errors stop, by name.
-    func test_aSettleWithErrorsNamesTheProductsItDidNotExport() throws {
+    /// B-142. A settle that leaves errors exports what has a value into the destination —
+    /// here nothing, since the one product has none — and the report ends with the summary
+    /// that says so.
+    func test_aSettleWithErrorsReportsWhatItExported() throws {
         try write("int a;", at: "src/a.c")
         _ = try XCTUnwrap(engine).inputFileSystem.ensureEntirePathExistsAsFolders(Path("stand-in"), pinned: true)
         let (source, _) = try GraphSpecNode.staticFile(at: "input:/stand-in/broken.a").findOrCreateMatchingNode()
@@ -201,14 +202,14 @@ final class WatcherTests: XCTestCase {
                               inputs: [OutputFile.inputPort: ["product": .staticFile(at: "input:/stand-in/broken.a")]])
             .findOrCreateMatchingNode()
         try source.writeToOutputPort(StaticFile.outputPort,
-                                     value: .noValue(reason: .error(messageDataObjectHash: try "gone".intern())))
+                                     value: .noValue(reason: try .failure("gone")))
         let destination = try XCTUnwrap(base).appendingPathComponent("out").path
         let watcher = try makeWatcher(folders: ["src"], exportDestination: destination, events: [])
 
         try watcher.run()
 
-        XCTAssertTrue(lines.contains("Not exported into \(destination): errors stop output:/src/broken.a."),
-                      lines.joined(separator: "\n"))
+        XCTAssertTrue(lines.contains("broken.a:"), lines.joined(separator: "\n"))
+        XCTAssertEqual(lines.last, "1 error · 1 product without a value · nothing exported", lines.joined(separator: "\n"))
         XCTAssertFalse(lines.contains { $0.hasPrefix("Exported") })
     }
 
@@ -297,7 +298,7 @@ final class WatcherTests: XCTestCase {
 
         XCTAssertEqual(watcher.batchesIssued, 2)
         XCTAssertEqual(watcher.batchesRefused, 1)
-        XCTAssertTrue(lines.contains { $0.hasPrefix("input:/app/Dependencies/Pkg is locked, and the batch changed it") },
+        XCTAssertTrue(lines.contains { $0.hasPrefix("app/Dependencies/Pkg is locked, and the batch changes it") },
                       lines.joined(separator: "\n"))
         XCTAssertTrue(lines.contains("semel-watch: the batch was not committed; nothing was built or exported from it."))
         XCTAssertEqual(try heldText("app/Dependencies/Pkg/Pkg.swift"), "public struct Pkg {}\n")

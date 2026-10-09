@@ -77,6 +77,30 @@ final class SettleTimeErrorCountingTests: XCTestCase {
         XCTAssertGreaterThan(interpreter.errorsReported, 0)
     }
 
+    /// The report after a settle — the idle-time event, printed as it arrives — is the same
+    /// report, ending with its summary: the counts alone, a settle exporting nothing.
+    func test_theReportAfterASettleEndsWithItsSummary() throws {
+        try writeBrokenFormula()
+        var lines: [String] = []
+        interpreter.output = { lines.append($0) }
+
+        interpreter.handleCommand("push src")
+        interpreter.handleCommand("wait")
+
+        let transcript = lines.joined(separator: "\n")
+        guard let block = lines.firstIndex(of: "no node type is registered under the name 'NoSuchNodeType'") else {
+            return XCTFail(transcript)
+        }
+        XCTAssertEqual(lines[block - 1], "no product:", transcript)
+        XCTAssertEqual(Array(lines[block...].prefix(5)), [
+            "no node type is registered under the name 'NoSuchNodeType'",
+            "  formula: src/semel.fmla",
+            "  register: NoSuchNodeType",
+            "",
+            "1 error · every product has a value",
+        ], transcript)
+    }
+
     /// B-110. The idle-time event and the `errors` verb `build` runs at its end name the
     /// same failure; a build prints it once, through the verb, and still counts it.
     func test_aBuildPrintsTheReportOnce() throws {
@@ -86,7 +110,8 @@ final class SettleTimeErrorCountingTests: XCTestCase {
 
         interpreter.handleCommand("build src")
 
-        XCTAssertEqual(lines.filter { $0.hasPrefix("❌ ProjectBuilder") }.count, 1, lines.joined(separator: "\n"))
+        XCTAssertEqual(lines.filter { $0 == "no node type is registered under the name 'NoSuchNodeType'" }.count, 1,
+                       lines.joined(separator: "\n"))
         XCTAssertGreaterThan(interpreter.errorsReported, 0)
     }
 
@@ -256,7 +281,7 @@ final class SettleTimeErrorCountingTests: XCTestCase {
     private func publishFailedProduct(_ name: String, message: String) throws {
         let source = try publishProduct(name, contents: nil)
         try source.writeToOutputPort(StaticFile.outputPort,
-                                     value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+                                     value: .noValue(reason: try .failure(message)))
     }
 
     /// All three of one settle's reports, in the order they are meant to be read: the

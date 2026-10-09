@@ -23,7 +23,7 @@ final class FormulaPreludeTests: SemelCoreTestCase {
     private struct TestProvider: FormulaIncludeProvider {
         let pluginName: String
         var preludes: [String: String] = [:]
-        var refusals: [String: String] = [:]
+        var refusals: [String: IncludeRefusal] = [:]
 
         func answer(forIncludeNamed name: String) -> FormulaIncludeAnswer? {
             if let text = preludes[name] {
@@ -41,12 +41,8 @@ final class FormulaPreludeTests: SemelCoreTestCase {
         try nodeRecord.readFromOutputPort(FormulaPrelude.formulaOutputPort).expectValue().resolveAsString()
     }
 
-    private func publishedError(_ nodeRecord: NodeRecord) throws -> String? {
-        let value = try nodeRecord.readFromOutputPort(FormulaPrelude.formulaOutputPort)
-        guard case .noValue(.error(let hash)) = value else {
-            return nil
-        }
-        return try hash.resolveAsString()
+    private func publishedError(_ nodeRecord: NodeRecord) throws -> ErrorCondition? {
+        try nodeRecord.readFromOutputPort(FormulaPrelude.formulaOutputPort).errorCondition
     }
 
     // MARK: - Asking the providers
@@ -59,13 +55,13 @@ final class FormulaPreludeTests: SemelCoreTestCase {
                        .prelude(namespace: "clang", text: "func x() = X()"))
     }
 
-    /// Why the include failed, in the plugin's words, against the name the user wrote.
-    func test_aRefusalIsTheSentenceTheUserReads() {
+    /// Why the include failed, as the plugin's typed reason, against the name the user wrote.
+    func test_aRefusalIsThePluginsReason() {
         FormulaIncludeProviders.register(TestProvider(pluginName: "SemelClang",
-                                                      refusals: ["clang/c++26": "no installed clang supports C++26 (found 17.0.0)"]))
+                                                      refusals: ["clang/c++26": .notSupported(feature: "C++26")]))
 
         XCTAssertEqual(FormulaIncludeProviders.resolve(includeNamed: "clang/c++26"),
-                       .failed(message: "include 'clang/c++26': no installed clang supports C++26 (found 17.0.0)"))
+                       .failed(.includeRefused(name: "clang/c++26", plugin: "SemelClang", reason: .notSupported(feature: "C++26"))))
     }
 
     /// Nobody answered: say what is installed, so the user can see what is missing.
@@ -74,16 +70,16 @@ final class FormulaPreludeTests: SemelCoreTestCase {
         FormulaIncludeProviders.register(TestProvider(pluginName: "SemelClang"))
 
         XCTAssertEqual(FormulaIncludeProviders.resolve(includeNamed: "rust"),
-                       .failed(message: "include 'rust': no plugin answers this name (installed: SemelClang, SemelSwift)"))
+                       .failed(.includeUnanswered(name: "rust", installed: ["SemelClang", "SemelSwift"])))
     }
 
     /// Never first-wins — and a refusal claims the name as a prelude does.
     func test_twoPluginsClaimingOneNameIsAFailureNamingBoth() {
         FormulaIncludeProviders.register(TestProvider(pluginName: "SemelClang", preludes: ["c": "func x() = X()"]))
-        FormulaIncludeProviders.register(TestProvider(pluginName: "OtherC", refusals: ["c": "not today"]))
+        FormulaIncludeProviders.register(TestProvider(pluginName: "OtherC", refusals: ["c": .toolNotInstalled(tool: "cc")]))
 
         XCTAssertEqual(FormulaIncludeProviders.resolve(includeNamed: "c"),
-                       .failed(message: "include 'c': claimed by both OtherC and SemelClang"))
+                       .failed(.includeClaimedTwice(name: "c", plugins: ["OtherC", "SemelClang"])))
     }
 
     // MARK: - The node
@@ -96,7 +92,7 @@ final class FormulaPreludeTests: SemelCoreTestCase {
 
     func test_aNameNobodyAnswersIsAnErrorOnThePort() throws {
         XCTAssertEqual(try publishedError(try preludeNode(named: "clang")),
-                       "include 'clang': no plugin answers this name (no plugin provides includes)")
+                       .includeUnanswered(name: "clang", installed: []))
     }
 
     /// A plugin replaced between two starts: the new text reaches the port, and the builder

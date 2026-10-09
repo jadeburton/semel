@@ -76,7 +76,7 @@ final class TreeFileTests: SemelCoreTestCase {
         let node = try TreeFile(thisNode: NodeRecord(id: 1, kind: TreeFile.kind,
                                                      properties: [TreeFile.nameProperty: "Assets.car"]))
         let output = node.processWithCatch(input: ProcessInput(inputValues: [TreeFile.treeInputPort: [
-            "tree": .noValue(reason: .error(messageDataObjectHash: try "actool failed".intern())),
+            "tree": .noValue(reason: try .failure("actool failed")),
         ]]))
 
         for port in [TreeFile.outputPort, TreeFile.fileMetadataOutputPort] {

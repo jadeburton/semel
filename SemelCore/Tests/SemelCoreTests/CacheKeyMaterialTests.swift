@@ -207,10 +207,10 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
         let firstMessage = try "undefined symbol 'a'".intern()
 
         let first = try tool.buildCacheKeyMaterial(
-            input: try makeInput(carrying: .noValue(reason: .error(messageDataObjectHash: firstMessage))))
+            input: try makeInput(carrying: .noValue(reason: .error(documentHash: firstMessage))))
         let second = try tool.buildCacheKeyMaterial(
             input: try makeInput(carrying: .noValue(reason: .error(
-                messageDataObjectHash: try "undefined symbol 'b'".intern()))))
+                documentHash: try "undefined symbol 'b'".intern()))))
         let cascade = try tool.buildCacheKeyMaterial(
             input: try makeInput(carrying: .noValue(reason: .inputInError)))
 
@@ -229,7 +229,7 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
     func test_aWiredReasonComesBackFromTheStoredMaterial() throws {
         let tool        = try makeCompilerNode()
         let messageHash = try "undefined symbol 'main'".intern()
-        let input = try makeInput(carrying: .noValue(reason: .error(messageDataObjectHash: messageHash)))
+        let input = try makeInput(carrying: .noValue(reason: .error(documentHash: messageHash)))
         let key   = try store(tool, input: input)
 
         XCTAssertNotNil(try tool.loadCachedOutputs(cacheKey: key), "the entry decodes, reasons and all")

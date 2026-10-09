@@ -17,7 +17,9 @@ public struct InfoPlistBuilder: Node {
     /// 2: the engine's `projectRoot` stamp is no longer an entry of the plist.
     /// 3: the `pkgInfo` port (B-77).
     /// 4: several wires on `base` are an error naming them, where one was taken (B-141).
-    public static let implementationVersion = 4
+    /// 5: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 5
 
     // MARK: Ports
 
@@ -67,24 +69,25 @@ public struct InfoPlistBuilder: Node {
         var merged: [String: Any] = [:]
 
         if let baseWire = try input.onlyWire(onOptionalPort: Self.base) {
-            merged = try Self.dictionary(fromPlist: baseWire.value, named: baseWire.key)
+            merged = try Self.dictionary(fromPlist: baseWire.value, on: Self.base, named: baseWire.key)
         }
         for (key, value) in (input.inputValues[Self.partials] ?? [:]).sorted(by: { $0.key < $1.key }) {
-            merged.merge(try Self.dictionary(fromPlist: value, named: key)) { _, partial in partial }
+            merged.merge(try Self.dictionary(fromPlist: value, on: Self.partials, named: key)) { _, partial in partial }
         }
         // `keys` is a JSON dictionary of entries, typed as JSON types them — the form a
         // converter writes, since a plist key like `UISupportedInterfaceOrientations~ipad`
         // is no formula identifier. Every other property is one string entry.
         if let keysJSON = thisNode.properties[Self.keysProperty] {
             guard let keys = try? JSONSerialization.jsonObject(with: Data(keysJSON.utf8)) as? [String: Any] else {
-                throw NodeError.other(message: "InfoPlistBuilder: `keys` is not a JSON dictionary")
+                throw ErrorCondition.propertyNotOfForm(type: "InfoPlistBuilder", property: Self.keysProperty, form: .jsonDictionary)
             }
             merged.merge(keys) { _, key in key }
         }
         var variables: [String: String] = [:]
         if let settingsJSON = thisNode.properties[Self.buildSettingsProperty] {
             guard let settings = try? JSONSerialization.jsonObject(with: Data(settingsJSON.utf8)) as? [String: String] else {
-                throw NodeError.other(message: "InfoPlistBuilder: `buildSettings` is not a JSON dictionary of strings")
+                throw ErrorCondition.propertyNotOfForm(type: "InfoPlistBuilder", property: Self.buildSettingsProperty,
+                                                       form: .jsonStringDictionary)
             }
             variables = settings
         }
@@ -100,8 +103,7 @@ public struct InfoPlistBuilder: Node {
         var unresolved = Set<String>()
         let resolved = Self.substitute(merged, variables: variables, unresolved: &unresolved)
         guard unresolved.isEmpty else {
-            let message = "Info.plist references undefined variables: " + unresolved.sorted().joined(separator: ", ")
-            let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try message.intern()))
+            let error = try ErrorDocument.engine(.undefinedPlistVariables(names: unresolved.sorted()), subject: nil).published()
             return .init(outputValues: [Self.output: error, Self.pkgInfo: error], inputWireSpecs: [:])
         }
 
@@ -141,13 +143,13 @@ public struct InfoPlistBuilder: Node {
         }
     }
 
-    private static func dictionary(fromPlist value: NodeValue, named name: String) throws -> [String: Any] {
+    private static func dictionary(fromPlist value: NodeValue, on port: String, named name: String) throws -> [String: Any] {
         let hash = try value.expectValue()
         guard let bytes = try DataObjectStore.shared.read(hash: hash) else {
-            throw NodeError.other(message: "Info.plist input '\(name)' has no content")
+            throw ErrorCondition.inputHasNoContent(port: port, wire: name)
         }
         guard let plist = try? PropertyListSerialization.propertyList(from: Data(bytes), format: nil) as? [String: Any] else {
-            throw NodeError.other(message: "Info.plist input '\(name)' is not a property list dictionary")
+            throw ErrorCondition.inputNotOfForm(port: port, wire: name, form: .propertyListDictionary)
         }
         return plist
     }

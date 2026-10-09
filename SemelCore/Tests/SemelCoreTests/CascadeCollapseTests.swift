@@ -19,9 +19,10 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     private var captured: [[ErrorReport.Entry]] = []
     private var database: DatabaseLayer { engine.database }
 
-    /// The sentence a report writes for a node whose only problem is that something upstream
-    /// failed. The node carries a state, not a message; this is how that state reads.
-    private let carried = "\(NodeError.inputValueInError)"
+    /// The document a report gives a node whose only problem is that something upstream
+    /// failed and whose cause is not in the graph: the node carries a state, not a document
+    /// of its own, and this is the condition that state is.
+    private let carried = ErrorDocument.engine(.inputInError, subject: nil)
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -65,7 +66,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     private func fail(_ nodeID: ObjectID, with message: String) throws {
         try database.node.select(nodeID: nodeID)
             .writeToOutputPort("output",
-                               value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+                               value: .noValue(reason: try .failure(message)))
     }
 
     /// What a node publishes when it did not run because an input is in error: a state with
@@ -150,14 +151,11 @@ final class CascadeCollapseTests: SemelCoreTestCase {
 
         XCTAssertEqual(captured[0][0].downstreamCarrierCount, 21,
                        "twenty consumers and the sink they feed")
-        XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
-                       ["❌ StaticFile #\(source) 'input:/shared.h'",
-                        "   · the file is gone",
-                        "   · and 21 nodes downstream carry it",
-                        ""])
+        XCTAssertEqual(captured[0][0].nodeIDs, [source])
+        XCTAssertEqual(captured[0][0].items.map(\.document), [.failure("the file is gone")])
     }
 
-    func test_oneNodeDownstreamReadsAsOne() throws {
+    func test_oneNodeDownstreamCountsAsOne() throws {
         let source   = try makeFile(path: "input:/shared.h")
         let consumer = try makeConsumer(tag: "only", reading: ["header": .staticFile(at: "input:/shared.h")])
         try fail(source, with: "the file is gone")
@@ -165,8 +163,8 @@ final class CascadeCollapseTests: SemelCoreTestCase {
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(ErrorReport.lines(for: captured[0][0]).filter { $0.contains("·") },
-                       ["   · the file is gone", "   · and 1 node downstream carries it"])
+        XCTAssertEqual(captured[0].map(\.nodeIDs), [[source]])
+        XCTAssertEqual(captured[0][0].downstreamCarrierCount, 1)
     }
 
     /// A node that has something of its own to say is a cause, wherever it sits: its message
@@ -198,7 +196,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
 
         XCTAssertEqual(captured[0].count, 1)
         XCTAssertEqual(captured[0][0].downstreamCarrierCount, 1)
-        XCTAssertEqual(captured[0][0].items, [ErrorReport.Item(ports: ["output"], message: carried)])
+        XCTAssertEqual(captured[0][0].items, [ErrorReport.Item(ports: ["output"], document: carried)])
     }
 
     /// Two headers deleted at once, one consumer reading both: the consumer is folded, and
@@ -329,7 +327,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         XCTAssertEqual(captured[0].map(\.label), ["DemandingSampleTool #\(compiler)"])
         XCTAssertEqual(captured[0].map(\.downstreamCarrierCount), [2])
         XCTAssertEqual(captured[0][0].items,
-                       [ErrorReport.Item(ports: ["output"], message: "undefined symbol 'main'")])
+                       [ErrorReport.Item(ports: ["output"], document: .failure("undefined symbol 'main'"))])
     }
 
     /// A tree pipeline is a chain like any other: a merger that could not merge because one
@@ -366,7 +364,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         let nodeID = try makeConsumer(tag: "any")
 
         XCTAssertTrue(ErrorReport.isCarriedFromAnInput(try port(nodeID, .inputInError)))
-        XCTAssertFalse(ErrorReport.isCarriedFromAnInput(try port(nodeID, .error(messageDataObjectHash: "boom".intern()))))
+        XCTAssertFalse(ErrorReport.isCarriedFromAnInput(try port(nodeID, try .failure("boom"))))
         XCTAssertFalse(ErrorReport.isCarriedFromAnInput(try port(nodeID, .initializing)))
         XCTAssertFalse(ErrorReport.isCarriedFromAnInput(try port(nodeID, .pending)))
         XCTAssertFalse(ErrorReport.isCarriedFromAnInput(try port(nodeID, .inputNotProduced)))
@@ -386,14 +384,14 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     /// A state that is not a failure is not reported: a node between its creation and its
     /// first processing would otherwise put every fresh graph in the error report, and a
     /// node that did not run says the one sentence there is to say for it.
-    func test_whatEachStateReportsAsAMessage() throws {
+    func test_whatEachStateReportsAsADocument() throws {
         let nodeID = try makeConsumer(tag: "any")
 
-        XCTAssertNil(ErrorReport.reportableMessage(of: try port(nodeID, .initializing)))
-        XCTAssertNil(ErrorReport.reportableMessage(of: try port(nodeID, .pending)))
-        XCTAssertEqual(ErrorReport.reportableMessage(of: try port(nodeID, .inputInError)), carried)
-        XCTAssertEqual(ErrorReport.reportableMessage(of: try port(nodeID, .error(messageDataObjectHash: "boom".intern()))),
-                       "boom")
+        XCTAssertNil(ErrorReport.reportableDocument(of: try port(nodeID, .initializing)))
+        XCTAssertNil(ErrorReport.reportableDocument(of: try port(nodeID, .pending)))
+        XCTAssertEqual(ErrorReport.reportableDocument(of: try port(nodeID, .inputInError)), carried)
+        XCTAssertEqual(ErrorReport.reportableDocument(of: try port(nodeID, try .failure("boom"))),
+                       .failure("boom"))
     }
 
     /// A node carrying an input error *and* something of its own is a cause: the something
@@ -405,7 +403,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         try carry(consumer)
         try database.node.select(nodeID: consumer)
             .writeToOutputPort("errorLog",
-                               value: .noValue(reason: .error(messageDataObjectHash: try "and a log".intern())))
+                               value: .noValue(reason: try .failure("and a log")))
 
         let byNode = Dictionary(grouping: try ErrorReport.portsToReport(database: database), by: \.nodeID)
 

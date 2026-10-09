@@ -249,7 +249,7 @@ final class ClangIncludeFinderTests: SemelClangTestCase {
     /// Only a file nobody pushed is read as absent: a source that failed upstream, or one
     /// that was pushed and then removed, still stops the finder.
     func test_aSourceInErrorOrDeletedStillFails() throws {
-        for reason in [NoValueReason.inputInError, .deleted, .error(messageDataObjectHash: try "broken".intern())] {
+        for reason in [NoValueReason.inputInError, .deleted, .error(documentHash: try "broken".intern())] {
             let wires: [String: NodeValue] = ["src/a.h": .noValue(reason: reason)]
             XCTAssertThrowsError(try ClangIncludeFinder.ClangIncludeFinderInputs(
                 input: ProcessInput(inputValues: [ClangIncludeFinder.sourceFileInputPort: wires])),

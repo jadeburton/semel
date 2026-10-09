@@ -96,10 +96,9 @@ final class TreeMergerTests: SemelCoreTestCase {
                        TreeManifestEntry(path: "Contents/Frameworks/Tiny.framework/Versions/Current", symbolicLinkTarget: "A"))
 
         let copies = try tree(["Tiny.framework/Versions/Current/Tiny"])
-        guard case .noValue(.error(let messageHash)) = try process(["links": .value(try framework.toJSON().intern()), "copies": copies]) else {
-            return XCTFail("a link and a copy below it cannot both be laid")
-        }
-        XCTAssertEqual(try messageHash.resolveAsString(), "two trees hold 'Tiny.framework/Versions/Current': links and copies")
+        XCTAssertEqual(try process(["links": .value(try framework.toJSON().intern()), "copies": copies]).errorCondition,
+                       .treeCollision(path: "Tiny.framework/Versions/Current", first: "links", second: "copies"),
+                       "a link and a copy below it cannot both be laid")
     }
 
     /// A tree that failed stops the merge, and the merger says that as its own state rather
@@ -108,7 +107,7 @@ final class TreeMergerTests: SemelCoreTestCase {
     func test_aTreeWithoutAValueStopsTheMergeAsACarriedState() throws {
         let merged = try processCatchingTheState(
             ["assets": try tree(["Assets.car"]),
-             "strings": .noValue(reason: .error(messageDataObjectHash: try "xcstringstool failed".intern()))])
+             "strings": .noValue(reason: try .failure("xcstringstool failed"))])
 
         guard case .noValue(.inputInError) = merged else {
             return XCTFail("expected the carried state, got \(merged)")

@@ -52,14 +52,14 @@ struct ModuleMapWriter: Node {
 
     /// Never reached in a working graph: a node declaring no input ports is not scheduled.
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        throw NodeError.other(message: "\(Self.self) declares no input ports and cannot process")
+        throw NodeError.sourceCannotProcess(type: "\(Self.self)")
     }
 
     /// The map's text: SwiftPM's, with the paths relative to the folder the map sits in.
     /// Exactly one umbrella is named; a writer given both or neither says which it got.
     static func moduleMap(properties: [String: String]) throws -> String {
         guard let moduleName = properties[moduleNameProperty], !moduleName.isEmpty else {
-            throw NodeError.other(message: "ModuleMapWriter needs moduleName: the module the map declares")
+            throw ErrorCondition.propertyMissing(type: "ModuleMapWriter", property: moduleNameProperty, alternatives: [])
         }
         let umbrella: String
         switch (properties[umbrellaHeaderProperty], properties[umbrellaDirectoryProperty]) {
@@ -68,8 +68,8 @@ struct ModuleMapWriter: Node {
         case (nil, let directory?):
             umbrella = "umbrella \"\(escaped(directory))\""
         default:
-            throw NodeError.other(message: "ModuleMapWriter for '\(moduleName)' needs exactly one of "
-                                         + "umbrellaHeader and umbrellaDirectory")
+            throw ErrorCondition.propertiesExclusive(type: "ModuleMapWriter",
+                                                     properties: [umbrellaHeaderProperty, umbrellaDirectoryProperty])
         }
         return "module \(moduleName) {\n    \(umbrella)\n    export *\n}\n"
     }

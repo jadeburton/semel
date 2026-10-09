@@ -150,7 +150,7 @@ final class LocalFileSystemToolTests: XCTestCase {
     /// A tool that fails has said why in its own output; the file it then did not write is
     /// a fact on the result and not a line under that output, so a compile error reads as
     /// the compiler wrote it. A tool that exits cleanly without its output leaves the same
-    /// fact, which is the one case a node turns into a sentence.
+    /// fact, which is the one case a node publishes as a condition of its own.
     func test_anOutputTheToolDidNotWriteIsAFactNotALineInItsLog() throws {
         let failed = try LocalFileSystemTool(localPath: "/bin/sh")
             .execute(arguments: ["-c", "echo 'bad.c:1:1: error: unknown type' >&2; exit 1"],
@@ -161,8 +161,8 @@ final class LocalFileSystemToolTests: XCTestCase {
         XCTAssertEqual(failed.exitCode, 1)
         XCTAssertEqual(failed.errorOutput.trimmingCharacters(in: .whitespacesAndNewlines), "bad.c:1:1: error: unknown type")
         XCTAssertEqual(failed.missingOutputFiles, ["out.o"])
-        XCTAssertEqual(try failed.asOutputNodeValue(tool: "clang").errorMessage(),
-                       "clang exited with status 1:\nbad.c:1:1: error: unknown type")
+        XCTAssertEqual(try failed.asOutputNodeValue(tool: "clang", subject: nil).errorDocument()?.diagnostic,
+                       .tool(text: "bad.c:1:1: error: unknown type", tool: "clang"))
 
         let silent = try LocalFileSystemTool(localPath: "/bin/sh")
             .execute(arguments: ["-c", "true"],
@@ -173,8 +173,8 @@ final class LocalFileSystemToolTests: XCTestCase {
         XCTAssertEqual(silent.exitCode, 0)
         XCTAssertTrue(silent.errorOutput.isEmpty, silent.errorOutput)
         XCTAssertEqual(silent.missingOutputFiles, ["out.o"])
-        XCTAssertEqual(try silent.asOutputNodeValue(tool: "clang").errorMessage(),
-                       "clang exited with status 0 and wrote nothing at out.o")
+        XCTAssertEqual(try silent.asOutputNodeValue(tool: "clang", subject: nil).errorDocument()?.diagnostic,
+                       .engine(.toolWroteNothing(tool: "clang", status: 0, paths: ["out.o"])))
     }
 
     /// A link among the inputs is laid as the link it is, beside the files it names (B-77),
@@ -250,5 +250,16 @@ final class LocalFileSystemToolTests: XCTestCase {
 
         wait(for: [expectation], timeout: 30)
         XCTAssertTrue(failures.isEmpty, failures.joined(separator: "\n"))
+    }
+}
+
+extension NodeValue {
+    /// The document an error value names, read back; nil for a value or another reason.
+    func errorDocument() throws -> ErrorDocument? {
+        guard case .noValue(.error(let hash)) = self else {
+            return nil
+        }
+        try TypeRegistry.register(types: [ErrorDocument.self])
+        return ErrorDocument.read(documentHash: hash)
     }
 }

@@ -71,7 +71,7 @@ final class BuildCommandTests: XCTestCase {
         _ = try product(name).findOrCreateMatchingNode()
         // Written after the wiring, which puts every output of its target back to pending.
         try source.writeToOutputPort(StaticFile.outputPort,
-                                     value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+                                     value: .noValue(reason: try .failure(message)))
     }
 
     /// With no loop running the wait returns at once, so the macro's three steps are
@@ -258,22 +258,25 @@ final class BuildCommandTests: XCTestCase {
         XCTAssertNotNil(try BuildEngine.shared.inputFileSystem.childNode(path: "src/main.c"))
     }
 
-    /// A partial product set beside a non-zero exit would only mislead.
-    func test_aBuildThatReportedErrorsExportsNothing() throws {
+    /// A partial product set in the default folder beside the sources would only mislead:
+    /// a build with errors exports nothing there, and exits non-zero.
+    func test_aBuildThatReportedErrorsExportsNothingToTheDefaultFolder() throws {
         try publishProduct("lib.a", contents: "archive")
         try publishFailedProduct("broken.a", message: "the source is gone")
-        let destination = makeTempDirectory()
+        var lines: [String] = []
+        interpreter.output = { lines.append($0) }
 
-        interpreter.handleCommand("build src --into \(destination.path)")
+        interpreter.handleCommand("build src")
 
         XCTAssertEqual(interpreter.errorsReported, 1)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: externalRoot.appendingPathComponent("semel-out/src").path))
+        XCTAssertEqual(lines.last, "1 error · 1 product without a value · nothing exported")
     }
 
-    /// B-142. The report under a failed build is grouped by the products the errors stop,
-    /// and where the export would have been said, the products it was refused for are
-    /// named.
-    func test_aFailedBuildNamesTheProductsItDidNotExport() throws {
+    /// A folder the reader named with `--into` is one they asked to have filled: it gets the
+    /// products that have a value, the summary says how many of how many, and the exit
+    /// status still says the build failed.
+    func test_intoExportsWhatHasAValueAndTheSummarySaysHowMuch() throws {
         try publishProduct("lib.a", contents: "archive")
         try publishFailedProduct("broken.a", message: "the source is gone")
         let destination = makeTempDirectory()
@@ -282,9 +285,15 @@ final class BuildCommandTests: XCTestCase {
 
         interpreter.handleCommand("build src --into \(destination.path)")
 
-        XCTAssertTrue(lines.contains("Stopping output:/src/broken.a:"), lines.joined(separator: "\n"))
-        XCTAssertEqual(lines.last { $0.hasPrefix("Not exported") },
-                       "Not exported into \(destination.path): errors stop output:/src/broken.a.")
+        XCTAssertEqual(interpreter.errorsReported, 1)
+        XCTAssertEqual(try String(contentsOf: destination.appendingPathComponent("lib.a"), encoding: .utf8), "archive")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.appendingPathComponent("broken.a").path))
+        XCTAssertEqual(Array(lines.suffix(4)), [
+            "broken.a:",
+            "the source is gone",
+            "",
+            "1 error · 1 product without a value · 1 of 2 products exported",
+        ])
     }
 
     func test_intoNeedsADirectory() throws {

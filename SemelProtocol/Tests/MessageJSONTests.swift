@@ -8,6 +8,7 @@
 //
 
 @testable import SemelProtocol
+import SemelNodeKit
 import XCTest
 
 final class MessageJSONTests: XCTestCase {
@@ -47,9 +48,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsTwentyFive() {
-        XCTAssertEqual(ProtocolVersion.current, 25)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 25,
+    func test_currentProtocolVersionIsTwentySix() {
+        XCTAssertEqual(ProtocolVersion.current, 26)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 26,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -227,32 +228,21 @@ final class MessageJSONTests: XCTestCase {
         ])
     }
 
-    /// B-110. The path a report says nobody pushed travels typed, and an entry with no
-    /// such path — every other error — carries nothing for it.
-    func test_anErrorEntryCarriesTheMissingSourceWhenThereIsOne() throws {
-        let missing = ErrorEntry(ports: ["output"], message: "clang.cfg has not been pushed", missingSource: "clang.cfg")
-        let other   = ErrorEntry(ports: ["output"], message: "boom")
+    /// A record carries the document its node published, decoded — every value of it under
+    /// its own key — so a client renders it and reads no text the engine composed.
+    func test_anErrorRecordCarriesTheDocumentItsNodePublished() throws {
+        let record = Self.sampleRecord
+        let decoded = try JSONDecoder().decode(ErrorRecord.self, from: try JSONEncoder().encode(record))
 
-        let encoded = try JSONEncoder().encode([missing, other])
-        let decoded = try JSONDecoder().decode([ErrorEntry].self, from: encoded)
+        XCTAssertEqual(decoded, record)
+        XCTAssertEqual(decoded.document.unpushedSource, nil)
+        XCTAssertEqual(decoded.facts.nodeIDs, [12])
 
-        XCTAssertEqual(decoded, [missing, other])
-        XCTAssertEqual(decoded.map(\.missingSource), ["clang.cfg", nil])
-    }
-
-    /// B-109. What writes a machine file nobody has written travels typed too — the
-    /// command and the folder apart, so a client never takes a sentence apart for either.
-    func test_anErrorEntryCarriesTheWritersOfAMachineFile() throws {
-        let writers = [SourceWriter(command: "semel-clang", folder: "."),
-                       SourceWriter(command: "semel-swift prepare", folder: ".")]
-        let missing = ErrorEntry(ports: ["output"], message: "semel.machine.config has not been pushed",
-                                 missingSource: "semel.machine.config", writers: writers)
-
-        let decoded = try JSONDecoder().decode(ErrorEntry.self, from: try JSONEncoder().encode(missing))
-
-        XCTAssertEqual(decoded, missing)
-        XCTAssertEqual(decoded.writers, writers)
-        XCTAssertEqual(ErrorEntry(ports: ["output"], message: "boom").writers, [])
+        let unpushed = ErrorRecord(document: .engine(.notPushed(path: "input:/clang.cfg", isFolder: false), subject: nil),
+                                   products: [], facts: ErrorFacts(nodeType: "StaticFile", nodeIDs: [3], ports: ["output"],
+                                                                   carrierCount: 1))
+        XCTAssertEqual(try JSONDecoder().decode(ErrorRecord.self, from: try JSONEncoder().encode(unpushed)).document.unpushedSource,
+                       "clang.cfg")
     }
 
     /// B-142. The products travel on every record, each under its own keys, and a record
@@ -261,13 +251,22 @@ final class MessageJSONTests: XCTestCase {
         XCTAssertEqual(try json(StoppedProduct(path: "output:/app/Res/Assets.car", treeFolder: "output:/app/Res")),
                        #"{"path":"output:\/app\/Res\/Assets.car","treeFolder":"output:\/app\/Res"}"#)
 
-        let withoutProducts = Data(#"{"label":"x","entries":[],"downstreamCarrierCount":0,"nodeCount":1}"#.utf8)
-        XCTAssertThrowsError(try JSONDecoder().decode(ErrorRecord.self, from: withoutProducts))
+        var withoutProducts = try XCTUnwrap(try JSONSerialization.jsonObject(with: try JSONEncoder().encode(Self.sampleRecord))
+                                            as? [String: Any])
+        withoutProducts["products"] = nil
+        XCTAssertThrowsError(try JSONDecoder().decode(ErrorRecord.self,
+                                                      from: try JSONSerialization.data(withJSONObject: withoutProducts)))
     }
 
+    /// A compile's failure, as a record carries it.
+    static let sampleRecord = ErrorRecord(
+        document: .tool(text: "input:/a.swift:1:1: error: boom", tool: "swiftc", status: 1, subject: .target(name: "A")),
+        products: [StoppedProduct(path: "output:/app/bin"),
+                   StoppedProduct(path: "output:/app/Res/Assets.car", treeFolder: "output:/app/Res")],
+        facts: ErrorFacts(nodeType: "SwiftCompiler", nodeIDs: [12], ports: ["object", "swiftmodule"], carrierCount: 3))
+
     func test_roundTripsEveryDaemonResponse() throws {
-        let record = ErrorRecord(label: "SwiftCompiler #12 'input:/a.swift'",
-                                 entries: [ErrorEntry(ports: ["output", "errorLog"], message: "boom")])
+        let record = Self.sampleRecord
         let descriptor = ToolDescriptorRecord(name: "swiftc", version: "6.0", platform: "macos",
                                               architecture: "arm64", machineSettings: ["sdk": "/x"])
         let responses: [DaemonResponse] = [
@@ -283,11 +282,9 @@ final class MessageJSONTests: XCTestCase {
             .fetch(mode: 0o644),
             .symbolicLink(target: "Versions/Current/Tiny"),
             .errors(records: [record]),
-            .errors(records: [ErrorRecord(label: "SwiftCompiler #12 'input:/a.swift'",
-                                          entries: [ErrorEntry(ports: ["output"], message: "boom")],
-                                          products: [StoppedProduct(path: "output:/app/bin"),
-                                                     StoppedProduct(path: "output:/app/Res/Assets.car",
-                                                                    treeFolder: "output:/app/Res")])]),
+            .errors(records: [ErrorRecord(document: .engine(.unlinkedKind(kind: 43), subject: nil), products: [],
+                                          facts: ErrorFacts(nodeType: "kind 43", nodeIDs: [37], ports: ["output"],
+                                                            carrierCount: 1))]),
             .tools(namespaces: [ToolNamespaceRecord(namespace: "swift.compiler", toolName: "swiftc",
                                               descriptors: [descriptor])]),
             .reset(archivedGraphPath: "/tmp/semel-home/graph.sqlite.broken-2026-09-23T101500Z"),
@@ -393,7 +390,7 @@ final class MessageJSONTests: XCTestCase {
             .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
                            expected: .contentRoot("4d5d"), found: "9e1f", paths: ["Dependencies/Pkg/a.swift"]),
             .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
-                           expected: .unreadable(line: 2, problem: "line 2: bogus"), found: nil, paths: []),
+                           expected: .unreadable(problem: .emptyValue(key: "content", line: 2)), found: nil, paths: []),
             .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
                            expected: .otherFold(fold: "semel-folder-content-root 3", contentRoot: "4d5d"),
                            found: "9e1f", paths: []),
@@ -431,7 +428,7 @@ final class MessageJSONTests: XCTestCase {
     }
 
     func test_roundTripsErrorsEvent() throws {
-        let event = Event.daemon(.errors(records: [ErrorRecord(label: "x", entries: [])]))
+        let event = Event.daemon(.errors(records: [Self.sampleRecord]))
 
         XCTAssertEqual(try roundTrip(event), event)
     }

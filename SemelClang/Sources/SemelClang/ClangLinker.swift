@@ -51,7 +51,9 @@ public struct ClangLinker: Node {
     /// 2: passes the `frameworks` and `libraries` its settings state (B-55).
     /// 3: several wires on `configuration` are an error naming them, where one was taken
     /// (B-141).
-    public static let implementationVersion = 3
+    /// 4: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 4
 
     // MARK: Ports
 
@@ -218,7 +220,7 @@ public struct ClangLinker: Node {
         let metadataJSON = (try? FileMetadata(mode: mode).jsonString()) ?? "{}"
         let metadataValue = NodeValue.value(try metadataJSON.intern())
 
-        return .init(output: try result.asOutputNodeValue(tool: "clang", settings: settings),
+        return .init(output: try result.asOutputNodeValue(tool: "clang", subject: nil, settings: settings),
                      infoLog: .value(try result.infoOutput.intern()),
                      fileMetadata: metadataValue)
     }

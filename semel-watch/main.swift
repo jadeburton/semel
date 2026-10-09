@@ -34,6 +34,8 @@ struct SocketWatchConnector: WatchConnector {
         }
         let interpreter = CommandInterpreter(connection: connection, baseDirectory: base,
                                              progress: printsReports ? progress : .off)
+        // Colour as the terminal allows it, decided as the progress line decides.
+        interpreter.reportsInColour = ColourPolicy.inThisProcess()
         let server = try interpreter.connect(subscribing: printsReports)
         return WatchSession(interpreter: interpreter, serverVersion: server.serverVersion,
                             databasePath: server.databasePath, isOpen: { connection.isOpen })

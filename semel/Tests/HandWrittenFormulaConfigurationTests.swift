@@ -264,17 +264,18 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
     }
 
     /// The failure a project meets when a prefix is misspelt, or the file is absent: the tool
-    /// names the setting it wanted and where to write it, rather than failing somewhere deeper
-    /// with something about a wire.
+    /// names the setting it wanted as the project's to set, rather than failing somewhere
+    /// deeper with something about a wire.
     func test_aMissingConfigFileFailsByNamingWhatToWrite() throws {
         try buildGraph(configText: "")
 
         XCTAssertThrowsError(
             try ClangCompilerConfiguration(properties: try settingsReaching(kind: ClangCompiler.kind))
         ) { error in
-            let message = String(describing: error)
-            XCTAssertTrue(message.contains("clang.compiler.target"), "got \(message)")
-            XCTAssertTrue(message.contains("semel.config"), "should say where to write it: \(message)")
+            guard case .settingsMissing(let project, _, _)? = error as? ErrorCondition else {
+                return XCTFail("expected the missing settings, got \(error)")
+            }
+            XCTAssertTrue(project.contains("clang.compiler.target"), "got \(project)")
         }
     }
 

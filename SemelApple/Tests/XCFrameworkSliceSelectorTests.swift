@@ -121,12 +121,15 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
         return try node.process(input: ProcessInput(inputValues: inputValues))
     }
 
-    private func errorMessage(_ output: ProcessOutput) throws -> String {
-        guard case .noValue(.error(let hash)) = output.outputValues[XCFrameworkSliceSelector.frameworks] else {
-            XCTFail("expected an error, got \(String(describing: output.outputValues[XCFrameworkSliceSelector.frameworks]))")
-            return ""
+    /// What is wrong with the `.xcframework`, as the selector's document carries it.
+    private func problem(_ output: ProcessOutput) throws -> XCFrameworkProblem {
+        let value = output.outputValues[XCFrameworkSliceSelector.frameworks]
+        let document = try XCTUnwrap(value?.errorDocument, "expected an error, got \(String(describing: value))")
+        XCTAssertEqual(document.subject, .resource(path: xcframework))
+        guard case .engine(.xcframeworkUnusable(let path, let problem)) = document.diagnostic, path == xcframework else {
+            throw XCTSkip("expected the xcframework's problem, got \(document)")
         }
-        return try hash.resolveAsString()
+        return problem
     }
 
     // MARK: - Which slice
@@ -206,9 +209,8 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
     func test_noSliceForThePlatformIsAnErrorNamingTheSlices() throws {
         let output = try select(settings: "sdk=appletvos", plist: try infoPlist())
 
-        XCTAssertEqual(try errorMessage(output),
-                       "XCFrameworkSliceSelector: \(xcframework): it has no slice for tvos; its slices are "
-                     + "ios-arm64, ios-arm64_x86_64-simulator, macos-arm64_x86_64")
+        XCTAssertEqual(try problem(output),
+                       .noSliceForPlatform(platform: "tvos", available: ["ios-arm64", "ios-arm64_x86_64-simulator", "macos-arm64_x86_64"]))
         XCTAssertEqual(output.inputWireSpecs[XCFrameworkSliceSelector.sliceFolders]?.isEmpty, true)
     }
 
@@ -216,14 +218,13 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
     func test_anArchitectureTheSliceLacksIsAnError() throws {
         let output = try select(settings: "sdk=iphoneos\ntarget=x86_64-apple-ios18.0", plist: try infoPlist())
 
-        XCTAssertEqual(try errorMessage(output),
-                       "XCFrameworkSliceSelector: \(xcframework): its slice ios-arm64 has no x86_64, only arm64")
+        XCTAssertEqual(try problem(output), .noSliceForArchitecture(architecture: "x86_64", slice: "ios-arm64", architectures: ["arm64"]))
     }
 
     func test_aPlistThatIsNotAnXCFrameworksIsAnError() throws {
         let output = try select(settings: "sdk=macosx", plist: Data("<plist><dict/></plist>".utf8))
 
-        XCTAssertTrue(try errorMessage(output).contains("its Info.plist is not an xcframework's"))
+        XCTAssertEqual(try problem(output), .infoPlistUnreadable)
     }
 
     // MARK: - A static framework (B-77 item 3, 12)
@@ -273,15 +274,13 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
         let executable = try select(settings: "sdk=macosx", plist: try infoPlist(),
                                     folders: [slice: (files: ["Tiny"], folders: [])],
                                     contents: ["\(slice)/Tiny": Self.machO(fileType: 2)])
-        XCTAssertEqual(try errorMessage(executable),
-                       "XCFrameworkSliceSelector: \(xcframework): its slice's framework binary Tiny.framework/Tiny: "
-                     + "its binary is a Mach-O file of type 2, neither a dynamic library nor an object")
+        XCTAssertEqual(try problem(executable),
+                       .frameworkBinaryUnrecognised(path: "Tiny.framework/Tiny", reason: .machOFileType(fileType: 2)))
         XCTAssertEqual(executable.inputWireSpecs[XCFrameworkSliceSelector.sliceFiles]?.keys.sorted(), ["\(slice)/Tiny"])
 
         let missing = try select(settings: "sdk=macosx", plist: try infoPlist(),
                                  folders: [slice: (files: ["Info.plist"], folders: [])])
-        XCTAssertEqual(try errorMessage(missing),
-                       "XCFrameworkSliceSelector: \(xcframework): its slice's framework has no binary at Tiny.framework/Tiny")
+        XCTAssertEqual(try problem(missing), .noFrameworkBinary(paths: ["Tiny.framework/Tiny"]))
     }
 
     /// The kind is read from the first bytes and, in a fat file, from each architecture's.
@@ -358,7 +357,10 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
     func test_aLibrarySliceThatIsNotAnArchiveIsAnError() throws {
         let output = try select(settings: "sdk=macosx", plist: try infoPlist(macLibrary: "libTiny.dylib"))
 
-        XCTAssertTrue(try errorMessage(output).contains("libTiny.dylib is neither a framework nor a static archive"))
+        guard case .unsupportedLibrary(let library) = try problem(output) else {
+            return XCTFail("expected the library that is not an archive")
+        }
+        XCTAssertTrue(library.hasSuffix("libTiny.dylib"), library)
     }
 
     func test_isRegisteredUnderItsKind() throws {

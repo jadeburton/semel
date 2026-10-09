@@ -80,12 +80,12 @@ final class OneWirePortTests: SemelCoreTestCase {
 
         let entries = ErrorReport.entries(forErrorPorts: try ErrorReport.portsToReport(database: database),
                                           database: database,
-                                          select: { _, messages in messages }).map(\.entry)
+                                          select: { _, documents in documents })
         let entry = try XCTUnwrap(entries.first { $0.label.hasPrefix("ProjectBuilder #\(try builder.requireID())") },
                                   "expected the builder to be named, got \(entries.map(\.label))")
-        XCTAssertEqual(entry.items.map(\.message),
-                       ["SampleTool's input 'configuration' takes one wire, and 2 are wired to it: 'machine', "
-                        + "'project'. Wire it once; settings from two places meet in a ConfigMerger, whose base "
-                        + "and override say which wins"])
+        XCTAssertEqual(entry.items.map(\.document.diagnostic),
+                       [.engine(.severalWiresOnOneWirePort(type: "SampleTool", port: "configuration",
+                                                           wires: ["machine", "project"]))])
+        XCTAssertEqual(entry.items.map(\.document.subject), [.formula(path: "input:/repo/semel.fmla")])
     }
 }

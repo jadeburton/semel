@@ -101,5 +101,11 @@ public enum Semel {
     /// system through it on one port where it walked the folders on two. The reason 0.1.6
     /// was a bump: the rebuild folds every preserved folder's subtree manifest, which makes
     /// the rows; and the finder it preserves drops the wires of the ports it no longer has.
-    public static let version = "0.1.15"
+    ///
+    /// 0.1.16: an error port's hash names an `ErrorDocument` — the diagnostic, what it
+    /// belongs to and the remedy, as values — where it named a sentence (B-145). A stored
+    /// graph's error ports name text that reads as no document, so it is rebuilt; a
+    /// preserved node's error port holding text is reported as a document that cannot be
+    /// read until the node runs again, which the rebuild schedules.
+    public static let version = "0.1.16"
 }

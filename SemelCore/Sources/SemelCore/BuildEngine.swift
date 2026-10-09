@@ -62,6 +62,7 @@ public final class BuildEngine {
             FolderManifest.self,
             FolderSubtreeManifest.self,
             TreeManifest.self,
+            ErrorDocument.self,
             OutputFile.self,
             TreeFile.self,
             TreeMerger.self,
@@ -365,12 +366,11 @@ public final class BuildEngine {
     /// the same shape as `FatalErrors.handler`.
     @Locked var unclaimedConfigKeyReporter: (String) -> Void = { BuildEngine.notice($0) }
 
-    /// Where the idle-time error report goes. Structured entries rather than lines, so a
-    /// server can carry them to a client as records; the default renders and prints, so
-    /// an engine with no server still reports to its own terminal.
-    @Locked public var errorReporter: ([ErrorReport.Entry]) -> Void = { entries in
-        entries.flatMap(ErrorReport.lines(for:)).forEach { print($0) }
-    }
+    /// Where the idle-time error report goes. Structured entries rather than lines: the
+    /// engine renders nothing, and a server carries them to a client as records, which the
+    /// client draws. An engine with no server has nobody to tell, so the default is
+    /// silence.
+    @Locked public var errorReporter: ([ErrorReport.Entry]) -> Void = { _ in }
 
     /// Where the settle summary goes. Totals rather than a line, for the same reason the
     /// error reporter hands over entries: the marks and the wording belong to whatever
@@ -523,22 +523,22 @@ public final class BuildEngine {
 
     // MARK: - Idle-time error reporting
 
-    /// Tracks the last set of error messages reported per node so repeated identical
-    /// errors are not printed on every processing cycle.
-    private var lastReportedErrors: [ObjectID: Set<String>] = [:]
+    /// Tracks the last set of error documents reported per node so repeated identical
+    /// errors are not reported on every processing cycle.
+    private var lastReportedErrors: [ObjectID: Set<ErrorDocument>] = [:]
 
     /// Called once the engine is fully idle (no more scheduled nodes, no pending signals).
-    /// Compares current error state against the last-reported state and prints only
-    /// newly-appearing errors, using the same format as the `errors` command.
+    /// Compares current error state against the last-reported state and reports only
+    /// newly-appearing errors, through the same fold as the `errors` verb.
     ///
-    /// Returns how many errors the graph is carrying, counted the way the `errors` command
-    /// counts them — per port, over the causes a report folds a cascade onto — so that the
-    /// number is what that command would answer if it were asked at this moment.
-    /// Deliberately not the size of the report: a build that breaks a node and a rebuild
-    /// that breaks it again identically leave the graph equally broken, and a summary
-    /// reading "0 errors" two lines above `errors` listing one is the kind of
+    /// Returns how many errors the graph is carrying, counted the way the `errors` report
+    /// counts them — one per cause, merged as the client merges its blocks — so that the
+    /// number is what that report would say if it were asked for at this moment.
+    /// Deliberately not the size of what is reported now: a build that breaks a node and a
+    /// rebuild that breaks it again identically leave the graph equally broken, and a
+    /// summary reading "0 errors" two lines above `errors` listing one is the kind of
     /// disagreement the count exists to prevent. What is newly appearing decides what is
-    /// *printed*; what is currently wrong decides what is *counted*.
+    /// *reported*; what is currently wrong decides what is *counted*.
     @discardableResult
     func reportIdleTimeErrors() -> Int {
         // A report, so best effort: a failure here delays the error listing to the next idle.
@@ -549,38 +549,38 @@ public final class BuildEngine {
         // What the sources in the graph have to say for themselves, worked out once for the
         // three passes below: it is the one reading here that asks the graph anything
         // beyond the ports in hand.
-        let sourced = ErrorReport.sourceMessages(amongPorts: errorPorts, database: database)
+        let sourced = ErrorReport.sourceDocuments(amongPorts: errorPorts, database: database)
 
         // What the `errors` verb would answer if it were asked at this moment: the same
         // fold, over everything the graph carries rather than over what is newly appearing.
         // Through `entries` rather than by counting ports, because a carrier folded onto
         // its cause is not an error the verb lists, and a count that included one would say
         // more than the report beside it shows.
-        let errorCount = ErrorReport.entries(forErrorPorts: errorPorts, database: database,
-                                             sourceMessages: sourced) { _, messages in messages }
-            .reduce(0) { $0 + $1.entry.items.reduce(0) { $0 + $1.ports.count } * $1.entry.nodeCount }
+        let errorCount = ErrorReport.errorCount(of: ErrorReport.entries(forErrorPorts: errorPorts, database: database,
+                                                                        sourceDocuments: sourced) { _, documents in documents })
 
         // The "current" error map. `ErrorReport` is the one place that decides what a port's
-        // message is and which placeholder is not one.
-        let current = ErrorReport.messagesByNode(forPorts: errorPorts, database: database,
-                                                 sourceMessages: sourced)
+        // document is and which state is not one.
+        let current = ErrorReport.documentsByNode(forPorts: errorPorts, database: database,
+                                                  sourceDocuments: sourced)
 
-        // Only the causes, and of those only the ones with a newly-appearing message.
+        // Only the causes, and of those only the ones with a newly-appearing document.
         // Reporting an error that has already been reported on every settle is how a report
         // stops being read. `ErrorReport` decides the rest — which nodes are causes, how the
         // cascade under each is counted, and the order — so that this event and the `errors`
         // verb's reply list the same failures alike.
         let entries = ErrorReport.entries(forErrorPorts: errorPorts, database: database,
-                                          sourceMessages: sourced) { nodeID, messages in
-            messages.subtracting(lastReportedErrors[nodeID] ?? [])
+                                          sourceDocuments: sourced) { nodeID, documents in
+            documents.subtracting(lastReportedErrors[nodeID] ?? [])
         }
 
-        // What a node is known to have been reported for, kept message by message: a carrier
-        // folded into its cause is reported for nothing, so it keeps nothing, and the day its
-        // own cause is collected and it becomes the cause, its message still counts as new.
-        var reported: [ObjectID: Set<String>] = [:]
-        for (nodeID, messages) in current {
-            reported[nodeID] = messages.intersection(lastReportedErrors[nodeID] ?? [])
+        // What a node is known to have been reported for, kept document by document: a
+        // carrier folded into its cause is reported for nothing, so it keeps nothing, and the
+        // day its own cause is collected and it becomes the cause, its document still counts
+        // as new.
+        var reported: [ObjectID: Set<ErrorDocument>] = [:]
+        for (nodeID, documents) in current {
+            reported[nodeID] = documents.intersection(lastReportedErrors[nodeID] ?? [])
         }
         for entry in entries {
             for nodeID in entry.nodeIDs {
@@ -593,10 +593,10 @@ public final class BuildEngine {
             return errorCount
         }
 
-        // Named only once there is something to print: the walk is the one part of a report
+        // Named only once there is something to report: the walk is the one part of a report
         // whose cost follows the graph below the failures rather than the failures.
         var reach = ProductReach(database: database)
-        errorReporter(ErrorReport.namingProducts(of: entries, reach: &reach).map(\.entry))
+        errorReporter(ErrorReport.namingProducts(of: entries, reach: &reach))
         return errorCount
     }
 

@@ -76,11 +76,15 @@ final class StreamedReplyTests: XCTestCase {
     /// A server that learns it is done only after its last item ends with an empty slice.
     func test_anEmptyLastSliceEndsTheStream() throws {
         var parts = ReplyParts()
-        try parts.append(.daemon(.errors(records: [ErrorRecord(label: "a", entries: [])])))
+        try parts.append(.daemon(.errors(records: [ErrorRecord(document: .engine(.noSources, subject: nil), products: [],
+                                                                                   facts: ErrorFacts(nodeType: "a", nodeIDs: [1], ports: [],
+                                                                                                     carrierCount: 0))])))
 
         let whole = try parts.whole(endingWith: .daemon(.errors(records: [])))
 
-        XCTAssertEqual(whole, .daemon(.errors(records: [ErrorRecord(label: "a", entries: [])])))
+        XCTAssertEqual(whole, .daemon(.errors(records: [ErrorRecord(document: .engine(.noSources, subject: nil), products: [],
+                                                                                   facts: ErrorFacts(nodeType: "a", nodeIDs: [1], ports: [],
+                                                                                                     carrierCount: 0))])))
     }
 
     /// With no parts the last frame is the reply as it came: a small reply is untouched.

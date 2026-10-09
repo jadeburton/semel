@@ -97,9 +97,9 @@ public struct RequiredSettings {
     ///
     /// A `toolDescriptor.*` key, and every key the node's namespace declares as a machine
     /// setting, describes the machine the build runs on: the toolchain's own tool writes
-    /// them all with the machine's own values, so writing `=…` beside them would invite the
-    /// reader to invent a value that has one correct spelling. Every other key is the
-    /// project's own choice, and `=…` is where that choice goes (B-109).
+    /// them all with the machine's own values, so a report names that command for them
+    /// rather than invite the reader to invent a value that has one correct spelling. Every
+    /// other key is the project's own choice, and a report names it as a key to set (B-109).
     public func check() throws {
         guard !missing.isEmpty else {
             return
@@ -114,28 +114,12 @@ public struct RequiredSettings {
         }
         let choices    = sorted.filter { !machine.contains($0) }
 
-        // Each kind under its own heading, saying whose it is and what answers it (B-109):
-        // the project's keys are typed with a value, the machine's are written by a command.
-        var paragraphs: [String] = []
-
-        if !choices.isEmpty {
-            paragraphs.append("Missing configuration. Add these to the project's semel.config, with your values:")
-            paragraphs.append(choices.map { "\($0)=…" }.joined(separator: "\n"))
-        }
-
-        if !machine.isEmpty {
-            // Which command writes them is the toolchain's to say; a namespace that names
-            // none still says which file the settings belong in.
-            let fileName = MachineFileWriter.fileName
-            let writer   = entry?.machineFileWriter
-                .map { "Run '\($0.invocation(folder: MachineFileWriter.folderPlaceholder))': it writes \(fileName) with" }
-                ?? "They belong in \(fileName), with"
-            paragraphs.append("Missing machine settings. \(writer) the tool descriptors and SDK facts of the " +
-                              "tools installed here, these among them:")
-            paragraphs.append(machine.joined(separator: "\n"))
-        }
-
-        throw NodeError.other(message: paragraphs.joined(separator: "\n\n"))
+        // Split by whose they are and what answers them (B-109): the project's keys are set
+        // with a value, the machine's are written by the toolchain's command. Which command
+        // is the toolchain's to say; a namespace that registers none leaves the remedy to
+        // the keys.
+        throw ErrorCondition.settingsMissing(project: choices, machine: machine,
+                                             writer: entry?.machineFileWriter.map { MachineFileCommand(writer: $0, folder: nil) })
     }
 }
 

@@ -23,7 +23,9 @@ struct TreeFile: Node, FileMetadataProvider {
 
     /// 2: a link entry is a link, where every entry was a file (B-77).
     /// 3: several wires on `tree` are an error naming them, where one was read (B-141).
-    public static let implementationVersion = 3
+    /// 4: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 4
 
     /// The entry's path within the tree: `en.lproj/Localizable.strings`.
     static let nameProperty = "name"
@@ -52,8 +54,8 @@ struct TreeFile: Node, FileMetadataProvider {
             encodedJSON: try treeValue.expectValue().resolveAsString())
 
         guard let entry = manifest.entry(at: name) else {
-            let message = "no file '\(name)' in the tree; it holds: " + manifest.entries.map(\.path).joined(separator: ", ")
-            let reason = NoValueReason.error(messageDataObjectHash: try message.intern())
+            let reason = try ErrorDocument.engine(.treeHasNoEntry(name: name, entries: manifest.entries.map(\.path)),
+                                                  subject: nil).asReason()
             return .init(outputValues: [Self.outputPort: .noValue(reason: reason),
                                         Self.fileMetadataOutputPort: .noValue(reason: reason)],
                          inputWireSpecs: [:])

@@ -82,7 +82,7 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable, File
     /// the right place to enforce the engine's invariants, and a third-party one should not
     /// be able to bring the process down.
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        throw NodeError.other(message: "\(Self.self) declares no input ports and cannot process")
+        throw NodeError.sourceCannotProcess(type: "\(Self.self)")
     }
 
 

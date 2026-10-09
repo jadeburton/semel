@@ -48,8 +48,8 @@ struct CodeSignerConfiguration {
         hardenedRuntime = properties[Self.hardenedRuntimeKey] == "true"
 
         guard identity == Self.adHocIdentity else {
-            throw NodeError.other(message: "CodeSigner signs ad-hoc only: \(Self.settingNamespace).identity is '\(identity)', "
-                                         + "and only '\(Self.adHocIdentity)' is signed with (B-77)")
+            throw ErrorCondition.settingNotSupported(key: "\(Self.settingNamespace).identity", value: identity,
+                                                     supported: Self.adHocIdentity)
         }
     }
 
@@ -74,7 +74,9 @@ public struct CodeSigner: Node {
     /// copies (B-77).
     /// 4: several wires on a one-wire port are an error naming them, where one was taken
     /// (B-141).
-    public static let implementationVersion = 4
+    /// 5: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 5
 
     // MARK: Ports
 
@@ -118,6 +120,11 @@ public struct CodeSigner: Node {
         try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
     }
 
+    /// A signature's failure belongs to the bundle it signs, by the wire's key.
+    public func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject? {
+        input?.inputValues[Self.bundle]?.keys.min().map { .product(path: $0) }
+    }
+
     public func process(input: ProcessInput) throws -> ProcessOutput {
         let configurationText = try input.onlyWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
         let configuration = try CodeSignerConfiguration(properties: [String: String](plainText: configurationText))
@@ -125,8 +132,7 @@ public struct CodeSigner: Node {
         let bundleWire = try input.onlyWire(onRequiredPort: Self.bundle)
         let bundleName = bundleWire.key
         guard !bundleName.isEmpty, !bundleName.contains("/") else {
-            throw NodeError.other(message: "CodeSigner: the bundle's wire is keyed '\(bundleName)'; "
-                                         + "it names the bundle's folder, as 'NetNewsWire.app' does")
+            throw ErrorCondition.bundleWireKeyInvalid(key: bundleName)
         }
         let manifest: TreeManifest = try TypeRegistry.decodeAndCast(encodedJSON: try bundleWire.value.expectValue().resolveAsString())
         var entitlementsFile: FileNameAndContent?
@@ -182,8 +188,8 @@ public struct CodeSigner: Node {
             infoLog += result.infoOutput
             errorLog += result.errorOutput
             guard result.exitCode == 0 else {
-                let message = result.failureMessage(tool: "codesign")
-                return .init(outputValues: [Self.output:   .noValue(reason: .error(messageDataObjectHash: try message.intern())),
+                return .init(outputValues: [Self.output:   try result.failureDocument(tool: "codesign",
+                                                                                  subject: .product(path: bundleName)).published(),
                                             Self.infoLog:  .value(try infoLog.intern()),
                                             Self.errorLog: .value(try errorLog.intern())],
                              inputWireSpecs: [:])
@@ -217,7 +223,7 @@ public struct CodeSigner: Node {
     static func adHocEntitlements(from hash: String) throws -> (hash: String, leftOut: [String]) {
         guard let bytes = try DataObjectStore.shared.read(hash: hash),
               let entitlements = try? PropertyListSerialization.propertyList(from: Data(bytes), format: nil) as? [String: Any] else {
-            throw NodeError.other(message: "CodeSigner: the entitlements are not a property list dictionary")
+            throw ErrorCondition.inputNotOfForm(port: Self.entitlements, wire: hash, form: .propertyListDictionary)
         }
         let leftOut = entitlements.keys.sorted().filter(isGrantedByProfile)
         guard !leftOut.isEmpty else {

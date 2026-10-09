@@ -17,9 +17,9 @@ public enum FormulaIncludeAnswer: Equatable, Sendable {
     /// includes it.
     case prelude(namespace: String, text: String)
 
-    /// The name is this plugin's and cannot be provided here; `reason` is the sentence the
-    /// user reads against their include line — "no installed clang supports C++26".
-    case refused(reason: String)
+    /// The name is this plugin's and cannot be provided here, for `reason` — the client
+    /// renders it against the include line.
+    case refused(reason: IncludeRefusal)
 }
 
 /// A plugin's answer to include names.
@@ -61,9 +61,9 @@ public struct FixedFormulaInclude: FormulaIncludeProvider {
 /// What the engine makes of an include name once every provider has been asked.
 public enum FormulaIncludeResolution: Equatable, Sendable {
     case prelude(namespace: String, text: String)
-    /// The sentence to publish in place of the prelude: a refusal's reason, a name nobody
-    /// answers, or a name two plugins claim.
-    case failed(message: String)
+    /// The condition to publish in place of the prelude: a refusal, a name nobody answers,
+    /// or a name two plugins claim.
+    case failed(ErrorCondition)
 }
 
 public enum FormulaIncludeProviders {
@@ -101,21 +101,18 @@ public enum FormulaIncludeProviders {
         }
 
         guard let claim = claims.first else {
-            let installed = all.map(\.pluginName)
-            let list = installed.isEmpty ? "no plugin provides includes" : "installed: \(installed.joined(separator: ", "))"
-            return .failed(message: "include '\(name)': no plugin answers this name (\(list))")
+            return .failed(.includeUnanswered(name: name, installed: all.map(\.pluginName)))
         }
 
         guard claims.count == 1 else {
-            let plugins = claims.map(\.plugin).joined(separator: " and ")
-            return .failed(message: "include '\(name)': claimed by both \(plugins)")
+            return .failed(.includeClaimedTwice(name: name, plugins: claims.map(\.plugin)))
         }
 
         switch claim.answer {
         case .prelude(let namespace, let text):
             return .prelude(namespace: namespace, text: text)
         case .refused(let reason):
-            return .failed(message: "include '\(name)': \(reason)")
+            return .failed(.includeRefused(name: name, plugin: claim.plugin, reason: reason))
         }
     }
 }

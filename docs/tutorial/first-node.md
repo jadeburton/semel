@@ -15,7 +15,8 @@ Last walked through at commit `d5cc9f1`, Parts 1 and 2 again when the prompt lea
 print a settle summary, and every transcript again when a build learned to print its
 summary once, after its last settle, with the artifact diff under it; the cleanup's
 wrong-order transcripts when a node of a removed type became an error the report names; the
-two failed builds' reports when they learned to group by the products the errors stop. The commits in
+two failed builds' reports when they learned to group by the products the errors stop, and
+again when the report became one block per cause, saying what needs it (B-145). The commits in
 between change documents, comments, tests and the shape of the reference node's loop — not
 what anything prints.
 
@@ -130,40 +131,41 @@ Push file: hello/src/hello.h
 Push file: hello/src/hello2.c
 Push file: hello/src/main.c
 Settled.
-❌ 19 nodes scheduled, 19 computed, 0 from cache, 25 errors
-25 errors across 9 nodes:
+❌ 19 nodes scheduled, 19 computed, 0 from cache, 4 errors
+config.txt:
+semel.machine.config has not been pushed
+  write with: semel-clang .
 
-Stopping output:/hello/config.txt:
-❌ StaticFile #17 'input:/semel.machine.config'
-   · semel.machine.config has not been pushed
-   · run semel-clang . to write it
-   · and 1 node downstream carries it
+hello, hello.dylib:
+missing settings: clang.compiler.toolDescriptor.architecture, clang.compiler.toolDescriptor.name, clang.compiler.toolDescriptor.platform, clang.compiler.toolDescriptor.version
+  source: hello/src/hello.c, hello/src/hello2.c, hello/src/main.c
+  write with: semel-clang <folder>
 
-Stopping output:/hello/hello:
-❌ ClangCompiler ×3 (#24, #28, #30)
-   · errorLog, infoLog, output:
-     Missing machine settings. Run 'semel-clang <folder>': it writes semel.machine.config with the tool descriptors and SDK facts of the tools installed here, these among them:
-     clang.compiler.toolDescriptor.architecture
-     clang.compiler.toolDescriptor.name
-     clang.compiler.toolDescriptor.platform
-     clang.compiler.toolDescriptor.version
-…
-Stopping output:/hello/hello.dylib:
-❌ ClangCompiler ×3 (#24, #28, #30) — see output:/hello/hello
-❌ ClangLinker ×2 (#19, #33) — see output:/hello/hello
-❌ ClangPreprocessor ×3 (#26, #29, #31) — see output:/hello/hello
-❌ StaticFile #17 'input:/semel.machine.config' — see output:/hello/config.txt
+missing settings: clang.linker.toolDescriptor.architecture, clang.linker.toolDescriptor.name, clang.linker.toolDescriptor.platform, clang.linker.toolDescriptor.version
+  write with: semel-clang <folder>
 
-Not exported into /Users/you/semel-playground/out: errors stop output:/hello/config.txt, output:/hello/hello, output:/hello/hello.dylib.
+missing settings: clang.preprocessor.toolDescriptor.architecture, clang.preprocessor.toolDescriptor.name, clang.preprocessor.toolDescriptor.platform, clang.preprocessor.toolDescriptor.version
+  source: hello/src/hello.c, hello/src/hello2.c, hello/src/main.c
+  write with: semel-clang <folder>
+
+semel.machine.config has not been pushed (above)
+
+4 errors · 3 products without a value · nothing exported
 ```
 
 It failed, and it says why: the formula names `<../semel.machine.config>` beside `hello/`,
-nothing is there, and every tool below it lacks the settings that file would hold — and
-each names the command that writes them. The report is grouped by the products each
-error stops, a product in `output:` at a time; an error under several is printed under the
-first and named under the rest, and `errors output:/hello/hello` would show that one's
-alone. The file's own entry says it once, with the
-folder the file goes in, `.` being the base directory. That command is not one of Semel's:
+nothing is there, and every tool below it lacks the settings that file would hold. The
+report leads with the products: a heading names the products that share the same errors —
+`config.txt` waits on one, `hello` and `hello.dylib` on four — and under it each error is a
+block: its first line is what is wrong, then what it belongs to — the sources a tool reads —
+and last what to change. An error printed under an earlier heading comes back under a later
+one as its first line and `(above)`. The three compilers missing one set of settings are
+one error naming the three sources; `errors output:/hello/hello` would show that product's
+heading and its errors alone. The summary line counts errors and products, and says nothing was
+exported: a build with errors leaves `--into` without what has no value. The file's own
+block names the command with the folder the file goes in, `.` being the base directory;
+the tools' blocks name it with `<folder>`, since they do not know where the settings were
+meant to come from. That command is not one of Semel's:
 what this machine has is the toolchain's to say, so its own tool writes it, outside Semel,
 as `semel-swift prepare` does for a Swift tree. In the **shell** terminal, on the folder the
 formula looks in:
@@ -721,25 +723,24 @@ Push file: hello/src/hello2.c
 Push file: hello/src/main.c [no change]
 Settled.
 ❌ 11 nodes scheduled, 8 computed, 3 from cache, 2 errors
-2 errors across 2 nodes:
+lines.txt:
+a node of kind 45 is of a type this server does not link
+  register: kind 45
 
-Stopping output:/hello/lines.txt:
-❌ ProjectBuilder #13 'input:/hello/hello.fmla'
-   · no node type is registered under the name 'MyLineCounter'
+no node type is registered under the name 'MyLineCounter'
+  formula: hello/hello.fmla
+  register: MyLineCounter
 
-❌ kind 43 #37
-   · its kind 43 is a type this server does not link. Link the type again, or take it out of the formula and build, which lets the node go; reset discards the derived state that is stuck.
-   · and 1 node downstream carries it
-
-Not exported into /Users/you/semel-playground/out: errors stop output:/hello/lines.txt.
+2 errors · 1 product without a value · 3 of 4 products exported
 ```
 
-Two failures, one cause. The formula names a type the server does not register, and the
+Two errors, one cause. The formula names a type the server does not register, and the
 node the formula made from it is still in the graph, named by its kind — the number you
-gave `MyLineCounter` — since there is no longer a type to name it by. The one downstream
-is `lines.txt`, and a failed build exports nothing. The number after `#` is the node's row
-in the graph, the same one `check` names it by; yours depends on what the home held before,
-so it may differ.
+gave `MyLineCounter`, which is `45` here — since there is no type to name it by. Both
+are under one heading, `lines.txt`, the one product without a value; the other three have values,
+and `--into` gets those. `--verbose` on `errors` or `build` adds the engine's facts under
+each error: the node's type and its row in the graph — the number `check` names it by —
+its ports, and how many nodes downstream carry the failure.
 
 The way out is the same step you skipped: delete the `lines.txt` line from the formula and
 build again.
@@ -762,8 +763,9 @@ Exported 3 files into /Users/you/semel-playground/out
 
 Nothing reads your node any more, so the graph lets it go, as it lets go of any node
 nothing reads, and `check` finds nothing. Linking the type again would have done as well:
-the node comes back as it was. For derived state that stays stuck whatever you do, the
-node's line names the last resort, `reset`. It is not scoped to this tutorial — what you
+the node comes back as it was. For derived state that stays stuck whatever you do, `reset`
+is the last resort, and `check` the evidence to take first. It is not scoped to this
+tutorial — what you
 pushed is kept, and everything built from it is discarded and rebuilt: every product and
 intermediate of every project in this home, not only of `hello`. The cached builds are
 kept, so that rebuild is a pass of cache lookups rather than a cold build. The graph it

@@ -64,10 +64,10 @@ final class LockedFolderEndToEndTests: XCTestCase {
         let status = refused.waitForExit(timeout: project.buildTimeout)
         let transcript = refused.outputTail()
         XCTAssertNotEqual(status, 0, transcript)
-        let lockedFolder = "input:/\(project.buildFolder)/Dependencies/Shout"
-        XCTAssertTrue(transcript.contains("\(lockedFolder) is locked, and the batch changed it without a lock it matches"),
+        let lockedFolder = "\(project.buildFolder)/Dependencies/Shout"
+        XCTAssertTrue(transcript.contains("\(lockedFolder) is locked, and the batch changes it without a lock it matches"),
                       transcript)
-        XCTAssertTrue(transcript.contains("paths:    \(lockedFolder)/Sources/Shout/Shout.swift"), transcript)
+        XCTAssertTrue(transcript.contains("  paths: \(lockedFolder)/Sources/Shout/Shout.swift"), transcript)
         XCTAssertTrue(transcript.contains("Not built: the push was refused, and nothing was exported."), transcript)
         XCTAssertEqual(try Data(contentsOf: executable), firstExport, "the export is the first build's")
 

@@ -312,9 +312,11 @@ public final class Watcher {
     }
 
     /// The error report when the graph holds errors — this watcher's to print unless the
-    /// prompt that started it prints its own — and, with `--into`, the export when it
-    /// holds none. Decided from the whole graph, as `build` decides: a failure standing
-    /// from an earlier settle leaves the products as broken as a new one.
+    /// prompt that started it prints its own, when the summary line is what it says — and,
+    /// with `--into`, the export: everything when the graph holds no errors, what has a
+    /// value when it does, as `build --into` exports. Decided from the whole graph, as
+    /// `build` decides: a failure standing from an earlier settle leaves its products as
+    /// short of a value as a new one.
     private func reportAndExport(in session: WatchSession) {
         let interpreter = session.interpreter
         let records: [ErrorRecord]
@@ -325,12 +327,23 @@ public final class Watcher {
             return
         }
         guard records.isEmpty else {
-            if configuration.printsReports {
-                interpreter.handleCommand(verb: "errors", arguments: [])
-            }
+            let style = ErrorReportStyle(verbose: configuration.verbose, colour: interpreter.reportsInColour)
+            var export: ExportOutcome?
             if let destination = configuration.exportDestination {
-                output(CommandInterpreter.notExportedLine(into: destination, records: records))
+                let folders = configuration.folders.map { $0.isEmpty ? "." : $0.string }
+                do {
+                    export = try interpreter.exportBeside(records: records, folders: folders, destination: destination,
+                                                          exportsWhatHasAValue: true)
+                } catch {
+                    output("semel-watch: the export into \(destination) failed: \(error)")
+                }
             }
+            // The prompt that started this watcher prints the report of every settle; the
+            // summary line is this watcher's own, and says what it exported.
+            guard configuration.printsReports || export != nil else {
+                return
+            }
+            interpreter.reportErrors(records, style: style, export: export, printsBlocks: configuration.printsReports)
             return
         }
         guard let destination = configuration.exportDestination else {

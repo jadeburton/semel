@@ -461,12 +461,9 @@ final class SwiftLinkerTests: SemelSwiftTestCase {
 
     // MARK: - What a rejected argument says (B-98)
 
-    private func failureMessage(_ output: ProcessOutput) throws -> String {
-        guard case .noValue(.error(let hash)) = output.outputValues[SwiftLinker.output] else {
-            XCTFail("a failed link carries an error: \(String(describing: output.outputValues))")
-            return ""
-        }
-        return try hash.resolveAsString()
+    private func failureDocument(_ output: ProcessOutput) throws -> ErrorDocument {
+        try XCTUnwrap(output.outputValues[SwiftLinker.output]?.errorDocument,
+                      "a failed link carries an error: \(String(describing: output.outputValues))")
     }
 
     func test_aTripleSwiftcRejectsIsReportedWithTheSettingItCameFrom() throws {
@@ -476,9 +473,7 @@ final class SwiftLinkerTests: SemelSwiftTestCase {
         let output = try makeTool().process(input: try makeInput(objectFiles: ["a.o"],
                                                                  extraConfiguration: ["target=nonsense"]))
 
-        let message = try failureMessage(output)
-        XCTAssertTrue(message.contains("`swift.linker.target` is `nonsense`"), "got \(message)")
-        XCTAssertTrue(message.contains("swiftc -print-target-info -target nonsense"), "got \(message)")
+        XCTAssertEqual(try failureDocument(output).remedy, .setting(keys: ["swift.linker.target"]))
     }
 
     /// The link names the SDK by the key that chose it, not by the path xcrun resolved.
@@ -491,9 +486,7 @@ final class SwiftLinkerTests: SemelSwiftTestCase {
 
         let output = try makeTool().process(input: try makeInput(objectFiles: ["a.o"]))
 
-        let message = try failureMessage(output)
-        XCTAssertTrue(message.contains("`swift.linker.sdk` is `macosx`"), "got \(message)")
-        XCTAssertTrue(message.contains("xcrun --sdk macosx --show-sdk-path"), "got \(message)")
+        XCTAssertEqual(try failureDocument(output).remedy, .setting(keys: ["swift.linker.sdk"]))
     }
 
     /// An error in what was linked is not about the command line.
@@ -510,13 +503,15 @@ final class SwiftLinkerTests: SemelSwiftTestCase {
         let output = try makeTool().process(input: try makeInput(objectFiles: ["a.o"],
                                                                  extraConfiguration: ["target=arm64-apple-macos14.0"]))
 
-        XCTAssertEqual(try failureMessage(output), """
-            swiftc exited with status 1:
+        let document = try failureDocument(output)
+        XCTAssertEqual(document.diagnostic, .tool(text: """
             Undefined symbols for architecture arm64:
               "_missing", referenced from:
                   _main in a.o
             ld: symbol(s) not found for architecture arm64
             clang: error: linker command failed with exit code 1 (use -v to see invocation)
-            """)
+            """, tool: "swiftc"))
+        XCTAssertNil(document.remedy)
+        XCTAssertEqual(document.subject, .product(path: "product"), "a link belongs to the product it makes")
     }
 }

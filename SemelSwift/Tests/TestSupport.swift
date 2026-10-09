@@ -25,7 +25,8 @@ class SemelSwiftTestCase: XCTestCase {
 
         // FolderManifest and TreeManifest are decoded by the compiler and linker nodes, and
         // TypeRegistry resolves them through the same process-global registry production uses.
-        try TypeRegistry.register(types: [FolderManifest.self, FolderSubtreeManifest.self, TreeManifest.self])
+        try TypeRegistry.register(types: [FolderManifest.self, FolderSubtreeManifest.self, TreeManifest.self,
+                                          ErrorDocument.self])
         try SemelSwift.register()
     }
 
@@ -97,4 +98,14 @@ final class RecordingToolRunner: ToolRunner {
 extension Dictionary where Key == String, Value == GraphSpecNode {
     /// The trees as the spec text they render to, for assertions written against text.
     var rendered: [String: String] { mapValues { $0.asString(omitOutputPort: false) } }
+}
+
+extension NodeValue {
+    /// The document an error value names, read back; nil for a value or another reason.
+    var errorDocument: ErrorDocument? {
+        guard case .noValue(.error(let hash)) = self else {
+            return nil
+        }
+        return ErrorDocument.read(documentHash: hash)
+    }
 }

@@ -149,6 +149,6 @@ public struct SampleSourceNode: Node {
     public static let descriptor = NodeDescriptor(inputPorts: [], outputPorts: [output])
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        throw NodeError.other(message: "\(Self.self) declares no input ports and cannot process")
+        throw NodeError.sourceCannotProcess(type: "\(Self.self)")
     }
 }

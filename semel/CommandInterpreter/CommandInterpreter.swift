@@ -42,6 +42,10 @@ public final class CommandInterpreter: CommandContext {
     /// Where lines go: the terminal, unless a test wants to read them.
     public var output: (String) -> Void = { print($0) }
 
+    /// Whether error reports are drawn in colour. `main` decides from the terminal
+    /// (`ColourPolicy.inThisProcess()`); off by default, so a test reads plain lines.
+    public var reportsInColour = false
+
     /// The progress line, or the dashboard, drawn while a command of this client waits for
     /// a settle (B-95).
     /// Every line the interpreter prints steps around it, so a notice or an error report
@@ -254,7 +258,8 @@ public final class CommandInterpreter: CommandContext {
         switch event {
         case .daemon(.errors(let records)):
             if printsErrorEvents {
-                ErrorGroupRenderer.lines(for: records).forEach { outputMessage($0) }
+                ErrorReportRenderer.lines(for: records, style: ErrorReportStyle(colour: reportsInColour))
+                    .forEach { outputMessage($0) }
             }
             countErrorRecords(records)
         case .daemon(.notice(let line)):
@@ -360,13 +365,11 @@ public final class CommandInterpreter: CommandContext {
             return
         }
 
-        // `build <folder> [--into <dir>] [--no-follow]` is the whole loop in one word: push
-        // the tree, wait for the graph to settle, push what the formula turned out to need
-        // from the rest of the tree, report, and export the products — to `--into`, or to
-        // `semel-out/<folder>` under the base. A macro over the commands rather than a
-        // plugin, so each keeps its own meaning and its own tests. No export after a build
-        // that reported errors: the exit status already says it failed, and a partial
-        // product set beside it would only mislead.
+        // `build <folder> [--into <dir>] [--no-follow] [--verbose]` is the whole loop in one
+        // word: push the tree, wait for the graph to settle, push what the formula turned out
+        // to need from the rest of the tree, report, and export the products — to `--into`, or
+        // to `semel-out/<folder>` under the base. A macro over the commands rather than a
+        // plugin, so each keeps its own meaning and its own tests.
         if verb == "build" {
             var arguments = remaining
             var destination: String?
@@ -380,57 +383,13 @@ public final class CommandInterpreter: CommandContext {
             }
             let follows = !arguments.contains("--no-follow")
             arguments.removeAll { $0 == "--no-follow" }
+            let verbose = arguments.contains("--verbose")
+            arguments.removeAll { $0 == "--verbose" }
             guard arguments.count == 1 else {
                 outputError("build: expected one folder to build")
                 return
             }
-            let folder = arguments[0]
-            let errorsBefore = errorsReported
-            printsErrorEvents = false
-            defer { printsErrorEvents = true }
-            holdSettles()
-            defer { _ = releaseSettles() }
-            let refusedBefore = batchesRefused
-            try run("push \(folder)")
-            // A refused push changed nothing, so there is nothing to wait for, and what the
-            // last build exported is still what `input:` builds.
-            guard batchesRefused == refusedBefore else {
-                outputMessage("Not built: the push was refused, and nothing was exported.")
-                return
-            }
-            let errorsBeforeSettle = errorsReported
-            try run("wait")
-            if follows {
-                _ = try followSources(neededBy: folder, errorsBeforeSettle: errorsBeforeSettle)
-            }
-            // After the last `Settled.`, which says only that the waiting is over: this is
-            // what the build did, read with the report under it.
-            releaseSettles().forEach { outputMessage($0) }
-            try run("errors")
-            let exportFolder = destination
-                ?? (baseDirectory as NSString).appendingPathComponent("\(Self.defaultExportFolder)/\(folder)")
-            // A destination inside the tree is a folder a later push must leave alone, as
-            // the default one is.
-            if let inTree = Self.relativePath(of: exportFolder, under: baseDirectory) {
-                pushExclusions.insert(inTree)
-            }
-            guard errorsReported == errorsBefore else {
-                // Which products the failures stopped, by name, where the export would
-                // have been said: the report above is grouped by them, and this is the
-                // line a reader looking for the products finds.
-                outputMessage(Self.notExportedLine(into: exportFolder, records: try errorRecords()))
-                if let hint = prepareHint(for: folder) {
-                    outputMessage(hint)
-                }
-                return
-            }
-            // A named destination with nothing to put in it is `export`'s error to report;
-            // the default one is only used when there is something to put in it.
-            if try destination != nil || hasProducts(folder) {
-                try run("export \(folder) --into \(exportFolder)")
-            } else {
-                outputMessage("Nothing to export: the build published no products.")
-            }
+            try build(folder: arguments[0], destination: destination, follows: follows, verbose: verbose)
             return
         }
 
@@ -591,10 +550,125 @@ public final class CommandInterpreter: CommandContext {
         return records
     }
 
-    /// What a client says in place of an export a failure stopped — `Not exported into
-    /// <destination>: errors stop output:/…` — naming the products (B-142).
-    public static func notExportedLine(into destination: String, records: [ErrorRecord]) -> String {
-        ErrorGroupRenderer.notExportedLine(into: destination, records: records)
+    // MARK: - build
+
+    /// The `build` macro's steps. The report is printed once, at the end: the settles the
+    /// follow loop answers by pushing what they named are held, and the one that stands is
+    /// the verdict.
+    private func build(folder: String, destination: String?, follows: Bool, verbose: Bool) throws {
+        let errorsBefore = errorsReported
+        printsErrorEvents = false
+        defer { printsErrorEvents = true }
+        holdSettles()
+        defer { _ = releaseSettles() }
+        let refusedBefore = batchesRefused
+        try run("push \(folder)")
+        // A refused push changed nothing, so there is nothing to wait for, and what the
+        // last build exported is still what `input:` builds.
+        guard batchesRefused == refusedBefore else {
+            outputMessage("Not built: the push was refused, and nothing was exported.")
+            return
+        }
+        let errorsBeforeSettle = errorsReported
+        try run("wait")
+        if follows {
+            _ = try followSources(neededBy: folder, errorsBeforeSettle: errorsBeforeSettle)
+        }
+        // After the last `Settled.`, which says only that the waiting is over: this is
+        // what the build did, read with the report under it.
+        releaseSettles().forEach { outputMessage($0) }
+
+        let exportFolder = destination
+            ?? (baseDirectory as NSString).appendingPathComponent("\(Self.defaultExportFolder)/\(folder)")
+        // A destination inside the tree is a folder a later push must leave alone, as
+        // the default one is.
+        if let inTree = Self.relativePath(of: exportFolder, under: baseDirectory) {
+            pushExclusions.insert(inTree)
+        }
+
+        let records = try errorRecords()
+        // Counted as the `errors` verb counts a report: the exit status is what says the
+        // build failed, whatever was exported.
+        countErrorRecords(records)
+        guard !records.isEmpty else {
+            // A command that failed on the way — a push of a folder that is not there — is
+            // its own report, above; nothing is exported over it.
+            guard errorsReported == errorsBefore else {
+                return
+            }
+            outputMessage("No errors.")
+            // A named destination with nothing to put in it is `export`'s error to report;
+            // the default one is only used when there is something to put in it.
+            if try destination != nil || hasProducts(folder) {
+                try run("export \(folder) --into \(exportFolder)")
+            } else {
+                outputMessage("Nothing to export: the build published no products.")
+            }
+            return
+        }
+
+        let style = ErrorReportStyle(verbose: verbose, colour: reportsInColour)
+        let export = try exportBeside(records: records, folders: [folder], destination: exportFolder,
+                                      exportsWhatHasAValue: destination != nil)
+        reportErrors(records, style: style, export: export, printsBlocks: true)
+        if let hint = prepareHint(for: folder) {
+            outputMessage(hint)
+        }
+    }
+
+    // MARK: - The report a build ends with
+
+    /// The report of a graph holding errors, as a build or a watcher's batch ends with it:
+    /// the blocks — unless `printsBlocks` is off, for a watcher whose prompt prints its own
+    /// report — then the summary line, which says what became of the export. Counted by
+    /// the caller.
+    public func reportErrors(_ records: [ErrorRecord], style: ErrorReportStyle, export: ExportOutcome?, printsBlocks: Bool) {
+        let lines = ErrorReportRenderer.lines(for: records, style: style, export: export)
+        (printsBlocks ? lines : Array(lines.suffix(1))).forEach { outputMessage($0) }
+    }
+
+    /// The export a graph holding errors allows, made, and what it came to.
+    ///
+    /// Every product with a value: the errors reach no product — a settings source read as
+    /// nothing to add — so the products are the whole set, and they are exported as a clean
+    /// build exports them. Otherwise nothing, unless `exportsWhatHasAValue`: a destination
+    /// the reader named with `--into` gets the products that have a value, and the summary
+    /// says how many of how many. A partial set in the default folder beside the sources
+    /// would only mislead; a folder the reader named is one they asked to have filled.
+    public func exportBeside(records: [ErrorRecord], folders: [String], destination: String,
+                             exportsWhatHasAValue: Bool) throws -> ExportOutcome {
+        let withoutValue = ErrorReportRenderer.productsWithoutValue(records).filter { product in
+            folders.contains { folder in Self.isProduct(product, under: folder) }
+        }
+        guard withoutValue.isEmpty || exportsWhatHasAValue else {
+            return .nothing
+        }
+        var exported = 0
+        // A folder that published nothing has nothing to export, which is no error here:
+        // the report above is what the reader has to act on.
+        for folder in folders where try folder == "." || hasProducts(folder) {
+            exported += try FilePlugin.exportFiles(folderToken: folder, destination: destination,
+                                                   skippingWithoutValue: true, context: self) ?? 0
+        }
+        guard withoutValue.isEmpty else {
+            return .partial(exported: exported, of: exported + withoutValue.count)
+        }
+        return exported == 0 ? .nothing : .whole(destination: displayedDestination(destination))
+    }
+
+    /// Whether a product's path, `output:/hello/hello`, lies under a built folder — `.`
+    /// being every product.
+    static func isProduct(_ product: String, under folder: String) -> Bool {
+        let root = Path(FileSystemName.output)
+        let normalized = Path(folder).segments.filter { $0 != "." }
+        let prefix = normalized.isEmpty ? root.string : (root / Path(normalized.joined(separator: "/"))).string
+        return product == prefix || product.hasPrefix(prefix + "/")
+    }
+
+    /// A destination as the summary line names it: relative to the base when it lies under
+    /// it, as `semel-out/hello`; as given otherwise.
+    func displayedDestination(_ destination: String) -> String {
+        Self.relativePath(of: ExternalPathSanitizer.expandPartialPath(destination), under: baseDirectory) ?? destination
     }
 
     // MARK: - help
@@ -610,22 +684,25 @@ public final class CommandInterpreter: CommandContext {
     /// that answer to that verb.
     static let help: [(group: String, entries: [HelpEntry])] = [
         ("Build", [
-            HelpEntry(verbs: ["build"], usage: "build <folder> [--into <dir>] [--no-follow]",
+            HelpEntry(verbs: ["build"], usage: "build <folder> [--into <dir>] [--no-follow] [--verbose]",
                       description: "push the folder, wait, report; push what its formula needs from the tree; "
-                                 + "export the products, to semel-out/<folder> under the base unless --into says where"),
+                                 + "export the products, to semel-out/<folder> under the base unless --into says where; "
+                                 + "with errors, --into still gets what has a value"),
             HelpEntry(verbs: ["wait"], usage: "wait",
                       description: "block until the build has settled; at a terminal a line shows where it stands, "
                                  + "and SEMEL_PROGRESS=full lists the running nodes under it"),
             HelpEntry(verbs: ["watch"], usage: "watch",
                       description: "show where the settle stands until a key is pressed or the settle ends; "
                                  + "a key leaves it running and says where it stood"),
-            HelpEntry(verbs: ["watch"], usage: "watch <folder> [--into <dir>] [--only <pattern>] [--except <pattern>]",
+            HelpEntry(verbs: ["watch"],
+                      usage: "watch <folder> [--into <dir>] [--only <pattern>] [--except <pattern>] [--verbose]",
                       description: "start a semel-watch that pushes the folder as you save, after two quiet seconds; "
-                                 + "--into exports after each settle without errors; one per session"),
+                                 + "--into exports what has a value after each settle; one per session"),
             HelpEntry(verbs: ["unwatch"], usage: "unwatch", description: "stop the semel-watch `watch <folder>` started"),
-            HelpEntry(verbs: ["errors", "e"], usage: "errors [<product>]",
-                      description: "the current build errors, one entry per cause, grouped by the products they stop; "
-                                 + "with a product, or a tree product's folder, only the errors stopping it"),
+            HelpEntry(verbs: ["errors", "e"], usage: "errors [<product>] [--verbose]",
+                      description: "what has no value and why: a heading per set of products with the same "
+                                 + "errors, each error under it; with a product, or a tree product's folder, that product's errors alone; "
+                                 + "--verbose adds the engine's facts"),
             HelpEntry(verbs: ["explain", "why"], usage: "explain <path>",
                       description: "why the last settle rebuilt a product: what ran, what came from the cache, "
                                  + "which wires changed, down to the sources"),
@@ -743,9 +820,7 @@ public final class CommandInterpreter: CommandContext {
             guard case .errors(let records) = try request(.errors(product: nil)).0 else {
                 return pushed
             }
-            let missing = records
-                .flatMap { $0.entries.compactMap(\.missingSource) }
-                .map { $0.hasSuffix("/") ? String($0.dropLast()) : $0 }
+            let missing = records.flatMap { $0.document.causes.compactMap(\.unpushedSource) }
             let onDisk = missing.filter { path in
                 !pushed.contains(path)
                     && FileManager.default.fileExists(atPath: (baseDirectory as NSString).appendingPathComponent(path))

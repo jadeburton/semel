@@ -29,7 +29,7 @@ final class ConfigMergerTests: SemelCoreTestCase {
 
         func wire(_ text: String?) -> [String: NodeValue] {
             guard let text else {
-                return ["config": .noValue(reason: .error(messageDataObjectHash: (try? "absent".intern()) ?? ""))]
+                return ["config": .noValue(reason: .error(documentHash: (try? "absent".intern()) ?? ""))]
             }
             return ["config": .value((try? text.intern()) ?? "")]
         }

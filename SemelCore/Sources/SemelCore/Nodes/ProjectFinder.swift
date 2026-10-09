@@ -41,7 +41,9 @@ public struct ProjectFinder: Node {
 
     /// 2: a new output port, `includableProjects` (B-10); 3: the input file system is read
     /// through its subtree manifest on one port, where two ports walked it (B-135).
-    public static let implementationVersion = 3
+    /// 4: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 4
 
     // ProjectFinder uses all dynamic ports because there is nobody to wire up static input ports, as it is the first.
     public static let descriptor = NodeDescriptor(

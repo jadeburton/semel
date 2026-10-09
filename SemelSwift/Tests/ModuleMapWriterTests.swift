@@ -17,7 +17,7 @@ final class ModuleMapWriterTests: SemelSwiftTestCase {
         let writer = try ModuleMapWriter(thisNode: NodeRecord(id: 1, kind: ModuleMapWriter.kind, name: nil,
                                                               properties: properties, scheduled: false, identity: nil))
         guard let output = try writer.didCreate() else {
-            throw NodeError.other(message: "ModuleMapWriter published nothing when made")
+            throw NodeError.processNotSupported
         }
         return try XCTUnwrap(output.outputValues[ModuleMapWriter.outputPort]).expectValue().resolveAsString()
     }
@@ -38,11 +38,12 @@ final class ModuleMapWriterTests: SemelSwiftTestCase {
         XCTAssertTrue(try published(["moduleName": "Kit", "umbrellaHeader": "odd\"name.h"]).contains("\"odd\\\"name.h\""))
     }
 
-    func test_bothUmbrellasOrNeitherIsAnErrorNamingTheModule() throws {
+    func test_bothUmbrellasOrNeitherIsAnErrorNamingTheTwo() throws {
         for properties in [["moduleName": "Kit"],
                            ["moduleName": "Kit", "umbrellaHeader": "Kit.h", "umbrellaDirectory": "."]] {
             XCTAssertThrowsError(try published(properties)) { error in
-                XCTAssertTrue(String(describing: error).contains("'Kit'"), "\(error)")
+                XCTAssertEqual(error as? ErrorCondition,
+                               .propertiesExclusive(type: "ModuleMapWriter", properties: ["umbrellaHeader", "umbrellaDirectory"]))
             }
         }
     }

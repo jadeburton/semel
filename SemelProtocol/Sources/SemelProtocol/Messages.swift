@@ -17,6 +17,7 @@
 // public type is not implicitly `Sendable` outside its module.
 
 import Foundation
+import SemelNodeKit
 
 public enum Request: Equatable, Sendable {
     case hello(Hello)

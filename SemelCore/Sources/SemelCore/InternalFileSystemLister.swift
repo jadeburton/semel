@@ -22,7 +22,7 @@ public final class InternalFileSystemLister: FileWildcardMatcherInput {
     /// source on its way out of the input file system.
     public func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] {
         guard let start = try folder.childNode(path: inDirectoryPath) else {
-            throw NodeError.other(message: "No such directory: \(inDirectoryPath)")
+            throw NodeError.noSuchFolder(path: inDirectoryPath)
         }
 
         return try start.allChildren.map { nodeRecord in
@@ -31,7 +31,7 @@ public final class InternalFileSystemLister: FileWildcardMatcherInput {
             case Folder.kind:
                 guard let folder = try nodeRecord.makeNode() as? Folder else {
                     assert(false)
-                    throw NodeError.other(message: "Unexpected object kind")
+                    throw NodeError.unexpectedNodeKind(kind: nodeRecord.kind)
                 }
                 // A folder under `output:` is made by a build rather than pushed, so its pin
                 // is not a state anyone can read anything from. `didCreate` gives such a
@@ -51,7 +51,7 @@ public final class InternalFileSystemLister: FileWildcardMatcherInput {
                 let node = try nodeRecord.makeNode()
                 guard let pinnable = node as? Pinnable else {
                     assert(false)
-                    throw NodeError.other(message: "Unexpected object kind")
+                    throw NodeError.unexpectedNodeKind(kind: nodeRecord.kind)
                 }
                 return FileWildcardEntry(path: Path(try nodeRecord.requireName()),
                                          kind: .file,

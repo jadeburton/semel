@@ -23,27 +23,19 @@ final class NodeValueTests: SemelCoreTestCase {
 
     // MARK: - NodeValue.noValue(.error) Codable round-trip
 
-    func test_noValue_error_preservesMessage() throws {
-        let message = "clang exited with status 1"
-        let original = NodeValue.noValue(reason: .error(messageDataObjectHash: try message.intern()))
-        let json = try original.toJSON()
-        let decoded = try NodeValue.fromJSON(json)
-        guard case .noValue(let reason) = decoded, case .error(let decodedHash) = reason else {
-            XCTFail("Expected .noValue(.error), got \(decoded)")
-            return
-        }
-        XCTAssertEqual(try decodedHash.resolveAsString(), message)
+    func test_noValue_error_preservesTheDocument() throws {
+        let original = NodeValue.noValue(reason: try .failure("main.c:1:1: error: unknown type"))
+        let decoded = try NodeValue.fromJSON(try original.toJSON())
+
+        XCTAssertEqual(decoded.errorDocument, .failure("main.c:1:1: error: unknown type"))
     }
 
-    func test_noValue_error_emptyMessage_roundTrip() throws {
-        let original = NodeValue.noValue(reason: .error(messageDataObjectHash: try "".intern()))
-        let json = try original.toJSON()
-        let decoded = try NodeValue.fromJSON(json)
-        guard case .noValue(let reason) = decoded, case .error(let decodedHash) = reason else {
-            XCTFail()
-            return
-        }
-        XCTAssertEqual(try decodedHash.resolveAsString(), "")
+    /// A tool that printed nothing is a document too, never an empty hash.
+    func test_noValue_error_silentTool_roundTrip() throws {
+        let original = NodeValue.noValue(reason: try .failure(""))
+        let decoded = try NodeValue.fromJSON(try original.toJSON())
+
+        XCTAssertEqual(decoded.errorCondition, .toolExitedSilently(tool: "test", status: 1))
     }
 
     // MARK: - NodeValue.value Codable round-trip
@@ -77,7 +69,7 @@ final class NodeValueTests: SemelCoreTestCase {
     }
 
     func test_isNoValue_error_isTrue() {
-        XCTAssertTrue(NodeValue.noValue(reason: .error(messageDataObjectHash: "oops")).isNoValue)
+        XCTAssertTrue(NodeValue.noValue(reason: .error(documentHash: "oops")).isNoValue)
     }
 
     func test_isNoValue_value_isFalse() {
@@ -96,7 +88,7 @@ final class NodeValueTests: SemelCoreTestCase {
     }
 
     func test_expectValue_noValue_error_throws() {
-        XCTAssertThrowsError(try NodeValue.noValue(reason: .error(messageDataObjectHash: "err")).expectValue())
+        XCTAssertThrowsError(try NodeValue.noValue(reason: .error(documentHash: "err")).expectValue())
     }
 
     // MARK: - JSON is stable (same input always produces same output)

@@ -46,7 +46,7 @@ extension HasPath where Self: Node {
         }
 
         guard let rootName = path.firstComponent else {
-            throw NodeError.other(message: "Path '\(path)' has no components")
+            throw ErrorCondition.productPathInvalid(path: path.string, root: nil)
         }
 
         let rootNode: NodeRecord
@@ -56,7 +56,7 @@ extension HasPath where Self: Node {
         case Folder.outputFileSystemName:
             rootNode = try Folder.outputFileSystem
         default:
-            throw NodeError.other(message: "Path '\(path)' must begin with 'input:' or 'output:', got '\(rootName)'")
+            throw ErrorCondition.productPathInvalid(path: path.string, root: rootName)
         }
 
         // If the path is just the root (e.g. Path(Folder.inputFileSystemName)), return the root ID.
@@ -96,7 +96,9 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
 
     /// 2: several wires on `input` are an error naming them, where the status of one was
     /// published (B-141).
-    public static let implementationVersion = 2
+    /// 3: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 3
 
     static let inputPort = "input"
     static let fileMetadataInputPort = FileMetadata.portName
@@ -156,6 +158,11 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
     /// Demanding the value is how this node reports a product it cannot publish: the
     /// engine writes the state that follows from what stood in the way, rather than this
     /// node repeating the failure of another.
+    /// A product's own failure belongs to the product.
+    public func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject? {
+        thisNode.properties[Self.pathProperty].map { .product(path: $0) }
+    }
+
     public func process(input: ProcessInput) throws -> ProcessOutput {
         _ = try input.onlyWire(onRequiredPort: Self.inputPort).value.expectValue()
 

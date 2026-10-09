@@ -10,6 +10,7 @@
 //  Nothing here evaluates a setting; `XcodeBuildSettings` does that.
 
 import Foundation
+import SemelNodeKit
 
 struct XcodeProject {
 
@@ -837,9 +838,11 @@ struct XcodeProject {
     }
 }
 
-enum XcodeProjectError: Error, CustomStringConvertible {
+enum XcodeProjectError: Error, CustomStringConvertible, ErrorConditionConvertible {
     case notAProject
     case noSuchTarget(String)
+    /// A target with no synchronized folder, no listed sources and no borrowed sources.
+    case targetHasNoSources(String)
     case noSuchConfiguration(String, available: [String])
     /// Listed sources the converter does not compile: Objective-C, C, Metal, a Core Data
     /// model in the sources phase. Named, so the reader knows what the build would need.
@@ -870,6 +873,8 @@ enum XcodeProjectError: Error, CustomStringConvertible {
             return "not a project.pbxproj: no objects table and root object"
         case .noSuchTarget(let name):
             return "the project has no target named '\(name)'"
+        case .targetHasNoSources(let name):
+            return "\(name): no synchronized folder, no listed sources and no borrowed sources"
         case .unsupportedSources(let target, let files):
             return "\(target): sources that are not Swift are not compiled yet: \(files.joined(separator: ", "))"
         case .sourcesOnlyFromPlugins(let target, let plugins):
@@ -877,6 +882,23 @@ enum XcodeProjectError: Error, CustomStringConvertible {
                  + "\(plugins.joined(separator: ", ")) — and build-tool plugins are not run (B-77), so it cannot be compiled"
         case .noSuchConfiguration(let name, let available):
             return "the project has no configuration named '\(name)'; it has: \(available.joined(separator: ", "))"
+        }
+    }
+
+    var errorCondition: ErrorCondition {
+        switch self {
+        case .notAProject:                                   return .notAProject
+        case .noSuchTarget(let name):                        return .noSuchTarget(name: name)
+        case .targetHasNoSources(let name):                  return .targetHasNoSources(name: name)
+        case .noSuchConfiguration(let name, let available):  return .noSuchConfiguration(name: name, available: available)
+        case .unsupportedSources(let target, let files):     return .unsupportedSources(target: target, files: files)
+        case .sourcesOnlyFromPlugins(let target, let plugins):
+            return .sourcesOnlyFromPlugins(package: nil, target: target, plugins: plugins)
+        case .noApplicationForSDK(let sdk, let applications):
+            return applications.isEmpty ? .noApplicationTarget : .noApplicationForSDK(sdk: sdk, applications: applications)
+        case .severalApplicationsForSDK(let sdk, let applications):
+            return .severalApplicationsForSDK(sdk: sdk, applications: applications)
+        case .noSuchApplication(let name, let applications): return .noSuchApplication(name: name, applications: applications)
         }
     }
 }

@@ -111,7 +111,7 @@ final class SwallowedDatabaseErrorTests: SemelCoreTestCase {
     /// The shape for work that may fail without failing the build: an ordinary failure
     /// yields nil and nothing else happens; a machine failure still reaches the handler.
     func test_attemptSwallowsOrdinaryFailuresAndReportsMachineOnes() {
-        let ordinary: Int? = FatalErrors.attempt { throw NodeError.other(message: "nothing important") }
+        let ordinary: Int? = FatalErrors.attempt { throw NodeError.nodeNotFound }
         XCTAssertNil(ordinary)
         XCTAssertTrue(reported.isEmpty)
 

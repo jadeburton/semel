@@ -250,8 +250,8 @@ extension FolderContentRoot {
 }
 
 /// An entry of the graph's tree that a pushed root does not fold, and why.
-public struct LeftOutEntry: Equatable {
-    public enum Reason: Equatable {
+public struct LeftOutEntry: Codable, Hashable, Sendable {
+    public enum Reason: String, Codable, Hashable, Sendable {
         /// A dot-name, which a walk of the disk never takes.
         case dotNamed
         /// A name something asked for and nobody pushed: a ghost.

@@ -155,7 +155,7 @@ final class ListingStateTests: XCTestCase {
         let source = try wireProduct("broken.a")
         // Written after the wiring, which puts every output of its target back to pending.
         try source.writeToOutputPort(StaticFile.outputPort,
-                                     value: .noValue(reason: .error(messageDataObjectHash: try "the tool failed".intern())))
+                                     value: .noValue(reason: try .failure("the tool failed")))
         engine.waitUntilIdleBlocking()
 
         XCTAssertEqual(try lines(.output, "made"), [

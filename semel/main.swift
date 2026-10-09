@@ -46,6 +46,9 @@ func main() throws {
     let interpreter = CommandInterpreter(connection:    connection,
                                          baseDirectory: launchBase.directory,
                                          progress:      ProgressPolicy.modeInThisProcess())
+    // The error report in colour at a terminal, unless `NO_COLOR` asks for none: decided
+    // as the progress line decides, so a pipe and a log read plain text.
+    interpreter.reportsInColour = ColourPolicy.inThisProcess()
 
     let server: (serverVersion: String, databasePath: String)
     do {

@@ -15,9 +15,18 @@ let package = Package(
     products: [
         .library(name: "SemelProtocol", targets: ["SemelProtocol"]),
     ],
+    dependencies: [
+        // The error report carries a node's `ErrorDocument` as the value it published
+        // (2026-10-09 error report design): the type is the node-authoring API's, and the
+        // wire carries it rather than a mirror that would have to follow every case.
+        .package(path: "../SemelNodeKit"),
+    ],
     targets: [
         .target(
             name: "SemelProtocol",
+            dependencies: [
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+            ],
             path: "Sources/SemelProtocol"
         ),
         .testTarget(

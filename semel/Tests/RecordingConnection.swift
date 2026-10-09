@@ -133,6 +133,7 @@ final class TestCommandContext: CommandContext {
     var keyReader: any KeyReader = ScriptedKeyReader()
     var watcherLauncher: any WatcherLauncher = RecordingWatcherLauncher()
     var runningWatcher: RunningWatcher?
+    var reportsInColour = false
 }
 
 /// A launcher that starts nothing: it records each launch's arguments and hands back a

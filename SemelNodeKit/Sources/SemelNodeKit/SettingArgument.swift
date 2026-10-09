@@ -7,21 +7,20 @@
 // A tool that rejects an argument names the argument and nothing else: clang says
 // `error: unknown target triple 'nonsense-triple'` and leaves the reader to work out that
 // the triple was `clang.preprocessor.target` in a semel.config. A node that hands its
-// settings to `failureMessage` closes that gap — the message gains one sentence per
-// setting the tool complained about, naming the key, its value and where the values this
-// toolchain accepts are listed.
+// settings to its failure document closes that gap — the document's remedy names each
+// setting the tool complained about, by key, as the thing to change.
 //
-// Which config file the value came from is deliberately not part of the sentence: the
-// merge that produces a node's configuration does not carry a value's origin, and the key
-// is enough to find the line.
+// Which config file the value came from is deliberately not part of the remedy: the merge
+// that produces a node's configuration does not carry a value's origin, and the key is
+// enough to find the line.
 
 import Foundation
 
 /// One command-line argument a node built from a setting, and how a tool complains about it.
 ///
 /// Constructed through the factories below rather than field by field: which phrases a flag
-/// draws out of the tool and where its accepted values are listed are one fact about that
-/// flag, and stating it at each call site is how the statements drift apart.
+/// draws out of the tool is one fact about that flag, and stating it at each call site is
+/// how the statements drift apart.
 public struct SettingArgument {
 
     /// The setting's key, fully qualified: `clang.preprocessor.target`.
@@ -41,10 +40,6 @@ public struct SettingArgument {
     /// enough that no other argument produces it.
     let phrases: [String]
 
-    /// Where the reader finds the values the installed toolchain accepts, as the clause
-    /// that completes the sentence.
-    let advice: String
-
     /// True when `output` is complaining about this argument: it carries one of the
     /// phrases the flag draws, or echoes the text that reached the command line.
     ///
@@ -59,16 +54,15 @@ public struct SettingArgument {
         return phrases.contains { diagnostics.contains($0) }
     }
 
-    /// The one sentence a matched setting adds to a failure message.
-    var sentence: String {
-        "`\(key)` is `\(value)`; \(advice)"
-    }
-
-    /// A sentence for each setting `output` complains about, in the order the node built
-    /// the arguments. Empty when the tool's complaint is about none of them, which is the
-    /// ordinary case: a compile error is about the source file, not the command line.
-    public static func sentences(for settings: [SettingArgument], matching output: String) -> [String] {
-        settings.filter { $0.isMentioned(in: output) }.map(\.sentence)
+    /// The key of each setting `output` complains about, in the order the node built the
+    /// arguments, each once. Empty when the tool's complaint is about none of them, which is
+    /// the ordinary case: a compile error is about the source file, not the command line.
+    public static func keys(for settings: [SettingArgument], matching output: String) -> [String] {
+        var keys: [String] = []
+        for setting in settings where setting.isMentioned(in: output) && !keys.contains(setting.key) {
+            keys.append(setting.key)
+        }
+        return keys
     }
 
     /// The tool's own words, without the source it quoted back.
@@ -111,9 +105,7 @@ public extension SettingArgument {
               echoedText: nil,
               phrases: ["unknown target triple",
                         "no available targets are compatible",
-                        "unable to create target"],
-              advice: "`clang -print-target-triple` prints the triple this toolchain builds "
-                    + "for when none is given.")
+                        "unable to create target"])
     }
 
     /// The SDK path a compile or preprocess turns into `-isysroot`. clang mentions it once,
@@ -124,9 +116,7 @@ public extension SettingArgument {
         .init(key: key,
               value: value,
               echoedText: nil,
-              phrases: ["no such sysroot directory"],
-              advice: "`xcrun --sdk <name> --show-sdk-path` prints the path of an SDK "
-                    + "installed here.")
+              phrases: ["no such sysroot directory"])
     }
 
     /// The SDK path a link turns into `-L <sdkPath>/usr/lib`. The linker echoes the search
@@ -144,9 +134,7 @@ public extension SettingArgument {
         .init(key: key,
               value: value,
               echoedText: searchPath,
-              phrases: ["library 'system' not found"],
-              advice: "`xcrun --sdk <name> --show-sdk-path` prints the path of an SDK "
-                    + "installed here.")
+              phrases: ["library 'system' not found"])
     }
 
     /// swiftc's `-target`. `error: unknown target 'nonsense'` for a triple it cannot parse;
@@ -159,9 +147,7 @@ public extension SettingArgument {
         .init(key: key,
               value: value,
               echoedText: nil,
-              phrases: ["unknown target", "unsupported target architecture"],
-              advice: "`swiftc -print-target-info -target \(value)` says whether this "
-                    + "toolchain builds for it.")
+              phrases: ["unknown target", "unsupported target architecture"])
     }
 
     /// swiftc's `-sdk`, whose value is an SDK name (`macosx`) that `xcrun` resolves to a
@@ -178,7 +164,6 @@ public extension SettingArgument {
               echoedText: nil,
               phrases: ["no such sdk",
                         "no such sysroot directory",
-                        "unable to load standard library"],
-              advice: "`xcrun --sdk \(value) --show-sdk-path` resolves the name this key takes.")
+                        "unable to load standard library"])
     }
 }

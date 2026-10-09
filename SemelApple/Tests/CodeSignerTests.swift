@@ -57,12 +57,8 @@ final class CodeSignerTests: SemelAppleTestCase {
         return try node.process(input: ProcessInput(inputValues: inputs))
     }
 
-    private func errorMessage(_ value: NodeValue?) throws -> String {
-        guard case .noValue(.error(let messageHash)) = try XCTUnwrap(value) else {
-            XCTFail("expected an error, got \(String(describing: value))")
-            return ""
-        }
-        return try messageHash.resolveAsString()
+    private func errorDocument(_ value: NodeValue?) throws -> ErrorDocument {
+        try XCTUnwrap(try XCTUnwrap(value).errorDocument, "expected an error, got \(String(describing: value))")
     }
 
     // MARK: - The command lines
@@ -201,8 +197,8 @@ final class CodeSignerTests: SemelAppleTestCase {
     func test_aNamedIdentityIsRefused() throws {
         XCTAssertThrowsError(try process(tree: try tree(["Contents/MacOS/Tiny": "binary"]),
                                          configuration: configuration(identity: "Apple Development"))) { error in
-            XCTAssertTrue("\(error)".contains("signs ad-hoc only"), "\(error)")
-            XCTAssertTrue("\(error)".contains("'Apple Development'"), "\(error)")
+            XCTAssertEqual(error as? ErrorCondition,
+                           .settingNotSupported(key: "apple.codeSigner.identity", value: "Apple Development", supported: "-"))
         }
     }
 
@@ -221,14 +217,15 @@ final class CodeSignerTests: SemelAppleTestCase {
 
         let output = try process(tree: try tree(["Contents/MacOS/Tiny": "binary"]))
 
-        let message = try errorMessage(output.outputValues[CodeSigner.output])
-        XCTAssertTrue(message.hasPrefix("codesign exited with status 1"), message)
-        XCTAssertTrue(message.contains("ambiguous"), message)
+        XCTAssertEqual(try errorDocument(output.outputValues[CodeSigner.output]),
+                       ErrorDocument(diagnostic: .tool(text: "Tiny.app: bundle format is ambiguous (could be app or framework)",
+                                                       tool: "codesign"),
+                                     subject: .product(path: "Tiny.app"), remedy: nil))
     }
 
     func test_theBundlesWireNamesItsFolder() throws {
         XCTAssertThrowsError(try process(bundle: "Contents/Tiny.app", tree: try tree(["Contents/MacOS/Tiny": "binary"]))) { error in
-            XCTAssertTrue("\(error)".contains("names the bundle's folder"), "\(error)")
+            XCTAssertEqual(error as? ErrorCondition, .bundleWireKeyInvalid(key: "Contents/Tiny.app"))
         }
     }
 

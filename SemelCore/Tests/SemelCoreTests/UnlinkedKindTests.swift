@@ -123,12 +123,10 @@ final class UnlinkedKindTests: SemelCoreTestCase {
         try push("two")
         await settle()
 
-        guard case .noValue(.error(let messageHash)) = try value(of: chain.stale) else {
-            return XCTFail("expected an error on the node, got \(try value(of: chain.stale))")
-        }
-        let message = try messageHash.resolveAsString()
-        XCTAssertTrue(message.contains("kind \(unlinkedKind)"), message)
-        XCTAssertTrue(message.contains("reset"), message)
+        let staleValue = try value(of: chain.stale)
+        let document = try XCTUnwrap(staleValue.errorDocument, "expected an error on the node, got \(staleValue)")
+        XCTAssertEqual(document.diagnostic, .engine(.unlinkedKind(kind: unlinkedKind)))
+        XCTAssertEqual(document.remedy, .register(kind: unlinkedKind))
         guard case .noValue(.inputInError) = try value(of: chain.reader) else {
             return XCTFail("expected the reader to carry it, got \(try value(of: chain.reader))")
         }
@@ -136,10 +134,11 @@ final class UnlinkedKindTests: SemelCoreTestCase {
         // What `errors` answers, and what `build` prints at its end.
         let entries = ErrorReport.entries(forErrorPorts: try ErrorReport.portsToReport(database: database),
                                           database: database,
-                                          select: { _, messages in messages }).map(\.entry)
+                                          select: { _, documents in documents })
         XCTAssertEqual(entries.map(\.label), ["kind \(unlinkedKind) #\(chain.stale)"])
         XCTAssertEqual(entries.first?.downstreamCarrierCount, 1, "the reader, folded onto its cause")
-        XCTAssertEqual(entries.first?.items.map(\.message), [message])
+        XCTAssertEqual(entries.first?.items.map(\.document), [document])
+        XCTAssertEqual(entries.first?.typeName, "kind \(unlinkedKind)")
     }
 
     /// A node left scheduled when the server stopped is picked up by the first pass after

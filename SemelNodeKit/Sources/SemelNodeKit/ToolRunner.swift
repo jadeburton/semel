@@ -364,74 +364,33 @@ extension ToolRunner {
 
 extension SimplifiedToolExecuteResult {
     /// One expected output folder as a tree value: every file already stored by the
-    /// runner, the manifest interned, the manifest's hash on the wire. The tool's error
-    /// output if it failed, and a sentence naming the folder if it exited cleanly without
-    /// making it. A folder the tool left empty is an empty tree, which is a value — a
-    /// catalog with nothing to compile for the platform produces one.
-    public func asTreeNodeValue(folder: String,
-                                tool: String = "the tool",
+    /// runner, the manifest interned, the manifest's hash on the wire. The tool's failure
+    /// if it failed, and the folder named if it exited cleanly without making it. A folder
+    /// the tool left empty is an empty tree, which is a value — a catalog with nothing to
+    /// compile for the platform produces one.
+    public func asTreeNodeValue(folder: String, tool: String, subject: ErrorDocument.Subject?,
                                 settings: [SettingArgument] = []) throws -> NodeValue {
         guard exitCode == 0 else {
-            let message = failureMessage(tool: tool, settings: settings)
-            return .noValue(reason: .error(messageDataObjectHash: try message.intern()))
+            return try failureDocument(tool: tool, subject: subject, settings: settings).published()
         }
         guard !missingOutputFolders.contains(folder) else {
-            return .noValue(reason: .error(messageDataObjectHash: try wroteNothingMessage(tool: tool, at: folder).intern()))
+            return try wroteNothingDocument(tool: tool, paths: [folder], subject: subject).published()
         }
         return .value(try TreeManifest(entries: outputTrees[folder] ?? []).toJSON().intern())
     }
 
-    /// What a clean run that wrote none of its output says: the status, so the reader
-    /// knows the tool did not fail, and the path it was expected to write.
-    public func wroteNothingMessage(tool: String = "the tool", at path: String) -> String {
-        "\(tool) exited with status \(exitCode) and wrote nothing at \(path)"
-    }
-
-    /// What a failed run says: the exit status, then whatever the tool printed on either
-    /// stream. Both, because tools differ in where their diagnostics go — actool under
-    /// `--output-format human-readable-text` writes them to stdout — and the status alone
-    /// is what is left when a run says nothing at all.
-    ///
-    /// `settings` are the arguments the node built from settings. Each one the tool's
-    /// output complains about adds a closing sentence naming the setting behind the
-    /// argument, so a rejected `-target` reads as a key to change rather than as a triple
-    /// the reader never typed. A run that complains about none of them carries only the
-    /// status and the tool's output.
-    public func failureMessage(tool: String = "the tool", settings: [SettingArgument] = []) -> String {
-        let printed = [errorOutput, infoOutput]
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n")
-        let headline = "\(tool) exited with status \(exitCode)"
-        let message = printed.isEmpty ? headline : "\(headline):\n\(printed)"
-
-        let explained = SettingArgument.sentences(for: settings, matching: printed)
-        guard !explained.isEmpty else {
-            return message
-        }
-        return ([message] + explained).joined(separator: "\n")
-    }
-}
-
-extension SimplifiedToolExecuteResult {
     /// The single output file as a wire value, or what the failed run said.
     ///
-    /// Lived on the Clang compiler until the Swift linker turned out to need it too. It is
-    /// how any node turns a tool result into something the graph can carry, so it belongs
+    /// How any node turns a tool result into something the graph can carry, so it belongs
     /// with the tool types rather than with one toolchain.
-    public func asOutputNodeValue(tool: String = "the tool",
+    public func asOutputNodeValue(tool: String, subject: ErrorDocument.Subject?,
                                   settings: [SettingArgument] = []) throws -> NodeValue {
-        if exitCode == 0 {
-            if let outputFile = outputFiles.values.first {
-                return .value(outputFile)
-            } else {
-                let missing = missingOutputFiles.sorted().joined(separator: ", ")
-                let message = wroteNothingMessage(tool: tool, at: missing.isEmpty ? "its output" : missing)
-                return .noValue(reason: .error(messageDataObjectHash: try message.intern()))
-            }
-        } else {
-            let message = failureMessage(tool: tool, settings: settings)
-            return .noValue(reason: .error(messageDataObjectHash: try message.intern()))
+        guard exitCode == 0 else {
+            return try failureDocument(tool: tool, subject: subject, settings: settings).published()
         }
+        guard let outputFile = outputFiles.values.first else {
+            return try wroteNothingDocument(tool: tool, paths: missingOutputFiles.sorted(), subject: subject).published()
+        }
+        return .value(outputFile)
     }
 }

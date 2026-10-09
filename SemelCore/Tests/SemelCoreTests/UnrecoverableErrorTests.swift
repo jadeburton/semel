@@ -61,7 +61,7 @@ final class UnrecoverableErrorTests: SemelCoreTestCase {
     /// rather than a case of LocalFileSystemToolError precisely so the other cases, which are
     /// ordinary tool failures, stay per-node.
     func test_beingUnableToCreateASandboxIsUnrecoverable() {
-        let error = SandboxCreationError(underlying: NodeError.other(message: "No space left on device"))
+        let error = SandboxCreationError(underlying: POSIXError(.ENOSPC))
 
         FatalErrors.check(error)
 
@@ -86,7 +86,7 @@ final class UnrecoverableErrorTests: SemelCoreTestCase {
     /// node failure instead of naming the volume.
     func test_beingUnableToProjectAnInputIsUnrecoverable() {
         let error = ObjectStoreError.cannotProject(destination: "/dev/null/sandbox/a.c",
-                                                   underlying: NodeError.other(message: "No space left on device"))
+                                                   underlying: POSIXError(.ENOSPC))
 
         FatalErrors.check(error)
 
@@ -100,7 +100,7 @@ final class UnrecoverableErrorTests: SemelCoreTestCase {
     // An ordinary build failure must not trip the fatal path, or every failed compile
     // would take the process down.
     func test_anOrdinaryNodeErrorIsNotUnrecoverable() {
-        FatalErrors.check(NodeError.other(message: "compile failed"))
+        FatalErrors.check(NodeError.nodeNotFound)
 
         XCTAssertTrue(reported.isEmpty, "a node error must stay a node error")
     }

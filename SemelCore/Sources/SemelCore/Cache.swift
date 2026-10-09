@@ -42,8 +42,7 @@ extension Node {
         // Keying on a partial input set would produce a key that collides with a
         // different set of inputs — the one failure mode a cache must never have.
         guard let oneInput = input.inputValues[inputPort] else {
-            throw NodeError.other(
-                message: "Cannot build a cache key for \(type(of: self)): input port '\(inputPort)' has no entry")
+            throw NodeError.inputPortMissing(port: inputPort)
         }
 
         // Both halves matter.  The wire key is the file's path, and the tools embed it —

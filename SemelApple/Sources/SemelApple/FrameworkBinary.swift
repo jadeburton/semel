@@ -11,6 +11,7 @@
 //  `ar` archives, every grammar compiled in.
 
 import Foundation
+import SemelNodeKit
 
 enum FrameworkBinary: Equatable {
     /// A Mach-O dynamic library, thin or fat: embedded, and found through the runpath.
@@ -37,6 +38,16 @@ enum FrameworkBinary: Equatable {
                 return "its binary is a Mach-O file of type \(fileType), neither a dynamic library nor an object"
             case .mixedSlices:
                 return "its binary is a fat file whose architectures are not all dynamic libraries or all archives"
+            }
+        }
+
+        /// The problem as a report carries it.
+        var problem: BinaryProblem {
+            switch self {
+            case .unreadable:                  return .unreadable
+            case .unknownMagic(let magic):     return .unknownMagic(bytes: magic)
+            case .machOFileType(let fileType): return .machOFileType(fileType: fileType)
+            case .mixedSlices:                 return .mixedSlices
             }
         }
     }

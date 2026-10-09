@@ -47,12 +47,8 @@ final class IBToolCompilerTests: SemelAppleTestCase {
         ]))
     }
 
-    private func errorMessage(_ value: NodeValue?) throws -> String {
-        guard case .noValue(.error(let messageHash)) = try XCTUnwrap(value) else {
-            XCTFail("expected an error, got \(String(describing: value))")
-            return ""
-        }
-        return try messageHash.resolveAsString()
+    private func errorDocument(_ value: NodeValue?) throws -> ErrorDocument {
+        try XCTUnwrap(try XCTUnwrap(value).errorDocument, "expected an error, got \(String(describing: value))")
     }
 
     /// The document goes in at the path its wire names — its place in the bundle — and
@@ -113,9 +109,10 @@ final class IBToolCompilerTests: SemelAppleTestCase {
 
         let output = try process()
 
-        let message = try errorMessage(output.outputValues[IBToolCompiler.output])
-        XCTAssertTrue(message.hasPrefix("ibtool exited with status 1"), message)
-        XCTAssertTrue(message.contains("could not open the document"), message)
+        XCTAssertEqual(try errorDocument(output.outputValues[IBToolCompiler.output]),
+                       ErrorDocument(diagnostic: .tool(text: "/* com.apple.ibtool.errors */\nMainMenu.xib: error: Interface Builder "
+                                                           + "could not open the document", tool: "ibtool"),
+                                     subject: .resource(path: "Base.lproj/MainMenu.xib"), remedy: nil))
     }
 
     /// A clean exit with nothing written would put nothing in the bundle, and the app
@@ -123,13 +120,14 @@ final class IBToolCompilerTests: SemelAppleTestCase {
     func test_aCleanExitThatWroteNothingIsAnError() throws {
         let output = try process()
 
-        XCTAssertEqual(try errorMessage(output.outputValues[IBToolCompiler.output]),
-                       "ibtool exited with status 0 and wrote nothing at Base.lproj/MainMenu.nib")
+        XCTAssertEqual(try errorDocument(output.outputValues[IBToolCompiler.output]).diagnostic,
+                       .engine(.toolWroteNothing(tool: "ibtool", status: 0, paths: ["Base.lproj/MainMenu.nib"])))
     }
 
     func test_aDocumentThatIsNotInterfaceBuildersIsRefused() {
         XCTAssertThrowsError(try process(document: "Base.lproj/MainMenu.strings")) { error in
-            XCTAssertTrue("\(error)".contains("is not an Interface Builder document"), "\(error)")
+            XCTAssertEqual(error as? ErrorCondition,
+                           .notAnInterfaceBuilderDocument(path: "Base.lproj/MainMenu.strings", compiles: [".storyboard", ".xib"]))
         }
     }
 

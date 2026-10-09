@@ -60,6 +60,13 @@ public protocol Node: WithKind, WithChildren {
     /// the key deliberately strips from elsewhere, which would otherwise return through
     /// the properties. `projectRoot` is the one every node has reason to exclude.
     static var cacheKeyExcludedProperties: Set<String> { get }
+
+    /// What this node's failure belongs to, for the error document the engine publishes
+    /// when `process` throws: the module a compile builds, the product a link makes. The
+    /// node is the one that knows it. `input` is what the node was given to process, nil
+    /// when the failure came before it was gathered; best effort, since the answer goes on
+    /// a report and a report must never fail.
+    func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject?
 }
 
 public struct ProcessInput {
@@ -166,6 +173,11 @@ public extension Node {
 
     /// Most nodes read nothing outside their inputs.
     func cacheKeyMaterial(input: ProcessInput) throws -> String? {
+        nil
+    }
+
+    /// A node that names nothing its failure belongs to leaves the line out.
+    func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject? {
         nil
     }
 

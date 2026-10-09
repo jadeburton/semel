@@ -189,7 +189,7 @@ final class ServerTests: RequestHandlerTestCase {
             let (node, _) = try GraphSpecNode(SettingsLiteral.self, properties: ["role": "wide\(index)"]).findOrCreateMatchingNode()
             let message = "failure \(index): " + String(repeating: "x", count: Int(Frame.maximumJSONLength) / 20)
             try node.writeToOutputPort(SettingsLiteral.outputPort,
-                                       value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+                                       value: .noValue(reason: try .failure(message)))
         }
         let expected = daemonInParts(.errors(product: nil))
         let client   = try connect()
@@ -214,7 +214,7 @@ final class ServerTests: RequestHandlerTestCase {
                               inputs: [OutputFile.inputPort: ["product": .staticFile(at: "input:/a.c")]])
             .findOrCreateMatchingNode()
         let (source, _) = try GraphSpecNode.staticFile(at: "input:/a.c").findOrCreateMatchingNode()
-        try source.writeToOutputPort("output", value: .noValue(reason: .error(messageDataObjectHash: try "boom".intern())))
+        try source.writeToOutputPort("output", value: .noValue(reason: try .failure("boom")))
         let client = try connect()
 
         guard case .errors(let records) = try daemon(client, .errors(product: "app/bin")).0 else {
@@ -231,7 +231,7 @@ final class ServerTests: RequestHandlerTestCase {
         let (node, _) = try GraphSpecNode(SettingsLiteral.self, properties: ["role": "big"]).findOrCreateMatchingNode()
         let message = marker + String(repeating: "x", count: 3 * Int(Frame.maximumJSONLength) / 2)
         try node.writeToOutputPort(SettingsLiteral.outputPort,
-                                   value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+                                   value: .noValue(reason: try .failure(message)))
     }
 
     func test_anUndecodableRequestIsAnsweredNotDropped() throws {

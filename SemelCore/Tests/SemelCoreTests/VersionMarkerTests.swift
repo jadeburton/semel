@@ -91,7 +91,7 @@ final class VersionMarkerTests: SemelCoreTestCase {
         let engine  = try makeEngine(try DatabaseLayer())
         let derived = try makeDerivedNode()
         try engine.database.node.select(nodeID: derived).writeToOutputPort(
-            "output", value: .noValue(reason: .error(messageDataObjectHash: try "initializing".intern())))
+            "output", value: .noValue(reason: .error(documentHash: try "initializing".intern())))
         try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.2")
 
         try engine.reconcileVersionMarkers()
@@ -110,7 +110,7 @@ final class VersionMarkerTests: SemelCoreTestCase {
         let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/clang.cfg')")
             .findOrCreateMatchingNode()
         try file.writeToOutputPort(
-            "output", value: .noValue(reason: .error(messageDataObjectHash: try "initializing".intern())))
+            "output", value: .noValue(reason: .error(documentHash: try "initializing".intern())))
         try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.2")
 
         try engine.reconcileVersionMarkers()
@@ -130,7 +130,7 @@ final class VersionMarkerTests: SemelCoreTestCase {
         let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/gone.c')")
             .findOrCreateMatchingNode()
         try file.writeToOutputPort(
-            "output", value: .noValue(reason: .error(messageDataObjectHash: try "undefined symbol 'main'".intern())))
+            "output", value: .noValue(reason: .error(documentHash: try "undefined symbol 'main'".intern())))
         try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.2")
 
         try engine.reconcileVersionMarkers()
@@ -148,7 +148,7 @@ final class VersionMarkerTests: SemelCoreTestCase {
         let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/gone.c')")
             .findOrCreateMatchingNode()
         try file.writeToOutputPort(
-            "output", value: .noValue(reason: .error(messageDataObjectHash: try "Deleted".intern())))
+            "output", value: .noValue(reason: .error(documentHash: try "Deleted".intern())))
         try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.3")
 
         try engine.reconcileVersionMarkers()
@@ -166,7 +166,7 @@ final class VersionMarkerTests: SemelCoreTestCase {
         let folder = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: false)
         try folder.writeToOutputPort(
             Folder.pinnedOutputPort,
-            value: .noValue(reason: .error(messageDataObjectHash: try "Deleted".intern())))
+            value: .noValue(reason: .error(documentHash: try "Deleted".intern())))
         try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.3")
 
         try engine.reconcileVersionMarkers()
@@ -183,7 +183,7 @@ final class VersionMarkerTests: SemelCoreTestCase {
         let folder = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)
         try folder.writeToOutputPort(
             Folder.pinnedOutputPort,
-            value: .noValue(reason: .error(messageDataObjectHash: try "Deleted/Nonexistent".intern())))
+            value: .noValue(reason: .error(documentHash: try "Deleted/Nonexistent".intern())))
         try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.3")
 
         try engine.reconcileVersionMarkers()

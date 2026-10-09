@@ -1,7 +1,8 @@
 // EnginePlugin.swift
 // semel
 //
-// Handles: d / debug, n / nudge, e / errors [<product>], check, collect, explain / why, reset, t / tools, wait, watch, unwatch
+// Handles: d / debug, n / nudge, e / errors [<product>] [--verbose], check, collect, explain / why, reset, t / tools,
+// wait, watch, unwatch
 
 import Foundation
 import SemelNodeKit
@@ -195,7 +196,7 @@ final class EnginePlugin: CommandPlugin {
     /// filter's two.
     private static let watcherFlags: Set<String> = ["--into", "--only", "--except"]
 
-    /// `watch <folder> [--into <dir>] [--only <pattern>]... [--except <pattern>]...`: a
+    /// `watch <folder> [--into <dir>] [--only <pattern>]... [--except <pattern>]... [--verbose]`: a
     /// `semel-watch` for the session's base and that folder, started beside this
     /// executable as a child of the prompt. One per session, so a second replaces the
     /// first. The same verb as the progress line because the subject is the same — what
@@ -212,6 +213,13 @@ final class EnginePlugin: CommandPlugin {
         var index = 0
         while index < tokens.count {
             let token = tokens[index]
+            // The engine's facts under each block of the watcher's reports, as `errors
+            // --verbose` draws them.
+            if token == "--verbose" {
+                flags.append(token)
+                index += 1
+                continue
+            }
             guard !Self.watcherFlags.contains(token) else {
                 guard index + 1 < tokens.count else {
                     throw CommandParserError.missingArgument(command: "watch", expected: "\(token) <value>")
@@ -399,13 +407,15 @@ final class EnginePlugin: CommandPlugin {
 
     // MARK: - errors
 
-    /// `errors [<product>]`: every failure the graph holds, grouped by the products it
-    /// stops (B-142); with a product, only the failures stopping it. The product is named
-    /// as `ls` and `cp` name a path — with its file system, after `-o`, or relative to the
+    /// `errors [<product>] [--verbose]`: what has no value in the graph and why — a heading
+    /// per set of products with the same errors, each error under it (B-142); with a
+    /// product, that product's heading and errors alone. The product is named as `ls`
+    /// and `cp` name a path — with its file system, after `-o`, or relative to the
     /// session's current directory — and a tree product's folder stands for every entry
     /// below it. The server filters, so a wide cascade is not shipped only to be dropped.
     private func handleErrors(tokens: [String], context: any CommandContext) throws {
-        let (flagged, remaining) = parseOptionalFileSystemFlag(tokens: tokens)
+        let verbose = tokens.contains("--verbose")
+        let (flagged, remaining) = parseOptionalFileSystemFlag(tokens: tokens.filter { $0 != "--verbose" })
         guard remaining.count <= 1 else {
             throw CommandParserError.tooManyArguments(command: "errors")
         }
@@ -436,26 +446,21 @@ final class EnginePlugin: CommandPlugin {
             return
         }
 
-        if records.isEmpty {
-            context.outputMessage(asked.map(ErrorGroupRenderer.nothingStops) ?? "No errors.")
+        let style = ErrorReportStyle(verbose: verbose, colour: context.reportsInColour)
+        if let asked {
+            // Through countErrorRecords, not outputError: a scripted run's exit status rests
+            // on the count of settle reports, and the idle-time event this often follows may
+            // have already counted this exact one.
+            context.countErrorRecords(records)
+            ErrorReportRenderer.productView(records, product: asked, style: style).forEach { context.outputMessage($0) }
             return
         }
 
-        // Per node, as the settle summary counts them: a record naming several nodes of one
-        // type carries each one's errors.
-        let errorCount = records.reduce(0) { $0 + $1.entries.reduce(0) { $0 + $1.ports.count } * $1.nodeCount }
-        let nodeCount  = records.reduce(0) { $0 + $1.nodeCount }
-
-        context.outputMessage("\(errorCount) error\(errorCount == 1 ? "" : "s") across " +
-                              "\(nodeCount) node\(nodeCount == 1 ? "" : "s"):\n")
-
-        // Through countErrorRecords, not outputError: a scripted run's exit status rests
-        // on the count of settle reports, and the idle-time event this often follows may
-        // have already counted this exact one.
+        guard !records.isEmpty else {
+            context.outputMessage("No errors.")
+            return
+        }
         context.countErrorRecords(records)
-
-        let lines = asked.map { ErrorGroupRenderer.lines(for: records, stopping: $0) }
-            ?? ErrorGroupRenderer.lines(for: records)
-        lines.forEach { context.outputMessage($0) }
+        ErrorReportRenderer.lines(for: records, style: style).forEach { context.outputMessage($0) }
     }
 }

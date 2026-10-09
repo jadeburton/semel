@@ -85,7 +85,7 @@ final class ObjectCollectionTests: SemelCoreTestCase {
     func test_anErrorMessageAPortCarriesIsKept() throws {
         let message = try agedOrphan("the tool failed, and this is what it said")
         let (node, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/b.c')").findOrCreateMatchingNode()
-        try node.writeToOutputPort(StaticFile.outputPort, value: .noValue(reason: .error(messageDataObjectHash: message)))
+        try node.writeToOutputPort(StaticFile.outputPort, value: .noValue(reason: .error(documentHash: message)))
 
         _ = try engine.collectUnreferencedObjects()
 
@@ -126,7 +126,7 @@ final class ObjectCollectionTests: SemelCoreTestCase {
         let output = try agedOrphan("an output no node holds any more, but a cache entry does")
         let message = try agedOrphan("and an error message a cached failure carries")
         let entry = ProcessCacheEntry(outputValues: ["output": .value(output),
-                                                     "errorLog": .noValue(reason: .error(messageDataObjectHash: message))],
+                                                     "errorLog": .noValue(reason: .error(documentHash: message))],
                                       specTable: GraphSpecTable(inputWireSpecs: [:], rows: [:]),
                                       keyMaterial: CacheKeyMaterial(nodeType: "SampleTool", implementationVersion: 1,
                                                                     properties: [], fingerprint: nil, inputs: []))

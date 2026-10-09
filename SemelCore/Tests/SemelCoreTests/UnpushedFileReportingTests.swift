@@ -7,7 +7,7 @@
 //  needs its value publishes "an input has never been produced". Neither state is a
 //  failure of the node holding it, and neither is something a reader can act on.
 //
-//  The file is, so the file is the line: named once, with the chain below it counted. The
+//  The file is, so the file is the cause: named once, with the chain below it counted. The
 //  exception is a port whose node reads an absent value as nothing to add and says so in
 //  its descriptor — `ConfigMerger.override`, the one input a formula may point at a file
 //  that need never exist.
@@ -76,6 +76,17 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         try database.outputPort.select(nodeID: nodeID, nameSymbolID: port.asSymbolID())?.valueKind
     }
 
+    /// The document a source nobody pushed reads as.
+    private func notPushed(_ path: String, isFolder: Bool = false, writers: [MachineFileCommand] = []) -> ErrorDocument {
+        .engine(.notPushed(path: path, isFolder: isFolder), subject: nil,
+                remedy: writers.isEmpty ? nil : .writeMachineFile(commands: writers))
+    }
+
+    /// The document a source pushed and then removed reads as.
+    private func removed(_ path: String, isFolder: Bool = false) -> ErrorDocument {
+        .engine(.removed(path: path, isFolder: isFolder), subject: nil)
+    }
+
     // MARK: - A file something needs
 
     /// The item B-92 is about: a formula naming a file nobody pushed, read by a node that
@@ -99,45 +110,30 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         XCTAssertEqual(captured.count, 1)
         XCTAssertEqual(captured[0].map(\.label), ["StaticFile #\(file) 'input:/clang.cfg'"])
         XCTAssertEqual(captured[0][0].items,
-                       [ErrorReport.Item(ports: ["output"], message: "clang.cfg has not been pushed", missingSource: "clang.cfg")])
+                       [ErrorReport.Item(ports: ["output"], document: notPushed("input:/clang.cfg"))])
         XCTAssertEqual(captured[0][0].downstreamCarrierCount, 2,
                        "the compiler and the linker below it")
     }
 
-    /// The line the reader sees, through the engine's own renderer.
-    func test_theLineNamesTheFileAndCountsWhatItStopped() throws {
-        let file     = try makeUnpushedFile(path: "input:/main.c")
+    /// What the reader is told: the file, and the count of what it stops below it.
+    func test_theCauseIsTheFileAndCountsWhatItStopped() throws {
+        _            = try makeUnpushedFile(path: "input:/main.c")
         let compiler = try make(demanding(tag: "compiler", reading: ["source": .staticFile(at: "input:/main.c")]))
 
         try run(compiler)
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
-                       ["❌ StaticFile #\(file) 'input:/main.c'",
-                        "   · main.c has not been pushed",
-                        "   · and 1 node downstream carries it",
-                        ""])
+        XCTAssertEqual(captured[0][0].items.map(\.document), [notPushed("input:/main.c")])
+        XCTAssertEqual(captured[0][0].downstreamCarrierCount, 1)
     }
 
-    /// The path `push` takes, which is the path relative to the input file system — the
-    /// label above the line already carries the full one.
-    func test_theMessageNamesThePathToPush() {
-        XCTAssertEqual(ErrorReport.unpushedFileMessage(path: "input:/src/main.c"),
-                       "src/main.c has not been pushed")
-        XCTAssertEqual(ErrorReport.unpushedFileMessage(path: "input:/clang.cfg"),
-                       "clang.cfg has not been pushed")
-    }
-
-    /// A tree ends in a separator, so a line about a folder is not read as a line about a
-    /// file of the same name; a source that was removed says so in its own sentence.
-    func test_theSentencesASourcesStateReadsAs() {
-        XCTAssertEqual(ErrorReport.unpushedFileMessage(path: "input:/src", isTree: true),
-                       "src/ has not been pushed")
-        XCTAssertEqual(ErrorReport.deletedSourceMessage(path: "input:/src/main.c"),
-                       "src/main.c was deleted")
-        XCTAssertEqual(ErrorReport.deletedSourceMessage(path: "input:/src", isTree: true),
-                       "src/ was deleted")
+    /// The path `push` takes is the path relative to the input file system, typed, so a
+    /// build pushes it without reading a sentence; a removed source is not offered.
+    func test_theDocumentNamesThePathToPush() {
+        XCTAssertEqual(notPushed("input:/src/main.c").unpushedSource, "src/main.c")
+        XCTAssertEqual(notPushed("input:/src", isFolder: true).unpushedSource, "src")
+        XCTAssertNil(removed("input:/src/main.c").unpushedSource)
     }
 
     /// The `errors` verb asks for everything the graph holds rather than for what is newly
@@ -151,12 +147,12 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
         let entries = ErrorReport.entries(forErrorPorts: try ErrorReport.portsToReport(database: database),
                                           database: database,
-                                          select: { _, messages in messages })
+                                          select: { _, documents in documents })
 
-        XCTAssertEqual(entries.map(\.entry.label), ["StaticFile #\(file) 'input:/clang.cfg'"])
-        XCTAssertEqual(entries[0].entry.items,
-                       [ErrorReport.Item(ports: ["output"], message: "clang.cfg has not been pushed", missingSource: "clang.cfg")])
-        XCTAssertEqual(entries[0].entry.downstreamCarrierCount, 1)
+        XCTAssertEqual(entries.map(\.label), ["StaticFile #\(file) 'input:/clang.cfg'"])
+        XCTAssertEqual(entries[0].items,
+                       [ErrorReport.Item(ports: ["output"], document: notPushed("input:/clang.cfg"))])
+        XCTAssertEqual(entries[0].downstreamCarrierCount, 1)
     }
 
     /// Asked twice, answered once: a standing absence is reported the first time the engine
@@ -260,7 +256,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
         XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile #\(file) 'input:/clang.cfg'"]])
         XCTAssertEqual(captured[0][0].items,
-                       [ErrorReport.Item(ports: ["output"], message: "clang.cfg has not been pushed", missingSource: "clang.cfg")])
+                       [ErrorReport.Item(ports: ["output"], document: notPushed("input:/clang.cfg"))])
         XCTAssertEqual(captured[0][0].downstreamCarrierCount, 0,
                        "the filter produced a value, so nothing carries the absence")
     }
@@ -301,11 +297,8 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
         XCTAssertEqual(captured.count, 1)
         XCTAssertEqual(captured[0].map(\.label), ["StaticFile #\(file) 'input:/gone.c'"])
-        XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
-                       ["❌ StaticFile #\(file) 'input:/gone.c'",
-                        "   · gone.c was deleted",
-                        "   · and 1 node downstream carries it",
-                        ""])
+        XCTAssertEqual(captured[0][0].items.map(\.document), [removed("input:/gone.c")])
+        XCTAssertEqual(captured[0][0].downstreamCarrierCount, 1)
     }
 
     // MARK: - B-110: the source travels typed
@@ -318,18 +311,19 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(captured[0][0].items.map(\.missingSource), ["clang.cfg"])
+        XCTAssertEqual(captured[0][0].items.map(\.document.unpushedSource), ["clang.cfg"])
     }
 
-    /// A folder is pushed with a trailing slash, the way the sentence spells it.
-    func test_anUnpushedFolderNamesItselfWithATrailingSlash() throws {
+    /// A folder is the path `push` takes for it, with the case saying it is a folder.
+    func test_anUnpushedFolderNamesItselfAsAFolder() throws {
         _ = try makeUnpushedFolder(path: "src")
         let compiler = try make(demanding(tag: "compiler", reading: ["sources": .folderManifest(at: "input:/src")]))
         try run(compiler)
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(captured[0][0].items.map(\.missingSource), ["src/"])
+        XCTAssertEqual(captured[0][0].items.map(\.document), [notPushed("input:/src", isFolder: true)])
+        XCTAssertEqual(captured[0][0].items.map(\.document.unpushedSource), ["src"])
     }
 
     /// A removed source went because someone took it away; a build that pushed it back
@@ -343,7 +337,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(captured[0][0].items.map(\.missingSource), [nil])
+        XCTAssertEqual(captured[0][0].items.map(\.document.unpushedSource), [nil])
     }
 
     // MARK: - B-104: a folder is a source too
@@ -365,10 +359,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured.map { $0.map(\.label) }, [["Folder #\(folder) 'input:/src'"]])
-        XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
-                       ["❌ Folder #\(folder) 'input:/src'",
-                        "   · src/ has not been pushed",
-                        ""])
+        XCTAssertEqual(captured[0][0].items.map(\.document), [notPushed("input:/src", isFolder: true)])
     }
 
     /// A file under a folder that is itself unpushed and needed is the folder's detail:
@@ -387,7 +378,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured.map { $0.map(\.label) }, [["Folder #\(folder) 'input:/Helper'"]])
-        XCTAssertEqual(captured[0][0].items.map(\.missingSource), ["Helper/"])
+        XCTAssertEqual(captured[0][0].items.map(\.document.unpushedSource), ["Helper"])
     }
 
     /// A folder nobody reads is no more a problem than a file nobody reads.
@@ -400,7 +391,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     }
 
     /// A folder that was pushed into and then removed is a different state from one nobody
-    /// ever pushed, and reads as a different sentence.
+    /// ever pushed, and is a different condition.
     func test_aRemovedFolderIsNamedAsDeleted() throws {
         let folderRecord = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)
         let compiler     = try make(demanding(tag: "compiler", reading: ["sources": .folderManifest(at: "input:/src")]))
@@ -411,10 +402,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured.map { $0.map(\.label) }, [["Folder #\(try folderRecord.requireID()) 'input:/src'"]])
-        XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
-                       ["❌ Folder #\(try folderRecord.requireID()) 'input:/src'",
-                        "   · src/ was deleted",
-                        ""])
+        XCTAssertEqual(captured[0][0].items.map(\.document), [removed("input:/src", isFolder: true)])
     }
 
     // MARK: - A machine file nobody has written (B-109)
@@ -447,39 +435,33 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     }
 
     /// `build` cannot push a file that is not on disk, and the tools below say what they
-    /// lack rather than what writes it: the file's line names the command, found from the
+    /// lack rather than what writes it: the file's remedy names the command, found from the
     /// namespaces selected out of it, in the folder it sits in, as a reader types it.
     func test_anUnpushedMachineFileNamesTheCommandThatWritesIt() throws {
         registerWriters()
-        let file = try makeSettings(machinePath: "input:/semel.machine.config", prefixes: ["sample.compiler"])
+        _ = try makeSettings(machinePath: "input:/semel.machine.config", prefixes: ["sample.compiler"])
 
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured[0][0].items,
-                       [ErrorReport.Item(ports: ["output"], message: "semel.machine.config has not been pushed",
-                                         missingSource: "semel.machine.config",
-                                         writers: [.init(command: "semel-clang", folder: ".")])])
-        XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
-                       ["❌ StaticFile #\(file) 'input:/semel.machine.config'",
-                        "   · semel.machine.config has not been pushed",
-                        "   · run semel-clang . to write it",
-                        ""])
+                       [ErrorReport.Item(ports: ["output"],
+                                         document: notPushed("input:/semel.machine.config",
+                                                             writers: [MachineFileCommand(command: "semel-clang", folder: ".")]))])
     }
 
-    /// Two toolchains' namespaces read out of one file are two writers, each once, on one
-    /// line; a namespace whose toolchain registered no writer adds none.
+    /// Two toolchains' namespaces read out of one file are two writers, each once, in one
+    /// remedy; a namespace whose toolchain registered no writer adds none.
     func test_aMachineFileTwoToolchainsReadNamesBothWriters() throws {
         registerWriters()
-        let file = try makeSettings(machinePath: "input:/app/semel.machine.config",
-                                    prefixes: ["sample.compiler", "sample.linker", "sample.reader", "sample.plister"])
+        _ = try makeSettings(machinePath: "input:/app/semel.machine.config",
+                             prefixes: ["sample.compiler", "sample.linker", "sample.reader", "sample.plister"])
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
-                       ["❌ StaticFile #\(file) 'input:/app/semel.machine.config'",
-                        "   · app/semel.machine.config has not been pushed",
-                        "   · run semel-clang app and semel-swift prepare app to write it",
-                        ""])
+        XCTAssertEqual(captured[0][0].items.map(\.document),
+                       [notPushed("input:/app/semel.machine.config",
+                                  writers: [MachineFileCommand(command: "semel-clang", folder: "app"),
+                                            MachineFileCommand(command: "semel-swift prepare", folder: "app")])])
     }
 
     /// A writer writes `semel.machine.config` and nothing else, so a file of another name
@@ -494,8 +476,9 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured[0].count, 2, "\(captured)")
-        XCTAssertEqual(captured[0].flatMap(\.items).flatMap(\.writers), [])
-        XCTAssertEqual(captured[0].flatMap(\.items).compactMap(\.missingSource).sorted(), ["clang.cfg", "other/semel.machine.config"],
+        XCTAssertEqual(captured[0].flatMap(\.items).compactMap(\.document.remedy), [])
+        XCTAssertEqual(captured[0].flatMap(\.items).compactMap(\.document.unpushedSource).sorted(),
+                       ["clang.cfg", "other/semel.machine.config"],
                        "each is still the path build pushes once it is there")
     }
 

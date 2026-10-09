@@ -18,8 +18,8 @@ import SemelNodeKit
 
 // MARK: - Errors
 
-/// A spec that could not be turned into live nodes and wires. Sentences rather than case
-/// names, because the engine interns a thrown error's text onto the failing node's ports.
+/// A spec that could not be turned into live nodes and wires. A node that meets one
+/// publishes the condition it names (`errorCondition`); the description is for the log.
 enum GraphSpecApplierError: Error, CustomStringConvertible {
     /// The type name in the spec is not registered in TypeRegistry.
     case unknownTypeName(String)
@@ -38,6 +38,8 @@ enum GraphSpecApplierError: Error, CustomStringConvertible {
     case identityMismatch(typeName: String, filedUnder: String, computed: String)
 
     case emtpyStringWireName
+    /// A formula or a demand wiring a port its type does not declare.
+    case portNotDeclared(typeName: String, portName: String)
 
     var description: String {
         switch self {
@@ -57,6 +59,8 @@ enum GraphSpecApplierError: Error, CustomStringConvertible {
                  + "\(NodeIdentity.shown(computed))…; no node is made from it"
         case .emtpyStringWireName:
             return "a wire was asked for under an empty name"
+        case .portNotDeclared(let typeName, let portName):
+            return "\(typeName) declares no input port '\(portName)'"
         }
     }
 }
@@ -215,7 +219,7 @@ struct GraphSpecTableApplier {
 
             for wire in port.wires {
                 if !descriptor.staticInputPorts.contains(port.portName) {
-                    throw NodeError.other(message: "The formula refers to a port, '\(port.portName)', that does not exist in the implementation. Node: \(createdNode)")
+                    throw GraphSpecApplierError.portNotDeclared(typeName: row.typeName, portName: port.portName)
                 }
 
                 let fromNode = try node(identity: wire.source.identity)

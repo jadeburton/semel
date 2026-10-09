@@ -15,7 +15,9 @@ public struct ClangIncludeFinder: Node {
     /// 2: a source nobody pushed lists no includes (B-79), where version 1 failed on it.
     /// 3: `.` and `..` in a quoted include are resolved against the source's folder.
     /// 4: a quoted `#import` is listed as a quoted `#include` is (B-77).
-    public static let implementationVersion = 4
+    /// 5: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 5
 
     // MARK: Ports
 

@@ -40,7 +40,7 @@ extension NodeRecord {
         }
 
         guard let name, !name.isEmpty else {
-            throw NodeError.other(message: "Node \(try requireID()) in \(try parentPath()) has no name or it is empty; cannot build full path")
+            throw NodeError.nodeHasNoName(nodeID: id)
         }
 
         let parent = try parentPath()
@@ -81,7 +81,7 @@ extension NodeRecord {
     @discardableResult
     public func ensureEntirePathExistsAsFolders(_ path: Path, pinned: Bool, forAChild: Bool = false) throws -> NodeRecord {
         guard kind == Folder.kind else {
-            throw NodeError.other(message: "Cannot ensure path exists on a non-folder node")
+            throw NodeError.notAFolder(kind: kind)
         }
 
         let names          = path.segments
@@ -103,7 +103,7 @@ extension NodeRecord {
 
             if existingChildren.count > 1 {
                 // Can happen when folder and file have same name
-                throw NodeError.other(message: "Multiple children with the same name '\(name)' under folder '\(currentFolder.name ?? "<no name>")'")
+                throw NodeError.nameCollision(path: pathSoFar.string, existingKind: existingChildren[0].node.kind)
             }
 
             // What the walk read of this folder's pin, or nil when it has to be asked: a

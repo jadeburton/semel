@@ -19,19 +19,6 @@
 import SemelDatabaseModels
 import SemelNodeKit
 
-/// What a node of a kind this server does not link says for itself.
-enum UnlinkedKind {
-
-    /// The error a node of `kind` publishes when woken: its kind in the words `check` uses
-    /// for the same row, and the ways out. `SemelNodeKit`, whose registry throws for the
-    /// kind, cannot name `reset`; the engine renders this, so the remedy is written here.
-    static func message(kind: UInt) -> String {
-        "its kind \(kind) is a type this server does not link. Link the type again, or take it "
-            + "out of the formula and build, which lets the node go; reset discards the derived "
-            + "state that is stuck."
-    }
-}
-
 extension NodeRecord {
 
     /// The node type this row is, or nil when this server links none by its kind.
@@ -50,13 +37,15 @@ extension NodeRecord {
     }
 
     /// What a node of a kind this server does not link publishes in place of a run: the
-    /// error, on every port it holds. Written through `writeToOutputPort`, so its readers
+    /// document naming its kind, on every port it holds, with the type to register as its
+    /// remedy — a fact the engine can state, where taking the node out of the formula or a
+    /// `reset` are choices the reader makes. Written through `writeToOutputPort`, so its readers
     /// are woken and carry it as any failure is carried, and a second wake that finds the
     /// same error there writes nothing.
     func publishUnlinkedKindError() throws {
-        let messageHash = try UnlinkedKind.message(kind: kind).intern()
+        let failure = try ErrorDocument.engine(.unlinkedKind(kind: kind), subject: nil).published()
         for outputPort in try outputPortNames() {
-            try writeToOutputPort(outputPort, value: .noValue(reason: .error(messageDataObjectHash: messageHash)))
+            try writeToOutputPort(outputPort, value: failure)
         }
     }
 

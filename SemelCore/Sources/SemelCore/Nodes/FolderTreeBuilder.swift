@@ -25,7 +25,9 @@ struct FolderTreeBuilder: Node {
     /// 3: a file pushed as a symbolic link is a link entry (B-77).
     /// 4: the folder's subtree manifest is asked for, where its subfolders were walked
     /// (B-135).
-    public static let implementationVersion = 4
+    /// 5: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 5
 
     /// The folder, one wire: `Folder(path: ...).manifest`.
     static let folderPort = "folder"

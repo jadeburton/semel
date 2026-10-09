@@ -134,6 +134,22 @@ struct XCFrameworkSlice: Equatable {
 
 /// Why no slice of an `.xcframework` is what a build can take, by case.
 enum XCFrameworkSliceError: Error, Equatable, CustomStringConvertible {
+    /// The problem as a report carries it.
+    var problem: XCFrameworkProblem {
+        switch self {
+        case .unreadableInfoPlist:                    return .infoPlistUnreadable
+        case .noPlatform(let sdk):                    return .noSliceForSDK(sdk: sdk)
+        case .noSliceForPlatform(let platform, let available):
+            return .noSliceForPlatform(platform: platform, available: available)
+        case .noSliceForArchitecture(let architecture, let slice, let architectures):
+            return .noSliceForArchitecture(architecture: architecture, slice: slice, architectures: architectures)
+        case .unsupportedLibrary(let path):           return .unsupportedLibrary(path: path)
+        case .noFrameworkBinary(let paths):           return .noFrameworkBinary(paths: paths)
+        case .unrecognisedFrameworkBinary(let path, let reason):
+            return .frameworkBinaryUnrecognised(path: path, reason: reason.problem)
+        }
+    }
+
     case unreadableInfoPlist
     case noPlatform(sdk: String)
     case noSliceForPlatform(String, available: [String])
@@ -141,8 +157,8 @@ enum XCFrameworkSliceError: Error, Equatable, CustomStringConvertible {
     /// A library slice that is not a static archive: a dynamic library outside a framework
     /// would have to be embedded and found by an install name nothing here sets.
     case unsupportedLibrary(String)
-    /// A framework slice with no file where its binary should be.
-    case noFrameworkBinary(String)
+    /// A framework slice with no file where its binary should be, by every place looked.
+    case noFrameworkBinary([String])
     /// A framework slice whose binary is neither a dynamic library nor an archive.
     case unrecognisedFrameworkBinary(String, FrameworkBinary.Unrecognised)
 
@@ -159,8 +175,8 @@ enum XCFrameworkSliceError: Error, Equatable, CustomStringConvertible {
             return "its slice \(slice) has no \(architecture), only \(architectures.joined(separator: ", "))"
         case .unsupportedLibrary(let path):
             return "its slice's library \(path) is neither a framework nor a static archive, which is all that is linked here"
-        case .noFrameworkBinary(let path):
-            return "its slice's framework has no binary at \(path)"
+        case .noFrameworkBinary(let paths):
+            return "its slice's framework has no binary at \(paths.joined(separator: " or "))"
         case .unrecognisedFrameworkBinary(let path, let reason):
             return "its slice's framework binary \(path): \(reason)"
         }
@@ -233,7 +249,9 @@ public struct XCFrameworkSliceSelector: Node {
     /// the new `embeddedFrameworks` (B-77 item 3, 12).
     /// 5: several wires on a one-wire port are an error naming them, where one was taken
     /// (B-141).
-    public static let implementationVersion = 5
+    /// 6: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 6
 
     // MARK: Ports
 
@@ -282,7 +300,7 @@ public struct XCFrameworkSliceSelector: Node {
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
         guard let xcframework = thisNode.properties[Self.pathProperty] else {
-            throw NodeError.other(message: "XCFrameworkSliceSelector needs path: <the .xcframework folder>")
+            throw ErrorCondition.propertyMissing(type: "XCFrameworkSliceSelector", property: Self.pathProperty, alternatives: [])
         }
         let configurationText = try input.onlyWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
         let configuration = XCFrameworkSliceSelectorConfiguration(properties: [String: String](plainText: configurationText))
@@ -299,7 +317,7 @@ public struct XCFrameworkSliceSelector: Node {
             slice = try XCFrameworkSlice.select(from: try XCFrameworkSlice.slices(inInfoPlist: Data(bytes)),
                                                 platform: platform, architecture: configuration.architecture)
         } catch let error as XCFrameworkSliceError {
-            return try failed("\(xcframework): \(error)")
+            return try failed(xcframework, error)
         }
 
         let sliceFolder = Path(xcframework) / slice.identifier
@@ -311,7 +329,7 @@ public struct XCFrameworkSliceSelector: Node {
             roots.append((sliceFolder / slice.libraryPath).string)
         } else {
             guard slice.libraryPath.hasSuffix(".a") else {
-                return try failed("\(xcframework): \(XCFrameworkSliceError.unsupportedLibrary(slice.libraryPath))")
+                return try failed(xcframework, .unsupportedLibrary(slice.libraryPath))
             }
             singleFiles.append((sliceFolder / slice.libraryPath).string)
             if let headersPath = slice.headersPath {
@@ -356,8 +374,7 @@ public struct XCFrameworkSliceSelector: Node {
             let candidates = slice.frameworkBinaryPaths
             guard let binaryPath = candidates.first(where: { files[(sliceFolder / $0).string] != nil }),
                   let binary = files[(sliceFolder / binaryPath).string] else {
-                return try failed("\(xcframework): \(XCFrameworkSliceError.noFrameworkBinary(candidates.joined(separator: " or ")))",
-                                  inputWireSpecs: specs)
+                return try failed(xcframework, .noFrameworkBinary(candidates), inputWireSpecs: specs)
             }
             let hash = try binary.expectValue()
             do {
@@ -365,8 +382,7 @@ public struct XCFrameworkSliceSelector: Node {
                     DataObjectStore.shared.bytes(ofHash: hash, at: offset, count: count)
                 })
             } catch let unrecognised as FrameworkBinary.Unrecognised {
-                let error = XCFrameworkSliceError.unrecognisedFrameworkBinary(binaryPath, unrecognised)
-                return try failed("\(xcframework): \(error)", inputWireSpecs: specs)
+                return try failed(xcframework, .unrecognisedFrameworkBinary(binaryPath, unrecognised), inputWireSpecs: specs)
             }
         } else {
             kind = .staticLibrary
@@ -425,10 +441,11 @@ public struct XCFrameworkSliceSelector: Node {
     /// An error on every port. With no walk, when nothing was chosen and so nothing is to be
     /// read; with the walk's specs, when what was read is what failed, so that its wires
     /// stay and a change to the slice runs the node again.
-    private func failed(_ message: String,
+    private func failed(_ xcframework: String, _ sliceError: XCFrameworkSliceError,
                         inputWireSpecs: [String: [String: GraphSpecNode]] = [Self.sliceFolders: [:], Self.sliceFiles: [:],
                                                                              Self.sliceFileMetadata: [:]]) throws -> ProcessOutput {
-        let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "XCFrameworkSliceSelector: \(message)".intern()))
+        let error = try ErrorDocument.engine(.xcframeworkUnusable(path: xcframework, problem: sliceError.problem),
+                                             subject: .resource(path: xcframework)).published()
         return .init(outputValues: Dictionary(uniqueKeysWithValues: Self.outputPorts.map { ($0, error) }),
                      inputWireSpecs: inputWireSpecs)
     }

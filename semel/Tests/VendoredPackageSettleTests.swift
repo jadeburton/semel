@@ -132,9 +132,10 @@ final class VendoredPackageSettleTests: XCTestCase {
         let (ended, transcript) = try buildEnds(within: 30)
 
         XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
-        XCTAssertTrue(transcript.contains("is not vendored: nothing is at input:"), transcript)
-        XCTAssertTrue(transcript.contains("Packages/Dependencies/Sparkle/semel-artifacts/Sparkle"), transcript)
-        XCTAssertFalse(transcript.contains("is not the tree its lock records"), transcript)
+        XCTAssertTrue(transcript.contains("Packages/Dependencies/Sparkle/semel-artifacts/Sparkle holds no artifact for binary "
+                                          + "target Sparkle"), transcript)
+        XCTAssertTrue(transcript.contains("  vendor with: semel-swift prepare"), transcript)
+        XCTAssertFalse(transcript.contains("differs from its lock"), transcript)
     }
 
     /// The same once `prepare` has put the download in the package, under the lock: the
@@ -147,8 +148,8 @@ final class VendoredPackageSettleTests: XCTestCase {
         let (ended, transcript) = try buildEnds(within: 30)
 
         XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
-        XCTAssertFalse(transcript.contains("SwiftFormulaConverter:"), transcript)
-        XCTAssertFalse(transcript.contains("is not the tree its lock records"), transcript)
+        XCTAssertFalse(transcript.contains("  package: Sparkle"), "the conversion has nothing to say\n\(transcript)")
+        XCTAssertFalse(transcript.contains("differs from its lock"), transcript)
     }
 
     /// A binary target by `path:`: the `.xcframework` folder is in the package, and is not
@@ -164,7 +165,7 @@ final class VendoredPackageSettleTests: XCTestCase {
         let (ended, transcript) = try buildEnds(within: 30)
 
         XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
-        XCTAssertFalse(transcript.contains("SwiftFormulaConverter:"), transcript)
+        XCTAssertFalse(transcript.contains("  package: Sparkle"), "the conversion has nothing to say\n\(transcript)")
         XCTAssertFalse(transcript.contains("SwiftCompiler"), transcript)
     }
 
@@ -178,8 +179,8 @@ final class VendoredPackageSettleTests: XCTestCase {
         let (ended, transcript) = try buildEnds(within: 30)
 
         XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
-        XCTAssertFalse(transcript.contains("is not the tree its lock records"), transcript)
-        XCTAssertTrue(transcript.contains("Packages/Dependencies/Sparkle/Sources/Sparkle/ has not been pushed"), transcript)
+        XCTAssertFalse(transcript.contains("differs from its lock"), transcript)
+        XCTAssertTrue(transcript.contains("Packages/Dependencies/Sparkle/Sources/Sparkle has not been pushed"), transcript)
     }
 
     /// A vendored checkout as `prepare` leaves one: its sources beside dot-files and
@@ -208,7 +209,7 @@ final class VendoredPackageSettleTests: XCTestCase {
         let (ended, transcript) = try buildEnds(within: 30)
 
         XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
-        XCTAssertFalse(transcript.contains("is not the tree its lock records"), transcript)
+        XCTAssertFalse(transcript.contains("differs from its lock"), transcript)
         let folder = try XCTUnwrap(try engine.inputFileSystem.childNode(path: Path("Packages/Dependencies/Sparkle")))
         XCTAssertEqual(try folder.readFromOutputPort(Folder.pushedContentRootOutputPort).expectValue(), recorded, transcript)
     }

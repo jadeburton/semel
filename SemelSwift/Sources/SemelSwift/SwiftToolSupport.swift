@@ -101,21 +101,12 @@ func verifySDKVersion(_ declared: String?, sdk: String = defaultSDKName) throws 
     }
 
     guard let actual = resolveSDKVersion(sdk: sdk) else {
-        throw NodeError.other(message: "sdkVersion is declared as \(declared) "
-                                     + "but no SDK named \(sdk) could be found on this machine")
+        throw ErrorCondition.sdkVersionDiffers(sdk: sdk, declared: declared, found: nil)
     }
     guard actual == declared else {
         // A bare version is the pre-build-number form. It is not a partial match — the
         // gap it leaves is the one this check exists to close — but the fix is a paste.
-        if !declared.contains("(") {
-            throw NodeError.other(message: "sdkVersion is declared as \(declared), but the "
-                                         + "SDK build number is part of the identity: this "
-                                         + "machine has \(actual). Declare that instead.")
-        }
-        throw NodeError.other(message: "sdkVersion is declared as \(declared) "
-                                     + "but this machine has \(actual). Install that SDK, or "
-                                     + "change the setting — building against a different one "
-                                     + "would produce artifacts that do not match what was declared.")
+        throw ErrorCondition.sdkVersionDiffers(sdk: sdk, declared: declared, found: actual)
     }
 }
 
@@ -130,8 +121,7 @@ func swiftLanguageModeVersion(_ declared: String?) throws -> String? {
     }
     let accepted = ["4", "4.2", "5", "6"]
     guard accepted.contains(declared) else {
-        throw NodeError.other(message: "languageMode=\(declared) is not a Swift language mode; "
-                                     + "swiftc accepts \(accepted.joined(separator: ", ")).")
+        throw ErrorCondition.settingNotAccepted(key: "swift.compiler.languageMode", value: declared, accepted: accepted)
     }
     return declared
 }
@@ -153,7 +143,7 @@ func swiftOptimisationFlag(_ declared: String?) throws -> String? {
     case "speed": return "-O"
     case "size":  return "-Osize"
     default:
-        throw NodeError.other(message: "semel.config declares swift.compiler.optimisationLevel="
-                                     + "\(declared), which is not one of none, speed or size.")
+        throw ErrorCondition.settingNotAccepted(key: "swift.compiler.optimisationLevel", value: declared,
+                                                accepted: ["none", "speed", "size"])
     }
 }
