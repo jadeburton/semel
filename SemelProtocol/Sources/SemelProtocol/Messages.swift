@@ -176,4 +176,17 @@ public enum ErrorResponse: Codable, Equatable, Sendable {
     /// The machine, not the request, is broken. The server answers the in-flight request
     /// with this, then exits; every client sees its connection close.
     case unrecoverable(message: String)
+
+    // MARK: Locked folders and checkpoints (B-146)
+
+    /// The outermost `commit` refused the batch: something below `folder`, which its lock
+    /// beside it locks, changed without a lock the folder now matches. Sent once the batch
+    /// has been replayed, so `input:` is as it was before `begin`, and with no batch left
+    /// open: a client that wants the change pushes it again with its lock. `paths` are the
+    /// batch's at or below the folder whose content it changed, and the lock's own when the
+    /// batch changed that, all relative to `input:`; `found` is the folder's pushed content
+    /// root the batch would have left, nil when it left no folder there.
+    case batchRejected(folder: String, lock: String, expected: LockExpectation, found: String?, paths: [String])
+    /// `restore` named a checkpoint that was never recorded; `known` are the ones that were.
+    case checkpointNotFound(name: String, known: [String])
 }

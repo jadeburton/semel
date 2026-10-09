@@ -103,9 +103,21 @@ extension RequestHandler {
     /// for each read between them: a cold push of a tree spent a fifth of its time opening
     /// and committing them. `withTransactionPerStep` keeps each of those transactions'
     /// boundaries inside the one, so a refused file leaves behind what it left before.
-    func pushFiles(_ files: [InternedFile]) throws -> [PushedFileOutcome] {
+    ///
+    /// Each file's path is recorded in the session's batch journal before it is written
+    /// (B-146), in the same transaction and outside the file's own step, so a file the
+    /// graph refuses leaves a record of a path it did not change, which a replay writes
+    /// back as it was. Outside a batch the push is a batch of its own, checked as it ends.
+    func pushFiles(_ files: [InternedFile], session: Session) throws -> [PushedFileOutcome] {
+        try inBatch(session) { journal in
+            try pushFiles(files, recordingInto: journal)
+        }
+    }
+
+    private func pushFiles(_ files: [InternedFile], recordingInto journal: BatchJournal) throws -> [PushedFileOutcome] {
         try database.withTransactionPerStep {
             try files.map { file in
+                try journal.recordPathAndFoldersAbove(Path(file.path))
                 do {
                     return .stored(didChange: try StaticFile.push(interned: file.contentHash, mode: file.mode,
                                                                   at: Path(file.path)))
@@ -122,18 +134,26 @@ extension RequestHandler {
     /// bytes are what it names. To a folder: the folder, pinned as a pushed folder is, with
     /// the target on its `symbolicLink` port; its files arrive as pushes of their own.
     /// Returns whether anything changed.
-    func pushSymbolicLink(path: String, target: String, referent: SymbolicLinkReferent, body: Data) throws -> DaemonResponse {
-        switch referent {
-        case .file(let mode):
-            return .pushFile(didChange: try StaticFile.push([UInt8](body), mode: mode, symbolicLinkTarget: target, at: Path(path)))
-        case .folder:
-            return .pushFile(didChange: try Folder.pushSymbolicLink(target: target, at: Path(path)))
+    func pushSymbolicLink(path: String, target: String, referent: SymbolicLinkReferent, body: Data,
+                          session: Session) throws -> DaemonResponse {
+        try inBatch(session) { journal in
+            try journal.recordPathAndFoldersAbove(Path(path))
+            switch referent {
+            case .file(let mode):
+                return .pushFile(didChange: try StaticFile.push([UInt8](body), mode: mode, symbolicLinkTarget: target,
+                                                                at: Path(path)))
+            case .folder:
+                return .pushFile(didChange: try Folder.pushSymbolicLink(target: target, at: Path(path)))
+            }
         }
     }
 
-    func pushFolder(path: String) throws -> DaemonResponse {
-        _ = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path(path), pinned: true)
-        return .ok
+    func pushFolder(path: String, session: Session) throws -> DaemonResponse {
+        try inBatch(session) { journal in
+            try journal.recordPathAndFoldersAbove(Path(path))
+            _ = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path(path), pinned: true)
+            return .ok
+        }
     }
 
     // MARK: - What a push compares (B-132)
@@ -179,7 +199,17 @@ extension RequestHandler {
     /// Streamed as it deletes (B-137): a part goes out each time the paths taken so far
     /// fill a frame, so the removal of a whole tree is never refused for its size and a
     /// long one shows the client how far it has got.
-    func remove(pattern: String, replyStream: any ReplyStream) throws -> DaemonResponse {
+    ///
+    /// Each match is recorded in the session's batch journal, with everything below it,
+    /// before it is taken (B-146).
+    func remove(pattern: String, replyStream: any ReplyStream, session: Session) throws -> DaemonResponse {
+        try inBatch(session) { journal in
+            try remove(pattern: pattern, replyStream: replyStream, recordingInto: journal)
+        }
+    }
+
+    private func remove(pattern: String, replyStream: any ReplyStream,
+                        recordingInto journal: BatchJournal) throws -> DaemonResponse {
         let root    = try engine.inputFileSystem
         let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: root))
         let matches = try matcher.findAllMatching(pathOrWildcard: Path(pattern))
@@ -196,6 +226,7 @@ extension RequestHandler {
                 failures.append("Child not deletable: \(match.path)")
                 continue
             }
+            try journal.recordSubtree(at: match.path)
             try deletable.deleteInInputFileSystem()
             if case .folder = match.kind {
                 try slicer.append(.folder(match.path.string))

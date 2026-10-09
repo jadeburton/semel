@@ -32,6 +32,46 @@ public protocol InputHoldings {
     /// Every file and folder held below `folder`, at any depth, dot-names among them; none
     /// when the graph does not hold the folder.
     func holdings(below folder: Path) throws -> [FileWildcardEntry]
+    /// The folders at or below `folder` that are locked (B-146): each with a
+    /// `<folder>.semel-lock` held beside it, which is the engine's own rule for a lock.
+    func lockedFolders(below folder: Path) throws -> [Path]
+}
+
+extension InputHoldings {
+
+    /// From everything held below the folder, and the folder's own lock: right for any
+    /// holdings, and what one that can ask the graph a narrower question replaces.
+    public func lockedFolders(below folder: Path) throws -> [Path] {
+        var locked = try holdings(below: folder).compactMap { entry -> Path? in
+            guard entry.kind == .file else {
+                return nil
+            }
+            return LockedFolder.folder(lockedBy: entry.path)
+        }
+        if !folder.isEmpty, try holds(LockedFolder.lockPath(of: folder)) {
+            locked.append(folder)
+        }
+        return locked.sorted(by: Path.precedes)
+    }
+}
+
+/// The naming rule of a lock, as the engine and `semel-swift prepare` spell it
+/// (`DependencyLock.lockPath(forDependencyAt:)`), on paths.
+public enum LockedFolder {
+
+    /// `Dependencies/GRDB.swift.semel-lock` for `Dependencies/GRDB.swift`.
+    public static func lockPath(of folder: Path) -> Path {
+        Path(DependencyLock.lockPath(forDependencyAt: folder.string))
+    }
+
+    /// The folder a lock at `path` locks, when the path is a lock's.
+    public static func folder(lockedBy path: Path) -> Path? {
+        let suffix = ".\(DependencyLock.fileExtension)"
+        guard let name = path.lastComponent, name.hasSuffix(suffix), name.count > suffix.count else {
+            return nil
+        }
+        return Path(segments: path.segments.dropLast()) / String(name.dropLast(suffix.count))
+    }
 }
 
 /// A plan that mirrors the watched folders: its commands, and what the launch line says
@@ -75,7 +115,7 @@ public struct BatchPlanner {
         var planning = Planning(filter: filter, disk: CachedListing(disk), holdings: holdings)
         for path in batch.rescanned + batch.changed {
             for target in targets(of: path) {
-                try planning.plan(target)
+                try planning.planChange(target)
             }
         }
         return planning.commands
@@ -109,7 +149,7 @@ public struct BatchPlanner {
         }
         for path in batch.rescanned + batch.changed {
             for target in targets(of: path) {
-                try planning.plan(target)
+                try planning.planChange(target)
             }
         }
         return MirrorPlan(commands: planning.commands, removedCount: planning.removedCount,
@@ -127,7 +167,9 @@ public struct BatchPlanner {
 
 /// The state of one plan: what it has decided so far, and the disk it reads.
 private struct Planning<Disk: FileWildcardMatcherInput, Holdings: InputHoldings> {
-    let filter: WatchFilter
+    /// A `var`, because a plan that meets a change to a lock unlocks that lock's folder for
+    /// the rest of the plan (B-146).
+    var filter: WatchFilter
     let disk: Disk
     let holdings: Holdings
 
@@ -144,12 +186,31 @@ private struct Planning<Disk: FileWildcardMatcherInput, Holdings: InputHoldings>
         self.holdings = holdings
     }
 
+    /// Decides one path the stream reported changed, as `plan` does, and — when it is the
+    /// lock of a locked folder the filter leaves alone — that folder with it (B-146). A
+    /// lock that changed, came or went is how a locked folder changes: `prepare` writes the
+    /// copy and the lock together, so the folder is mirrored and pushed in the lock's batch
+    /// and the barrier at `commit` sees the two together. Only for a reported change: a
+    /// mirror of everything reaches every lock, and pushing every locked folder with it
+    /// would send a copy edited by hand along with the rest and have the whole launch
+    /// refused.
+    mutating func planChange(_ path: Path) throws {
+        if let lockedFolder = LockedFolder.folder(lockedBy: path), filter.lockedAndNotWatched.contains(lockedFolder),
+           !filter.isAlwaysExcepted(path), !WatchFilter.passesThroughDotFolder(path) {
+            filter = filter.unlocking(lockedFolder)
+            try mirror(lockedFolder)
+            try plan(lockedFolder)
+        }
+        try plan(path)
+    }
+
     /// Decides one path: a push when it exists — a folder whole — and a removal when it
     /// does not.
     mutating func plan(_ path: Path) throws {
         guard !filter.isAlwaysExcepted(path), !WatchFilter.passesThroughDotFolder(path) else {
             return
         }
+
         guard let entry = WatchFilter.entry(at: path, on: disk) else {
             try planRemoval(of: path)
             return
@@ -180,6 +241,15 @@ private struct Planning<Disk: FileWildcardMatcherInput, Holdings: InputHoldings>
         guard !folder.isEmpty else {
             for child in try disk.allFiles(inDirectoryPath: disk.rootDirectoryPath) {
                 try plan(child.path)
+            }
+            return
+        }
+        // A locked folder below this one would go with a push of it whole, so this one is
+        // planned by its children and the locked folder is left out.
+        guard !filter.holdsLockedFolder(below: folder) else {
+            let directory = (disk.rootDirectoryPath as NSString).appendingPathComponent(folder.string)
+            for child in try disk.allFiles(inDirectoryPath: directory) {
+                try plan(folder / child.path)
             }
             return
         }

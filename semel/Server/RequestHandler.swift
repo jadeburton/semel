@@ -36,6 +36,9 @@ public final class RequestHandler {
         self.database     = database
         self.databasePath = databasePath
         installReporters()
+        // A batch left open by the process before this one can no longer be committed or
+        // refused; what it pushed stands, as it did before batches had journals.
+        FatalErrors.attempt { try BatchJournal.discardAll() }
     }
 
     // MARK: - Entry point
@@ -82,9 +85,9 @@ public final class RequestHandler {
 
         switch (request, prepared.interned) {
         case (.daemon(.pushFiles), let interned?):
-            return pushFiles(interned)
+            return pushFiles(interned, session: session)
         case (.daemon(.pushFile(let path, _)), let interned?):
-            return pushFile(interned, path: path)
+            return pushFile(interned, path: path, session: session)
         default:
             break
         }
@@ -99,13 +102,18 @@ public final class RequestHandler {
         }
     }
 
-    /// Unwinds whatever the session left open, so a client that vanished mid-push cannot
-    /// leave the engine's work signals suppressed.
+    /// Commits whatever batch the session left open, so a client that vanished mid-push
+    /// cannot leave the engine's work signals suppressed. Committed as a `commit` would be,
+    /// through the lock barrier: a batch the barrier refuses is taken back, and with nobody
+    /// left to tell, the log says so.
     public func endSession(_ session: Session) {
         queue.sync {
             while session.openBatchDepth > 0 {
-                engine.endBatch()
-                session.batchClosed()
+                do {
+                    try closeBatch(session)
+                } catch {
+                    Debug.warn("the batch a closed connection left open was not committed: \(error)")
+                }
             }
         }
     }
@@ -131,30 +139,26 @@ public final class RequestHandler {
             case .list(let fileSystem, let pattern):
                 return (.daemon(try list(fileSystem: fileSystem, pattern: pattern, replyStream: replyStream)), nil)
             case .beginBatch:
-                engine.beginBatch()
-                session.batchOpened()
+                try openBatch(session)
                 return (.daemon(.ok), nil)
             case .endBatch:
-                guard session.openBatchDepth > 0 else {
-                    return (.daemon(.ok), nil)
-                }
-                engine.endBatch()
-                session.batchClosed()
+                try closeBatch(session)
                 return (.daemon(.ok), nil)
             case .pushFile, .pushFiles:
                 // Answered in `handle`, which interns the bytes before the queue. Unreachable
                 // here, and the switch wants every case.
                 return (.daemon(.ok), nil)
             case .pushSymbolicLink(let path, let target, let referent):
-                return (.daemon(try pushSymbolicLink(path: path, target: target, referent: referent, body: body ?? Data())), nil)
+                return (.daemon(try pushSymbolicLink(path: path, target: target, referent: referent, body: body ?? Data(),
+                                                     session: session)), nil)
             case .pushFolder(let path):
-                return (.daemon(try pushFolder(path: path)), nil)
+                return (.daemon(try pushFolder(path: path, session: session)), nil)
             case .contentRoots(let path):
                 return (.daemon(.contentRoots), try contentRoots(path: path))
             case .folderChildren(let paths):
                 return (.daemon(.folderChildren), try folderChildren(paths: paths))
             case .remove(let pattern):
-                return (.daemon(try remove(pattern: pattern, replyStream: replyStream)), nil)
+                return (.daemon(try remove(pattern: pattern, replyStream: replyStream, session: session)), nil)
             case .fetch(let fileSystem, let path):
                 let (response, bytes) = try fetch(fileSystem: fileSystem, path: path)
                 return (.daemon(response), bytes)
@@ -197,6 +201,13 @@ public final class RequestHandler {
             case .subscribe:
                 session.isSubscribed = true
                 return (.daemon(.ok), nil)
+            // Locked folders and checkpoints (B-146), in RequestHandler+Batches.swift.
+            case .checkpoint(let name):
+                return (.daemon(try checkpoint(named: name)), nil)
+            case .checkpoints:
+                return (.daemon(try checkpointList()), nil)
+            case .restore(let name):
+                return (.daemon(try restore(named: name, session: session)), nil)
             }
         }
     }
@@ -204,10 +215,10 @@ public final class RequestHandler {
     // MARK: - Push
 
     /// One file: a batch of one, answered as itself.
-    private func pushFile(_ interned: Result<[InternedFile], Error>, path: String) -> (Response, Data?) {
+    private func pushFile(_ interned: Result<[InternedFile], Error>, path: String, session: Session) -> (Response, Data?) {
         answering {
             let files = try interned.get()
-            switch try queue.sync(execute: { try pushFiles(files) }).first {
+            switch try queue.sync(execute: { try pushFiles(files, session: session) }).first {
             case .stored(let didChange):
                 return (.daemon(.pushFile(didChange: didChange)), nil)
             case .failed(let error):
@@ -222,10 +233,10 @@ public final class RequestHandler {
     /// order, in one turn. A failure to intern is the whole request's — a body the headers
     /// do not cut, or a store that cannot be written — and a failure to record is that
     /// file's alone.
-    private func pushFiles(_ interned: Result<[InternedFile], Error>) -> (Response, Data?) {
+    private func pushFiles(_ interned: Result<[InternedFile], Error>, session: Session) -> (Response, Data?) {
         answering {
             let files = try interned.get()
-            return (.daemon(.pushFiles(outcomes: try queue.sync(execute: { try pushFiles(files) }))), nil)
+            return (.daemon(.pushFiles(outcomes: try queue.sync(execute: { try pushFiles(files, session: session) }))), nil)
         }
     }
 
@@ -255,6 +266,8 @@ public final class RequestHandler {
         switch error {
         case let failure as HandlerFailure:
             return failure.response
+        case let error as CheckpointError:
+            return checkpointResponse(for: error)
         case let error as NodeError:
             return .nodeError(description: "\(error)")
         case let error as any UnrecoverableError:
@@ -398,6 +411,8 @@ enum HandlerFailure: Error {
     case malformed(description: String)
     /// One item of a streamed reply too large for a frame on its own (`ReplySlicer`).
     case replyTooLarge(request: String, bytes: Int)
+    /// The lock barrier refused the batch at its outermost `commit` (B-146).
+    case batchRejected(BatchRejection)
 
     var response: ErrorResponse {
         switch self {
@@ -408,6 +423,12 @@ enum HandlerFailure: Error {
         case .malformed(let description): return .malformedRequest(description: description)
         case .replyTooLarge(let request, let bytes):
             return .replyTooLarge(request: request, bytes: bytes, limit: Int(Frame.maximumJSONLength))
+        case .batchRejected(let rejection):
+            return .batchRejected(folder:   rejection.folder.string,
+                                  lock:     rejection.lock.string,
+                                  expected: LockExpectation(rejection.expected),
+                                  found:    rejection.found,
+                                  paths:    rejection.paths.map(\.string))
         }
     }
 }

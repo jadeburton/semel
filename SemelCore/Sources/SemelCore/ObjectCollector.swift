@@ -100,11 +100,14 @@ extension BuildEngine {
 
     // MARK: - Roots
 
-    /// Every hash a row of the live graph, or of an archived one, writes down.
+    /// Every hash a row of the live graph, or of an archived one, writes down, and every
+    /// checkpoint's root.
     private func referencedObjects() throws -> Set<DataObjectHash> {
         var marked = Set<DataObjectHash>()
         marked.formUnion(try database.outputPort.selectAllHashes())
         marked.formUnion(try database.artifactSnapshot.selectAll().map(\.contentHash))
+        // A checkpoint's root, and through its documents every object a restore reads.
+        marked.formUnion(try Checkpoints.recordedRoots(database: database))
         for content in try database.cacheEntry.selectAllContent() {
             marked.formUnion(Self.objects(inCacheContent: content))
         }

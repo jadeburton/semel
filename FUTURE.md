@@ -296,9 +296,12 @@ beside each copy once all are in place, folding the copy on disk over what a pus
 with the version, revision and origin of the checkout's pin in `Package.resolved`. A link
 inside its own folder — a vendored framework's `Versions/Current` — is folded as the link
 it is on both sides since the fold's format 3 (B-77, 2026-09-29), and the test pushes a tree
-holding file and folder links. What
+holding file and folder links. Since B-146 (2026-10-10) the lock is also a write barrier
+at `commit`, so a batch that moves a locked folder is refused before anything builds from
+it, naming the paths of the batch that moved the root. What
 remains: the root of a copy with a file removed from disk but not from `input:` differs
-from a fresh lock with no word on which file. That the file stays is the rule, not a gap
+from a fresh lock with no word on which file — that file is in no batch, so the barrier
+does not name it either. That the file stays is the rule, not a gap
 (2026-10-04): a push only adds, and a removal is an `rm` — by hand, or by `semel-watch`,
 which mirrors the disk with one (B-126); a lock `rm`'d from `input:` is named
 as a deleted source on every report while the converter still wires it, as any removed
@@ -357,6 +360,61 @@ whoever does: the fold is a stated text format with a version tag on its first l
 (`FolderContentRoot`), so a recorded root that stops matching can be told from one the
 format moved under; and a `contentRoot` wire is a real dependency, so the node that checks
 the lock re-runs whenever anything under the vendored folder changes, which is the point.
+
+**B-146** `done` — **A lock is a write barrier, and a batch is all or nothing.**
+Done 2026-10-10 (design: `docs/superpowers/specs/2026-10-05-semel-locked-folders-design.md`,
+whose "As built" says where this differs). A batch has a journal: `begin` opens one per
+session (`BatchJournal`, SemelCore; nested begins share it), and every push, link push,
+folder push and removal records, before it writes, what its path and each folder on the
+way held — the node's own port rows, or nothing — once per path per batch, as rows of the
+graph's `Metadata` table in the batch's own transaction (`withTransactionPerStep`). The
+outermost `commit` runs `LockBarrier.commit`: the locked folders the journal's paths fall
+under (from each path up, the first folder whose `<name>.semel-lock` holds a value in
+`input:` as the batch left it; a lock path names its own folder too), the marks the batch
+left flushed inside a savepoint, and each such folder's `pushedContentRoot` compared with
+its lock's `content`. A lock taken away frees its folder; a lock that does not parse, or
+was taken under another fold, refuses the batch, the first naming its line. On a refusal
+the savepoint is rolled back, the journal replayed — what the batch made where nothing
+stood goes, deepest first, and every other path's rows are written back, shallowest
+first — and the folders folded back, so the pass the batch's one wake-up causes finds
+nothing to do unless the batch had scheduled a consumer, which is then answered from the
+cache. `commit` answers `ErrorResponse.batchRejected(folder:lock:expected:found:paths:)`
+(protocol 25), with no batch left open; `expected` is a `LockExpectation` (a root, a root
+under another fold, or an unreadable lock with its line), and `paths` are the batch's at or
+below the folder, and the lock's own, whose rows it changed. A push, `rm`, link or folder
+push outside a batch is a batch of one; a connection that closes with a batch open is
+committed through the same check, its refusal logged. The client prints the refusal as a
+statement and `lock:`/`expected:`/`found:`/`paths:` lines (`BatchRejectionRenderer`);
+`push` and `rm` no longer swallow their own commit's failure, and `build` stops after a
+refused push with `Not built: the push was refused, and nothing was exported.`
+`checkpoint [<name>]` records the input root's whole content root under a name, `latest`
+by default, in `Metadata`; `checkpoints` lists them by name; `restore <name>` walks the
+checkpoint's documents against the current ones down to where they differ, pushes files,
+links and modes, makes folders and removes what the checkpoint lacks, in the session's
+batch or one of its own, through the barrier, and waits for the one settle. The collector
+keeps every object a checkpoint names. `semel-watch` asks which folders below the watched
+ones are locked (`InputHoldings.lockedFolders(below:)`, one listing of `**/*.semel-lock`),
+at launch, after a reconnection and after a batch that moved a lock; the filter leaves a
+locked folder out unless an `--only` names it, a folder holding one is pushed by its
+children, the launch line names them (`not watching the locked …, which change only with
+their locks: semel-swift prepare vendors them again`), and a change to a lock mirrors and
+pushes its folder in the lock's batch, so a re-vendor lands; a refused batch is the
+interpreter's error and nothing is built or exported from it. Found on the way: a file
+pushed back into a folder `rm` had taken, before the collector ran, failed with
+`nodeNotFound`, its row still naming the folder's gone row; the push now adopts it into
+the folder made again. Measured on GRDB.swift re-vendored from 7.10.0 to 7.11.1 (771
+files, 266 changed, 246 gone; a debug build, a file graph): the whole commit — the flush
+the next pass would have made, the lock lookup, the fold read — 117 ms, of which the
+barrier's own lookup is 62 ms; the journal adds about 0.25 ms a path to the push, 995 ms
+against 680 ms when every one of the copy's files is sent and 1,228 paths are journaled;
+a refusal, replay and refold included, 522 ms. `BatchJournalTests` and `LockBarrierTests`
+(SemelCore), `LockedFolderServerTests` (the refusal over a socket, a batch of one, nested
+batches, a closing connection, a `wait` after a refusal), `CheckpointTests` (round trip,
+listing, a restore across a lock change, the refusal at `push`, a restore answered from the
+cache), `WatcherTests` (the locked folder left alone at launch and on an edit, a re-vendor
+landing, a refused batch followed by a save that lands) and
+`LockedFolderEndToEndTests` over `swift-binary-target-app` with a dependency `prepare`
+vendors from a repository made on disk.
 
 **B-10** `open` `For Fable Only` — **Packages are named by a formula, not discovered — one residual.**
 Done 2026-09-12: `Package.swift` creates no builder; a `.fmla` says

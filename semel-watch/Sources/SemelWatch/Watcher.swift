@@ -48,6 +48,9 @@ public final class Watcher {
     /// How many batches have been issued, the initial one among them.
     public private(set) var batchesIssued = 0
 
+    /// How many of them the lock barrier refused at `commit` (B-146).
+    public private(set) var batchesRefused = 0
+
     private let events: any FileEvents
     private let clock: any WatchClock
     private let connector: any WatchConnector
@@ -56,6 +59,10 @@ public final class Watcher {
     private var filter: WatchFilter
     private var coalescer: ChangeCoalescer
     private var session: WatchSession?
+
+    /// Whether the filter's locked folders may no longer be what the graph holds: at
+    /// launch, after a reconnection, and after a batch that pushed or removed a lock.
+    private var locksAreStale = true
 
     /// The longest wait between two attempts to reach an engine that has gone.
     static let longestReconnectDelay = Duration.seconds(5)
@@ -89,6 +96,7 @@ public final class Watcher {
         if configuration.pushesInitially {
             issue(nil, announcing: true)
         } else {
+            refreshLocksIfStale(in: opened)
             output(launchLine(mirrored: nil))
         }
         while true {
@@ -120,6 +128,11 @@ public final class Watcher {
         }
         let excepted = filter.except.map(\.string) + filter.alwaysExcepted.map { "\($0.string)/" }
         parts.append("except \(excepted.joined(separator: ", "))")
+        let locked = filter.lockedAndNotWatched
+        if !locked.isEmpty {
+            parts.append("not watching the locked \(locked.map(\.string).joined(separator: ", ")), "
+                         + "which change only with their locks: `semel-swift prepare` vendors them again")
+        }
         if let destination = configuration.exportDestination {
             parts.append("exporting into \(destination) after each settle without errors")
         }
@@ -172,12 +185,14 @@ public final class Watcher {
                 return
             case .reopened:
                 pushesEverything = true
+                locksAreStale = true
             case .unchanged:
                 break
             }
             guard let session else {
                 return
             }
+            refreshLocksIfStale(in: session)
             let commands: [WatchCommand]
             do {
                 let planned = try plan(batch ?? ChangeBatch(), mirroringEverything: pushesEverything, session: session)
@@ -200,6 +215,26 @@ public final class Watcher {
             guard !session.isOpen() else {
                 return
             }
+        }
+    }
+
+    /// Asks the graph which folders below the watched ones are locked (B-146), when the
+    /// answer may have moved. A graph that cannot be asked leaves the filter as it was,
+    /// and says so: the barrier at `commit` still refuses what a lock forbids.
+    private func refreshLocksIfStale(in session: WatchSession) {
+        guard locksAreStale else {
+            return
+        }
+        let holdings = InterpreterHoldings(interpreter: session.interpreter)
+        do {
+            var locked: [Path] = []
+            for folder in configuration.folders {
+                locked.append(contentsOf: try holdings.lockedFolders(below: folder))
+            }
+            filter.setLocked(locked)
+            locksAreStale = false
+        } catch {
+            output("semel-watch: could not ask the engine which folders are locked: \(error)")
         }
     }
 
@@ -226,7 +261,13 @@ public final class Watcher {
             }
         }
 
+        // A batch that pushes or removes a lock changes which folders are locked.
+        if (removals + pushes).contains(where: { LockedFolder.folder(lockedBy: Path($0)) != nil }) {
+            locksAreStale = true
+        }
+
         var followed: [String] = []
+        var refused = false
         interpreter.holdingReports {
             interpreter.handleCommand(verb: "begin", arguments: [])
             guard session.isOpen() else {
@@ -238,8 +279,12 @@ public final class Watcher {
             if !pushes.isEmpty {
                 interpreter.handleCommand(verb: "push", arguments: pushes)
             }
+            let refusedBefore = interpreter.batchesRefused
             interpreter.handleCommand(verb: "commit", arguments: [])
-            guard session.isOpen() else {
+            // The interpreter printed the refusal; the batch is gone whole, and the next
+            // quiet interval plans against whatever the disk holds then (B-146).
+            refused = interpreter.batchesRefused != refusedBefore
+            guard session.isOpen(), !refused else {
                 return
             }
             // A formula's input outside the watched folders — a machine file beside the
@@ -251,6 +296,11 @@ public final class Watcher {
             filter.watch(Path(path))
         }
         guard session.isOpen() else {
+            return
+        }
+        guard !refused else {
+            batchesRefused += 1
+            output("semel-watch: the batch was not committed; nothing was built or exported from it.")
             return
         }
         reportAndExport(in: session)
@@ -343,5 +393,10 @@ struct InterpreterHoldings: InputHoldings {
 
     func holdings(below folder: Path) throws -> [FileWildcardEntry] {
         try interpreter.inputHoldings(below: folder.string)
+    }
+
+    /// One listing of the locks below the folder, rather than everything held below it.
+    func lockedFolders(below folder: Path) throws -> [Path] {
+        try interpreter.inputLocks(below: folder.string).compactMap { LockedFolder.folder(lockedBy: Path($0)) }
     }
 }

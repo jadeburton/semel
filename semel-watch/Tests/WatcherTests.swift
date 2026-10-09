@@ -44,6 +44,9 @@ final class WatcherTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        // Settled before it is stopped: a pass still running writes into the store this
+        // teardown removes, and the removal fails on what appears behind it.
+        engine?.waitUntilIdleBlocking()
         engine?.stopProcessingLoop()
         engine = nil
         BuildEngine.shared = nil
@@ -209,9 +212,103 @@ final class WatcherTests: XCTestCase {
         XCTAssertFalse(lines.contains { $0.hasPrefix("Exported") })
     }
 
+    // MARK: - Locked folders (B-146)
+
+    /// `app/Dependencies/Pkg` vendored with the lock `prepare` writes beside it, both in
+    /// `input:` before the watcher starts.
+    private func vendorLockedPackage() throws {
+        try write("public struct Pkg {}\n", at: "app/Dependencies/Pkg/Pkg.swift")
+        try writeLock()
+        try write("print(1)\n", at: "app/src/main.swift")
+        try pushBeforeLaunch("app")
+    }
+
+    private func writeLock() throws {
+        let root = try FolderContentRoot.root(ofFolderAt: try XCTUnwrap(base).appendingPathComponent("app/Dependencies/Pkg"))
+        try write(DependencyLock(contentRoot: root, fold: FolderContentRoot.formatTag).text,
+                  at: "app/Dependencies/Pkg.semel-lock")
+    }
+
+    private func heldText(_ path: String) throws -> String {
+        String(decoding: try fetch(path).1, as: UTF8.self)
+    }
+
+    /// A locked folder is not watched unless an `--only` names it, and the launch line says
+    /// which and how they change: an edit below one is never pushed.
+    func test_aLockedFolderIsNotWatchedByDefaultAndTheLaunchLineSaysSo() throws {
+        try vendorLockedPackage()
+        writeOnFirstWait = [("app/Dependencies/Pkg/Pkg.swift", "public struct Pkg { let edited = true }\n")]
+        let watcher = try makeWatcher(folders: ["app"], pushesInitially: false,
+                                      events: [ManualEvents.reporting("app/Dependencies/Pkg/Pkg.swift")])
+
+        try watcher.run()
+
+        XCTAssertTrue(lines.contains { $0.contains("; not watching the locked app/Dependencies/Pkg, which change only with "
+                                                    + "their locks: `semel-swift prepare` vendors them again;") },
+                      lines.joined(separator: "\n"))
+        XCTAssertEqual(watcher.batchesIssued, 0, "an edit below a locked folder is no batch at all")
+        XCTAssertEqual(try heldText("app/Dependencies/Pkg/Pkg.swift"), "public struct Pkg {}\n")
+    }
+
+    /// The initial mirror leaves a locked folder alone too, so a copy edited by hand while
+    /// no watcher ran does not have the whole launch refused.
+    func test_theInitialMirrorLeavesALockedFolderAlone() throws {
+        try vendorLockedPackage()
+        try write("public struct Pkg { let edited = true }\n", at: "app/Dependencies/Pkg/Pkg.swift")
+        try write("print(2)\n", at: "app/src/main.swift")
+        let watcher = try makeWatcher(folders: ["app"], events: [])
+
+        try watcher.run()
+
+        XCTAssertEqual(watcher.batchesRefused, 0, lines.joined(separator: "\n"))
+        XCTAssertEqual(try heldText("app/src/main.swift"), "print(2)\n")
+        XCTAssertEqual(try heldText("app/Dependencies/Pkg/Pkg.swift"), "public struct Pkg {}\n")
+    }
+
+    /// A re-vendor — the copy and its lock changed in one quiet interval — lands: the lock's
+    /// change brings its folder with it.
+    func test_aReVendorOfCopyAndLockInOneIntervalLands() throws {
+        try vendorLockedPackage()
+        writeOnFirstWait = [("app/Dependencies/Pkg/Pkg.swift", "public struct Pkg { let version = 2 }\n")]
+        relockOnFirstWait = true
+        let watcher = try makeWatcher(folders: ["app"], pushesInitially: false,
+                                      events: [ManualEvents.reporting("app/Dependencies/Pkg/Pkg.swift",
+                                                                      "app/Dependencies/Pkg.semel-lock")])
+
+        try watcher.run()
+
+        XCTAssertEqual(watcher.batchesRefused, 0, lines.joined(separator: "\n"))
+        XCTAssertEqual(try heldText("app/Dependencies/Pkg/Pkg.swift"), "public struct Pkg { let version = 2 }\n")
+    }
+
+    /// Told to watch a locked folder, the watcher pushes an edit below it, the barrier
+    /// refuses the batch, and the refusal is reported as the error it is; the next save of
+    /// anything else is a batch of its own and builds.
+    func test_anEditUnderAWatchedLockedFolderIsRefusedAndTheNextSaveStillLands() throws {
+        try vendorLockedPackage()
+        writeOnFirstWait = [("app/Dependencies/Pkg/Pkg.swift", "public struct Pkg { let edited = true }\n"),
+                            ("app/src/main.swift", "print(2)\n")]
+        let watcher = try makeWatcher(folders: ["app"], only: ["app/Dependencies/Pkg/**/*", "app/src/**/*"],
+                                      pushesInitially: false, clock: ManualClock(),
+                                      events: [ManualEvents.reporting("app/Dependencies/Pkg/Pkg.swift"), .quiet,
+                                               ManualEvents.reporting("app/src/main.swift")])
+
+        try watcher.run()
+
+        XCTAssertEqual(watcher.batchesIssued, 2)
+        XCTAssertEqual(watcher.batchesRefused, 1)
+        XCTAssertTrue(lines.contains { $0.hasPrefix("input:/app/Dependencies/Pkg is locked, and the batch changed it") },
+                      lines.joined(separator: "\n"))
+        XCTAssertTrue(lines.contains("semel-watch: the batch was not committed; nothing was built or exported from it."))
+        XCTAssertEqual(try heldText("app/Dependencies/Pkg/Pkg.swift"), "public struct Pkg {}\n")
+        XCTAssertEqual(try heldText("app/src/main.swift"), "print(2)\n")
+    }
+
     // MARK: - Helpers
 
     private var removeOnFirstWait: [String] = []
+    private var writeOnFirstWait: [(path: String, text: String)] = []
+    private var relockOnFirstWait = false
 
     private func makeWatcher(folders: [Path], only: [String] = [], except: [String] = [],
                              exportDestination: String? = nil, pushesInitially: Bool = true,
@@ -228,6 +325,14 @@ final class WatcherTests: XCTestCase {
                 try? FileManager.default.removeItem(at: base.appendingPathComponent(path))
             }
             self.removeOnFirstWait = []
+            for (path, text) in self.writeOnFirstWait {
+                try? self.write(text, at: path)
+            }
+            self.writeOnFirstWait = []
+            if self.relockOnFirstWait {
+                try? self.writeLock()
+                self.relockOnFirstWait = false
+            }
         }
         let watcher = Watcher(configuration: configuration, events: stream, clock: clock,
                               connector: InProcessConnector(handler: handler, base: base.path))

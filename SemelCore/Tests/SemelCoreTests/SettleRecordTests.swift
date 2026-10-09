@@ -27,6 +27,10 @@ final class SettleRecordTests: SemelCoreTestCase {
         // Above the cache's floor, so the first build stores what the later ones hit.
         SampleTool.processingDurationForTests = 0.02
         engine.startProcessingLoop()
+        // The loop's start-up pass settled before any test builds: a batch holds back
+        // wake-ups, not a pass already running, and such a pass could take the batch's
+        // nodes partway and leave the batch's own settle to answer them from the cache.
+        engine.waitUntilIdleBlocking()
     }
 
     override func tearDown() {

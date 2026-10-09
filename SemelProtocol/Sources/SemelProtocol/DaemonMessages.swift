@@ -449,6 +449,16 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
     /// diff rather than two hashes. Either answer travels in the reply's body.
     case debug(cacheKey: String?)
     case subscribe
+
+    // MARK: Locked folders and checkpoints (B-146)
+
+    /// Records `input:`'s whole content root under a name, `latest` when none is given.
+    case checkpoint(name: String?)
+    /// Every checkpoint, by name.
+    case checkpoints
+    /// Makes `input:` hold the tree the checkpoint names, in one batch through the lock
+    /// barrier, as a `begin` … `commit` of the same pushes and removals would.
+    case restore(name: String)
 }
 
 // MARK: - Responses
@@ -522,6 +532,15 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     /// bytes are read, so it bounds what a header alone can ask this process to allocate.
     /// The body's own limit is three orders of magnitude higher for exactly this traffic.
     case debug
+
+    // MARK: Locked folders and checkpoints (B-146)
+
+    /// The root `checkpoint` recorded, under the name it recorded it.
+    case checkpoint(name: String, contentRoot: String)
+    case checkpoints(entries: [CheckpointRecord])
+    /// What `restore` did: the root `input:` holds now, and how many paths it pushed,
+    /// linked, made or removed to get there.
+    case restored(name: String, contentRoot: String, changedPaths: Int)
 }
 
 extension DaemonResponse {
@@ -533,7 +552,8 @@ extension DaemonResponse {
         case .list, .remove, .errors:
             return true
         case .ok, .pushFile, .pushFiles, .contentRoots, .folderChildren, .fetch, .symbolicLink, .check, .collected, .tools,
-             .reset, .explain, .debug:
+             .reset, .explain, .debug,
+             .checkpoint, .checkpoints, .restored:
             return false
         }
     }

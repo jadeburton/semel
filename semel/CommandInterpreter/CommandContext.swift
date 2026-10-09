@@ -84,6 +84,13 @@ struct ServerError: Error, CustomStringConvertible {
             return "the server's reply to `\(request)` is \(bytes) bytes, over the \(limit)-byte limit for one reply; "
                  + "ask for less of the graph at a time, or report the verb as needing a reply that streams"
         case .unrecoverable(let message):      return "the server stopped: \(message)"
+        // Locked folders and checkpoints (B-146).
+        case .batchRejected(let folder, let lock, let expected, let found, let paths):
+            return BatchRejectionRenderer.lines(folder: folder, lock: lock, expected: expected, found: found, paths: paths)
+                .joined(separator: "\n")
+        case .checkpointNotFound(let name, let known):
+            return "there is no checkpoint named '\(name)'; "
+                 + (known.isEmpty ? "`checkpoint` records one" : "there are \(known.joined(separator: ", "))")
         }
     }
 
@@ -92,7 +99,7 @@ struct ServerError: Error, CustomStringConvertible {
     /// rest are the server's or the protocol's, and no later request would fare better.
     var isTheRequestsOwn: Bool {
         switch response {
-        case .pathNotFound, .notAFolder, .notAProduct, .nodeError:
+        case .pathNotFound, .notAFolder, .notAProduct, .nodeError, .batchRejected, .checkpointNotFound:
             return true
         case .roleNotOffered, .malformedRequest, .replyTooLarge, .unrecoverable:
             return false
@@ -134,6 +141,21 @@ extension CommandContext {
     /// server answers — a push reading its next files from disk.
     func requestWithoutWaiting(_ request: DaemonRequest, body: Data? = nil) throws -> PendingDaemonReply {
         PendingDaemonReply(pending: try connection.sendWithoutWaiting(.daemon(request), body: body))
+    }
+
+    /// Runs `body` inside a `begin` … `commit` of its own, nested in the session's batch
+    /// when one is open. The commit's failure is thrown, not swallowed: the outermost one
+    /// is where the lock barrier refuses a batch (B-146), and a refused push is a failed
+    /// command. A `body` that throws still has its batch closed, as best it can be.
+    func inBatchOfItsOwn(_ body: () throws -> Void) throws {
+        _ = try request(.beginBatch)
+        do {
+            try body()
+        } catch {
+            _ = try? request(.endBatch)
+            throw error
+        }
+        _ = try request(.endBatch)
     }
 
     /// Resolves a user-supplied path string relative to `base`, handling `..` and `.`.

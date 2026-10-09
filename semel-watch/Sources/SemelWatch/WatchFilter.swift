@@ -4,7 +4,8 @@
 // Which changed paths a watcher pushes (B-126). The set it starts from is the set a push
 // would push — `ExternalFileSystemLister`'s rule, asked through `entry(at:on:)` — and the
 // filter only narrows it: `--only` and `--except`, spelled as a formula's for-each spells
-// its items and its `except` (B-123), and the folders nothing ever pushes.
+// its items and its `except` (B-123), the folders nothing ever pushes, and the folders a
+// lock in `input:` locks (B-146).
 
 import Foundation
 import SemelNodeKit
@@ -35,6 +36,13 @@ public struct WatchFilter: Equatable {
     /// and `semel-out`, where `build` exports when it is not told where.
     public let alwaysExcepted: [Path]
 
+    /// The folders a lock beside them in `input:` locks (B-146), as the graph last said.
+    /// Not watched unless an `--only` names one: a locked folder changes by an action that
+    /// brings its lock — `semel-swift prepare` — and an edit under one that the watcher
+    /// pushed would be refused at `commit` every time. A change to a lock is how such a
+    /// folder's change arrives, and the planner pushes the folder with it.
+    public private(set) var locked: [Path] = []
+
     public init(roots: [Path], only: [String] = [], except: [String] = [], exportDestination: Path? = nil) {
         self.roots  = roots
         self.only   = (only.isEmpty ? [Self.everything] : only).map { Path($0) }
@@ -54,6 +62,48 @@ public struct WatchFilter: Equatable {
             return
         }
         roots.append(path)
+    }
+
+    /// Replaces what the filter knows of the locked folders.
+    public mutating func setLocked(_ folders: [Path]) {
+        locked = folders.sorted(by: Path.precedes)
+    }
+
+    /// The locked folders this filter leaves alone: every one no `--only` names.
+    public var lockedAndNotWatched: [Path] {
+        locked.filter { !namesLockedFolder($0) }
+    }
+
+    /// Whether an `--only` names `folder` itself: its literal segments, before any
+    /// wildcard, reach down to the folder — `--only 'Dependencies/GRDB.swift/**/*'`. The
+    /// default `--only` names nothing, so a locked folder is left alone by default.
+    public func namesLockedFolder(_ folder: Path) -> Bool {
+        guard only != [Path(Self.everything)] else {
+            return false
+        }
+        return only.contains { pattern in
+            let literal = pattern.segments.prefix { !$0.contains("*") && !$0.contains("?") }
+            return literal.count >= folder.count && Array(literal.prefix(folder.count)) == folder.segments
+        }
+    }
+
+    /// Whether `path` is or lies below a locked folder the filter leaves alone.
+    public func isInLockedFolder(_ path: Path) -> Bool {
+        lockedAndNotWatched.contains { path.hasPrefix($0) }
+    }
+
+    /// Whether a locked folder the filter leaves alone lies strictly below `folder`, so
+    /// that a push of the folder whole would send it.
+    public func holdsLockedFolder(below folder: Path) -> Bool {
+        lockedAndNotWatched.contains { $0 != folder && $0.hasPrefix(folder) }
+    }
+
+    /// The filter with `folder` no longer locked: what a plan uses for a folder whose lock
+    /// changed in the batch, which is pushed whole with its lock.
+    func unlocking(_ folder: Path) -> WatchFilter {
+        var unlocked = self
+        unlocked.locked.removeAll { $0 == folder }
+        return unlocked
     }
 
     // MARK: - Questions about a path
@@ -95,7 +145,7 @@ public struct WatchFilter: Equatable {
     /// already, pushed by its name, so a change to it is a change to a source.
     public func admits(_ path: Path, isHeld: Bool = false) -> Bool {
         guard let name = path.lastComponent, isWatched(path), !isAlwaysExcepted(path),
-              !Self.passesThroughDotFolder(path) else {
+              !Self.passesThroughDotFolder(path), !isInLockedFolder(path) else {
             return false
         }
         let selected: Bool
@@ -123,7 +173,8 @@ public struct WatchFilter: Equatable {
     /// asked before the folder is listed. An `--except` cannot be decided here, since it
     /// may take some of what is below and leave the rest.
     public func mayAdmitBelow(_ folder: Path) -> Bool {
-        guard !isAlwaysExcepted(folder), !folder.segments.contains(where: { $0.hasPrefix(".") }) else {
+        guard !isAlwaysExcepted(folder), !folder.segments.contains(where: { $0.hasPrefix(".") }),
+              !isInLockedFolder(folder) else {
             return false
         }
         guard isWatched(folder) || !roots(atOrBelow: folder).isEmpty else {
