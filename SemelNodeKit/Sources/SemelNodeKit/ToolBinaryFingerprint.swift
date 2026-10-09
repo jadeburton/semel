@@ -29,7 +29,7 @@
 // and 171 MB is not worth reading twice.
 //
 // Fingerprinting the SDK tree is the other half of the same question and is answered
-// differently (`SwiftSDKFingerprint`): 765 MB of small files cost 4.4 s to hash and 1.2 s
+// differently (`SDKFingerprint`): 765 MB of small files cost 4.4 s to hash and 1.2 s
 // to walk, so that one records paths, sizes and modification times. A handful of binaries
 // is affordable where a whole SDK is not.
 //

@@ -1,5 +1,5 @@
 //
-//  SDKFingerprintTests.swift
+//  SwiftSDKCacheKeyMaterialTests.swift
 //  SemelSwiftTests
 //
 
@@ -9,85 +9,22 @@ import SemelDatabaseModels
 import SemelNodeKit
 import XCTest
 
-/// B-47, the wide half. The SDK's contents reach the Swift tools' cache key as a
-/// fingerprint of every file's path, size and modification time. These pin the fingerprint
-/// on a stand-in directory — the real SDK is too big and too shared to edit in a test.
-final class SDKFingerprintTests: SemelSwiftTestCase {
+/// B-47. The Swift compiler and linker fold the fingerprint of the SDK behind `-sdk` into
+/// their cache key. The fingerprint itself is SemelNodeKit's and pinned there; these pin
+/// what the Swift tools contribute, with a stand-in fingerprint.
+final class SwiftSDKCacheKeyMaterialTests: SemelSwiftTestCase {
 
-    private var sdk: URL!
     private var savedProvider: ((String) -> String?)!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
         savedProvider = sdkFingerprintProvider
-        sdk = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("semel-sdk-tests/\(UUID().uuidString)/MacOSX.sdk", isDirectory: true)
-        try FileManager.default.createDirectory(at: sdk.appendingPathComponent("usr/include"),
-                                                withIntermediateDirectories: true)
-        try write("usr/include/stdio.h", "int printf(const char *, ...);\n")
-        try write("SDKSettings.json", "{\"Version\": \"26.5\"}\n")
     }
 
     override func tearDown() {
         sdkFingerprintProvider = savedProvider
-        sdk = nil
         super.tearDown()
     }
-
-    private func write(_ relativePath: String, _ content: String) throws {
-        try content.write(to: sdk.appendingPathComponent(relativePath), atomically: true, encoding: .utf8)
-    }
-
-    private func fingerprint() throws -> String {
-        try XCTUnwrap(sdkContentFingerprint(ofDirectory: sdk))
-    }
-
-    func test_theSameTreeFingerprintsTheSameTwice() throws {
-        XCTAssertEqual(try fingerprint(), try fingerprint())
-    }
-
-    func test_editingAFileChangesTheFingerprint() throws {
-        let before = try fingerprint()
-
-        try write("usr/include/stdio.h", "int printf(const char *, ...);\nint puts(const char *);\n")
-
-        XCTAssertNotEqual(before, try fingerprint(), "a changed header is a different SDK")
-    }
-
-    func test_addingAFileChangesTheFingerprint() throws {
-        let before = try fingerprint()
-
-        try write("usr/include/stdlib.h", "void *malloc(unsigned long);\n")
-
-        XCTAssertNotEqual(before, try fingerprint())
-    }
-
-    /// Size and content can stay the same while the modification time moves: that is still
-    /// a different tree to a compiler that reads the file, so it is a different fingerprint.
-    func test_touchingAFileChangesTheFingerprint() throws {
-        let before = try fingerprint()
-
-        let header = sdk.appendingPathComponent("usr/include/stdio.h")
-        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_000_000)],
-                                              ofItemAtPath: header.path)
-
-        XCTAssertNotEqual(before, try fingerprint())
-    }
-
-    /// The SDK path xcrun reports is a symlink (`MacOSX26.5.sdk -> MacOSX.sdk`); the
-    /// fingerprint is of the tree, not of the name it was reached by.
-    func test_aSymlinkToTheTreeFingerprintsTheSame() throws {
-        let link = sdk.deletingLastPathComponent().appendingPathComponent("MacOSX26.5.sdk")
-        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: sdk)
-
-        XCTAssertEqual(try fingerprint(), sdkContentFingerprint(ofDirectory: link))
-    }
-
-    func test_aMissingDirectoryHasNoFingerprint() {
-        XCTAssertNil(sdkContentFingerprint(ofDirectory: sdk.appendingPathComponent("nowhere")))
-    }
-
-    // MARK: - Reaching the cache key
 
     /// A process input carrying only a configuration, which is all the material reads.
     private func input(configuration: String) throws -> ProcessInput {
@@ -107,14 +44,16 @@ final class SDKFingerprintTests: SemelSwiftTestCase {
         XCTAssertEqual(try linker.cacheKeyMaterial(input: try input(configuration: "")),   "sdk=macosx:0123abcd")
     }
 
-    /// The fingerprint is of the SDK the configuration names, not always macOS's.
+    /// The fingerprint is of the SDK the configuration names, not always macOS's: the
+    /// tree at the path xcrun gives for that name.
     func test_theMaterialIsForTheConfiguredSDK() throws {
-        sdkFingerprintProvider = { name in "fp-\(name)" }
+        sdkFingerprintProvider = { path in "fp-of-\(path)" }
+        let path = try XCTUnwrap(resolveSDKPath(sdk: "iphonesimulator"), "this machine has no iOS simulator SDK")
 
         let compiler = try SwiftCompiler(thisNode: NodeRecord(id: 1, kind: SwiftCompiler.kind))
 
         XCTAssertEqual(try compiler.cacheKeyMaterial(input: try input(configuration: "sdk=iphonesimulator")),
-                       "sdk=iphonesimulator:fp-iphonesimulator")
+                       "sdk=iphonesimulator:fp-of-\(path)")
     }
 
     /// B-17. The two things a Swift tool reads outside its inputs reach the key together,
@@ -162,15 +101,16 @@ final class SDKFingerprintTests: SemelSwiftTestCase {
         XCTAssertNil(try compiler.cacheKeyMaterial(input: try input(configuration: "")))
     }
 
-    /// The machine's real SDK: the walk succeeds and is stable. Two walks, about a second
-    /// each — the per-process caching that spares production the second one is a private
-    /// constant and is not exercised here.
-    func test_theRealSDKFingerprintsStably() throws {
-        let path = try XCTUnwrap(resolveSDKPath(), "this machine has no macOS SDK")
-        let first  = try XCTUnwrap(sdkContentFingerprint(ofDirectory: URL(fileURLWithPath: path)))
-        let second = try XCTUnwrap(sdkContentFingerprint(ofDirectory: URL(fileURLWithPath: path)))
+    /// The compiler and linker declare the fingerprint as a machine setting, so a machine
+    /// file's writer puts it beside the SDK's name and identity and a changed SDK changes
+    /// the file (B-47).
+    func test_theSwiftNamespacesDeclareTheFingerprintAsAMachineSetting() throws {
+        sdkFingerprintProvider = { _ in "0123abcd" }
 
-        XCTAssertEqual(first, second)
-        XCTAssertEqual(first.count, 64, "a SHA-256 hex digest")
+        for namespace in [SwiftCompilerConfiguration.settingNamespace, SwiftLinkerConfiguration.settingNamespace] {
+            let entry = try XCTUnwrap(ToolNamespaceRegistry.entry(forNamespace: namespace))
+            XCTAssertTrue(entry.machineSettingKeys.contains(sdkFingerprintMachineSettingKey))
+            XCTAssertEqual(entry.machineSettings(.macos)[sdkFingerprintMachineSettingKey], "0123abcd")
+        }
     }
 }

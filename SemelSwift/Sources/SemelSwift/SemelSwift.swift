@@ -34,20 +34,28 @@ public enum SemelSwift {
 
         // What `tools` prints and `semel-swift prepare` writes under each namespace (B-119).
         // The compiler and linker check the declared SDK against the machine, so the SDK's
-        // name and the machine's identity for it are the two machine settings they
-        // declare, for whichever platform is asked. The package reader declares no SDK.
+        // name and the machine's identity for it are machine settings they declare, for
+        // whichever platform is asked; and the fingerprint of its tree, so that an SDK that
+        // changes under one identity changes the file and wakes them (B-47). The package
+        // reader declares no SDK.
         let sdk: (Platform) -> [String: String] = { platform in
-            resolveSDKVersion(sdk: platform.sdkName).map { ["sdk": platform.sdkName, "sdkVersion": $0] } ?? [:]
+            guard let identity = resolveSDKVersion(sdk: platform.sdkName) else {
+                return [:]
+            }
+            var settings = ["sdk": platform.sdkName, "sdkVersion": identity]
+            settings[sdkFingerprintMachineSettingKey] = resolveSDKPath(sdk: platform.sdkName).flatMap(sdkFingerprint(ofSDKAtPath:))
+            return settings
         }
+        let sdkKeys: Set<String> = ["sdk", "sdkVersion", sdkFingerprintMachineSettingKey]
         // Prepare rewrites its own namespaces on every run, so it takes no flag to rewrite them.
         let writer = MachineFileWriter(command: "semel-swift prepare")
         ToolNamespaceRegistry.register(.init(namespace: SwiftCompilerConfiguration.settingNamespace,
                                              toolName: "swiftc",
-                                             machineSettingKeys: ["sdk", "sdkVersion"], machineSettings: sdk,
+                                             machineSettingKeys: sdkKeys, machineSettings: sdk,
                                              machineFileWriter: writer))
         ToolNamespaceRegistry.register(.init(namespace: SwiftLinkerConfiguration.settingNamespace,
                                              toolName: "swiftc",
-                                             machineSettingKeys: ["sdk", "sdkVersion"], machineSettings: sdk,
+                                             machineSettingKeys: sdkKeys, machineSettings: sdk,
                                              machineFileWriter: writer))
         ToolNamespaceRegistry.register(.init(namespace: SwiftPackageReaderConfiguration.settingNamespace,
                                              toolName: "swift", machineFileWriter: writer))

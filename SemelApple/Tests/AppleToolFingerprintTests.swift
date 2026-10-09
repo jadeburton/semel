@@ -48,4 +48,25 @@ final class AppleToolFingerprintTests: SemelAppleTestCase {
                                                                   tool: "xcstringstool")),
                        "tool=xcstringstool:fingerprint-of-xcstringstool")
     }
+
+    /// B-47. ibtool is told the SDK by path, and keys on the tree behind it beside its
+    /// binary; the namespace declares the fingerprint as a machine setting beside the path.
+    func test_theIBToolCompilerDeclaresTheSDKBehindItsPathAndTheBinary() throws {
+        let savedProvider = sdkFingerprintProvider
+        defer { sdkFingerprintProvider = savedProvider }
+        sdkFingerprintProvider = { path in path == "/SDKs/MacOSX26.5.sdk" ? "0123abcd" : nil }
+        register(tool: "ibtool", fingerprint: "fingerprint-of-ibtool")
+        let node = try IBToolCompiler(thisNode: NodeRecord(id: 3, kind: IBToolCompiler.kind))
+        let configuration = ["sdkPath=/SDKs/MacOSX26.5.sdk",
+                             "toolDescriptor.architecture=arm64",
+                             "toolDescriptor.name=ibtool",
+                             "toolDescriptor.platform=macOS",
+                             "toolDescriptor.version=test-ibtool"].joined(separator: "\n")
+        let input = ProcessInput(inputValues: [IBToolCompiler.configuration: ["config": .value(try configuration.intern())]])
+
+        XCTAssertEqual(try node.cacheKeyMaterial(input: input),
+                       "sdk=MacOSX26.5.sdk:0123abcd\ntool=ibtool:fingerprint-of-ibtool")
+        let entry = try XCTUnwrap(ToolNamespaceRegistry.entry(forNamespace: IBToolCompilerConfiguration.settingNamespace))
+        XCTAssertEqual(entry.machineSettingKeys, ["sdkPath", sdkFingerprintMachineSettingKey])
+    }
 }

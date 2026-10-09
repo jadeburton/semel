@@ -33,7 +33,8 @@ public enum SemelApple {
         // prepare` writes for an app (B-119). The plist builder runs no tool. Prepare
         // rewrites its own namespaces on every run, so it takes no flag to rewrite them.
         // ibtool is told the platform's SDK, a fact about the machine for a platform
-        // (B-109), which prepare writes as it writes the clang tools' `sdkPath`.
+        // (B-109), which prepare writes as it writes the clang tools' `sdkPath` — with the
+        // fingerprint of the tree beside it, so a changed SDK wakes the compiles (B-47).
         let prepare = MachineFileWriter(command: "semel-swift prepare")
         // The asset catalog compiler is told which assetutil checks its canonical Assets.car
         // (B-89), a fact about the machine as the SDK is.
@@ -48,9 +49,14 @@ public enum SemelApple {
                                              toolName: "xcstringstool", machineFileWriter: prepare))
         ToolNamespaceRegistry.register(.init(namespace: IBToolCompilerConfiguration.settingNamespace,
                                              toolName: "ibtool",
-                                             machineSettingKeys: ["sdkPath"],
+                                             machineSettingKeys: [sdkPathSettingKey, sdkFingerprintMachineSettingKey],
                                              machineSettings: { platform in
-                                                 sdkPath(forPlatform: platform).map { ["sdkPath": $0] } ?? [:]
+                                                 guard let path = sdkPath(forPlatform: platform) else {
+                                                     return [:]
+                                                 }
+                                                 var settings = [sdkPathSettingKey: path]
+                                                 settings[sdkFingerprintMachineSettingKey] = sdkFingerprint(ofSDKAtPath: path)
+                                                 return settings
                                              },
                                              machineFileWriter: prepare))
         // codesign is told which codesign_allocate makes room for a signature: the

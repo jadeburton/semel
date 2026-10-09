@@ -52,7 +52,8 @@ public struct IBToolCompiler: Node {
     /// (B-141).
     /// 3: a failure is published as an `ErrorDocument`, the typed value a client renders,
     /// where it was a sentence (B-145).
-    public static let implementationVersion = 3
+    /// 4: the fingerprint of the SDK tree at `sdkPath` is in the key (B-47).
+    public static let implementationVersion = 4
 
     // MARK: Ports
 
@@ -97,9 +98,17 @@ public struct IBToolCompiler: Node {
 
     /// The binary behind the tool version the configuration names: two builds of one
     /// version may compile a document differently, and only a fingerprint of the binary
-    /// tells them apart (B-17).
+    /// tells them apart (B-17). And the SDK tree behind `--sdk`, whose frameworks a
+    /// document's classes are looked up in (B-47). Read from the raw text, as the binary's
+    /// half is, because the key is computed before the configuration is checked.
     public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
-        try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
+        guard case .value(let hash)? = try input.onlyWire(onOptionalPort: Self.configuration)?.value else {
+            return nil
+        }
+        let properties = [String: String](plainText: try hash.resolveAsString())
+        let lines = [sdkCacheKeyMaterial(sdkPathIn: properties),
+                     toolBinaryCacheKeyMaterial(configuration: properties)].compactMap { $0 }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
     /// A compile's failure belongs to the document it compiles.

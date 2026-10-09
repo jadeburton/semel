@@ -490,28 +490,39 @@ asks for nothing a vendored package does not list; only an artifact that is not 
    `…/Sources/Sparkle/ has not been pushed`; a target that names no path is no longer
    guessed into a ghost, and a failed lock names what it did not compare.
 
-**B-47** `open` `For Fable Only` — **The SDK is declared but not a graph input.**
-Closed so far (2026-09-12): the declared identity is version *and* build, `26.5 (25F70)`,
-checked against the machine; and the Swift compiler and linker put a fingerprint of the SDK
-tree — every file's path, size and mtime; 1.2 s cold, 0.4 s warm, once per process — into
-their cache key through `Node.cacheKeyMaterial`, so two machines with the same declared SDK
-and different contents no longer share an entry. Content hashing was measured at 4.4 s and
+**B-47** `done` — **The SDK is declared but not a graph input.**
+Done 2026-09-12: the declared identity is version *and* build, `26.5 (25F70)`, checked
+against the machine; and the Swift compiler and linker put a fingerprint of the SDK tree —
+every file's path, size and mtime; 1.2 s cold, 0.4 s warm, once per process — into their
+cache key through `Node.cacheKeyMaterial`, so two machines with the same declared SDK and
+different contents no longer share an entry. Content hashing was measured at 4.4 s and
 rejected; a cross-launch cache keyed on the SDK directory's mtime was rejected because that
 mtime does not change for a file edited deep inside.
 
-What remains: a cache key can only stop a wrong reuse. An SDK edited in place under an
-already-built graph is not rebuilt, because an unscheduled node never recomputes its key.
-Closing that needs the SDK to be a graph input — the gigabyte-of-headers problem — which is
-B-03's container digest. Also: only the Swift tools fingerprint the SDK. `ClangPreprocessor`
-and `ClangLinker` read the SDK at `sdkPath` too, and their keys carry the path and the tool
-binary's fingerprint but not what is behind the path.
+Done 2026-10-10: the fingerprint lives in `SemelNodeKit` (`SDKFingerprint.swift`), a
+machine fact every toolchain reads, still walked once per process per SDK (1.0 s on this
+machine under load). Every node that reads an SDK keys on it: `ClangPreprocessor` (10),
+`ClangCompiler` (6), `ClangLinker` (5) and `IBToolCompiler` (4) fold the tree at `sdkPath`
+into their material beside the tool binary's, as the Swift tools fold the tree behind
+`-sdk`. And an SDK change now wakes the graph: every namespace whose tool reads the SDK
+declares `sdkFingerprint` as a machine setting, so `semel-swift prepare` writes the
+fingerprint's hash under each into `semel.machine.config` on every run (`semel-clang`
+writes it too, and rewrites it with `--force`). A changed SDK is a changed line in a
+pushed file, which changes what each `ConfigFilter` over that namespace publishes and
+reschedules every node reading it — an Xcode update that keeps the version and build, or
+a header edited in place, rebuilds an already-built graph without a `reset`, once
+`prepare` has run and the file is pushed (the watcher pushes it when it changes). Both
+halves stay: the key is what protects a cache shared between machines, and a machine file
+that no longer describes the SDK; the line is what schedules. The invariant is written in
+`AGENTS.md`: every node input is in the input file system, derived from it, or declared as
+coming from outside.
 
-The invariant the original TODO stated (every node input exists inside the input file
-system or is derived from it) is still worth writing into `AGENTS.md`, but not in those
-words: sources the runtime fills — `StaticFile` from a push, B-108's `FormulaPrelude` from
-the plugins — and the machine facts in a key (the SDK, the tool binary) are inputs from
-outside the input file system by design. It has to be stated as "or declared as coming from
-outside", which is B-43's external port.
+What stays with B-03: the SDK as a content-addressed input is the container digest. The
+fingerprint reads paths, sizes and mtimes, not bytes, so an edit that keeps a file's size
+and restores its mtime is not seen; it is taken once per process, so an SDK changed under
+a running server keys as it was until the server restarts; and the tool binary has only the
+key half — the machine file names a tool by its version, so a binary replaced under one
+version is keyed apart but not woken.
 
 ## App bundles
 

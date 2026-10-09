@@ -68,7 +68,8 @@ public struct ClangCompiler: Node {
     /// (B-141).
     /// 5: a failure is published as an `ErrorDocument`, the typed value a client renders,
     /// where it was a sentence (B-145).
-    public static let implementationVersion = 5
+    /// 6: the fingerprint of the SDK tree at `sdkPath` is in the key (B-47).
+    public static let implementationVersion = 6
 
     // MARK: Ports
 
@@ -115,13 +116,6 @@ public struct ClangCompiler: Node {
                                  ClangCompiler.infoLog: infoLog],
                   inputWireSpecs: [:])
         }
-    }
-
-    /// The binary behind the tool version the configuration names: two builds of one
-    /// version compile differently, and only a fingerprint of the binary tells them apart
-    /// (B-17).
-    public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
-        try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {

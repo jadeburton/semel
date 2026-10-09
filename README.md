@@ -184,6 +184,8 @@ products and the included funcs can be called from further `product` definitions
 dependencies included, reads its settings from the `semel.config` and `semel.machine.config` beside the root. A pushed `Package.swift` that no formula
 includes builds nothing, and a settle with no errors says so once, naming the include that would build it.
 
+`semel.machine.config` is the machine's half of those settings, written by `semel-swift prepare` (or `semel-clang` for a C project) and never edited: the tool descriptors, and for every tool that reads the SDK its name or path, its version and build, and `sdkFingerprint` — a hash of every file's path, size and modification time under the SDK. The fingerprint is what makes an SDK that changes under one version and build — an Xcode update that keeps them, a header edited in place — a changed input: `prepare` rewrites the line on every run, the file is pushed (by `semel-watch` when it changes, or by a `push`), and every compile and link reading that namespace runs again without a `reset`. `semel-clang` keeps a file that already holds its namespaces, so after an Xcode update it is `semel-clang <folder> --force`.
+
 The following includes multiple packages in the formula:
 
 ```

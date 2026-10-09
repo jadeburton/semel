@@ -73,8 +73,12 @@ final class PrepareTests: XCTestCase {
     /// A machine with one SDK of each kind and every tool installed. The namespaces are
     /// the registry's, their machine settings answered from this machine rather than by
     /// xcrun: each key a plugin declares, from the SDK the fake has.
-    private func facts(descriptors: [ToolDescriptor]? = nil, sdkIdentity: ((String) -> String?)? = nil) -> ToolchainFacts {
+    /// `sdkFingerprint` answers the fingerprint of the SDK by name, as the fake's tree of
+    /// it would hash.
+    private func facts(descriptors: [ToolDescriptor]? = nil, sdkIdentity: ((String) -> String?)? = nil,
+                       sdkFingerprint: ((String) -> String?)? = nil) -> ToolchainFacts {
         let identity: (String) -> String? = sdkIdentity ?? { $0 == "iphonesimulator" ? "26.5 (23F81a)" : "26.5 (25F70)" }
+        let fingerprint: (String) -> String? = sdkFingerprint ?? { "fingerprint-of-\($0)" }
         let namespaces = ToolNamespaceRegistry.all.map { entry in
             ToolNamespace(namespace: entry.namespace, toolName: entry.toolName, machineSettingKeys: entry.machineSettingKeys,
                           machineSettings: { platform in
@@ -84,6 +88,7 @@ final class PrepareTests: XCTestCase {
                                   case "sdk":        settings[key] = platform.sdkName
                                   case "sdkVersion": settings[key] = identity(platform.sdkName)
                                   case "sdkPath":    settings[key] = "/SDKs/\(platform.sdkName).sdk"
+                                  case sdkFingerprintMachineSettingKey: settings[key] = fingerprint(platform.sdkName)
                                   case "codesignAllocatePath": settings[key] = "/Toolchain/usr/bin/codesign_allocate"
                                   case "assetutilPath":        settings[key] = "/usr/bin/assetutil"
                                   default:           settings[key] = "unanswered"
@@ -376,6 +381,46 @@ final class PrepareTests: XCTestCase {
 
         try Preparation.run(folder: folder("Packages"), platform: .macos, steps: steps())
         XCTAssertEqual(try String(contentsOf: machineFile, encoding: .utf8), text)
+    }
+
+    // MARK: - The SDK as a machine fact (B-47)
+
+    /// Every namespace whose tool reads the SDK carries the fingerprint of its tree beside
+    /// the name or path, so a changed SDK is a changed line in a pushed file; the reader
+    /// and the archiver read no SDK and carry none.
+    func test_theMachineFileCarriesTheSDKFingerprintWhereAToolReadsTheSDK() throws {
+        let config = lines(GeneratedFiles.machineConfig(platform: .iosSimulator, facts: facts(), namespaces: everyNamespace))
+
+        for namespace in ["swift.compiler", "swift.linker", "clang.preprocessor", "clang.compiler", "clang.linker",
+                          "apple.ibToolCompiler"] {
+            XCTAssertTrue(config.contains("\(namespace).sdkFingerprint=fingerprint-of-iphonesimulator"), "got:\n\(config)")
+        }
+        for namespace in ["swift.packageReader", "clang.archiver", "apple.assetCatalogCompiler"] {
+            XCTAssertFalse(config.contains { $0.hasPrefix("\(namespace).sdkFingerprint") }, "got:\n\(config)")
+        }
+    }
+
+    /// An Xcode update that keeps the SDK's version and build, or an SDK edited in place,
+    /// changes the fingerprint and nothing else; the next prepare rewrites the line, and
+    /// the file it leaves differs from the one before only there.
+    func test_aSecondPrepareAfterTheSDKChangesRewritesTheFingerprint() throws {
+        try write("Packages/CLib/Package.swift")
+        try write("Packages/CLib/Sources/CLib/lib.c", "int lib(void) { return 1; }\n")
+        let machineFile = folder("Packages").appendingPathComponent("semel.machine.config")
+
+        try Preparation.run(folder: folder("Packages"), platform: .macos,
+                            steps: steps(facts: facts(sdkFingerprint: { _ in "before-the-update" })))
+        let before = try String(contentsOf: machineFile, encoding: .utf8)
+        try Preparation.run(folder: folder("Packages"), platform: .macos,
+                            steps: steps(facts: facts(sdkFingerprint: { _ in "after-the-update" })))
+        let after = try String(contentsOf: machineFile, encoding: .utf8)
+
+        XCTAssertTrue(before.contains("swift.compiler.sdkFingerprint=before-the-update"), before)
+        XCTAssertTrue(after.contains("swift.compiler.sdkFingerprint=after-the-update"), after)
+        XCTAssertTrue(after.contains("clang.compiler.sdkFingerprint=after-the-update"), after)
+        XCTAssertFalse(after.contains("before-the-update"), after)
+        XCTAssertEqual(before.replacingOccurrences(of: "before-the-update", with: "after-the-update"), after,
+                       "only the fingerprint moved")
     }
 
     /// B-55. The whole tree decides, as it does for the converter: a C target whose

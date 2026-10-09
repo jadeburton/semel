@@ -25,6 +25,17 @@ public enum SemelClang {
         return path.isEmpty ? nil : path
     }
 
+    /// The SDK's path for the platform and the fingerprint of the tree behind it, which the
+    /// preprocessor, compiler and linker declare alike. Empty when the platform has none.
+    static func machineSettings(forPlatform platform: Platform) -> [String: String] {
+        guard let path = sdkPath(forPlatform: platform) else {
+            return [:]
+        }
+        var settings = ["sdkPath": path]
+        settings[sdkFingerprintMachineSettingKey] = sdkFingerprint(ofSDKAtPath: path)
+        return settings
+    }
+
     /// Installs this toolchain's node types, the tool they run and the config namespaces
     /// they read. Idempotent, so a host may call it more than once and every test calls it
     /// again.
@@ -48,17 +59,17 @@ public enum SemelClang {
         // the SDK at `sdkPath`, a fact about the machine for a platform, so they declare it
         // as one (B-109); so does the compiler, which takes preprocessed text but, with
         // `modules`, loads the modules that text imports from the SDK (B-77). The archiver
-        // takes objects and reads no SDK.
+        // takes objects and reads no SDK. Each of the three declares the fingerprint of the
+        // SDK's tree beside its path, so that an SDK that changes under one path changes the
+        // file and wakes them (B-47).
         ToolNamespaceRegistry.register(.init(namespace: ClangArchiverConfiguration.settingNamespace, toolName: "libtool",
                                              machineFileWriter: machineFileWriter))
         for namespace in [ClangPreprocessorConfiguration.settingNamespace,
                           ClangCompilerConfiguration.settingNamespace,
                           ClangLinkerConfiguration.settingNamespace] {
             ToolNamespaceRegistry.register(.init(namespace: namespace, toolName: "clang",
-                                                 machineSettingKeys: ["sdkPath"],
-                                                 machineSettings: { platform in
-                                                     sdkPath(forPlatform: platform).map { ["sdkPath": $0] } ?? [:]
-                                                 },
+                                                 machineSettingKeys: ["sdkPath", sdkFingerprintMachineSettingKey],
+                                                 machineSettings: machineSettings(forPlatform:),
                                                  machineFileWriter: machineFileWriter))
         }
 
