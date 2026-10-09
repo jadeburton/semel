@@ -344,21 +344,39 @@ use. `selectPath` decoding whole nodes is now the push queue's largest single co
 
 ## Design, correctness and code quality
 
-**B-144** `open` — **Deleting a running server's home sometimes fails with a permission error.**
+**B-144** `done` — **Deleting a running server's home sometimes failed with a permission error.**
 Seen 2026-10-09 twice in one day, once on the hosted runner (PR #170's first check) and
 once on the owner's Mac (an agent's root suite run), and passed on rerun both times:
-`SocketFileTests.test_deletingTheServersHomeStopsTheServerCleanly` fails in its
+`SocketFileTests.test_deletingTheServersHomeStopsTheServerCleanly` failed in its
 `removeItem(at: home)` with `NSCocoaErrorDomain 513`, "“home” couldn't be removed because
 you don't have permission to access it". The test starts `semelserv` over a home of its
-own and removes the home while the server runs. Nothing in the home is a read-only
-directory by design, so the failure is a race with the server writing while the walk
-removes: a file or folder appearing in a directory the walk has emptied, or an object
-being written under a temporary name, leaves the top folder non-empty and Foundation
-reports it as the top path with the wrong reason. Not yet reproduced on demand; the
-nightly's run of the same test passes. To establish: what the server writes between its
-start and the removal (the log, the socket, the database's WAL, the store's first
-objects), and whether the test should stop writes first or retry the removal once the
-server has gone. The end-to-end harness's own cleanup of run roots may hit the same race.
+own and removes the home while the server runs.
+
+Fixed 2026-10-10. The cause is the test's ordering, not the server. `BuildEngine.start()`
+starts the processing loop as a task and returns, and `semelserv` goes on to listen, so the
+socket file can appear while the loop's first pass is still running: it makes the
+`ProjectFinder` and the `input:` and `output:` roots, processes the finder, interns its
+first objects (each written in its shard under a temporary `.<hash>.<uuid>` name, then
+renamed) and commits to the graph, and a pool connection opened after the walk removed
+`graph.sqlite` creates it again with its `-wal` and `-shm`. The test waited for the socket
+file only. Foundation's removal walks the tree depth first; a file created in a folder the
+walk has emptied makes the folder's `rmdir` fail, and the error is reported against the
+top path as 513 with an underlying `EPERM`: a loop creating files under a folder while
+another thread removes it reproduces exactly that error 283 times in 300. Looping the
+test's shape against the debug `semelserv` failed 6 rounds in 40 on a quiet machine and 6
+in 40 at a load of 10 with a release build running; what was left each time was a shard,
+a temporary object in it, or a recreated database. Nothing the server writes is out of
+place: the first settle is the engine's work, and the server stops cleanly whatever is
+removed under it. The test now runs `semel wait` through the socket before the removal,
+so the engine is idle when the walk starts, and an idle engine writes nothing: 0 in 40,
+loaded and not.
+
+The same race elsewhere: the end-to-end harness stops each server with SIGTERM and waits
+for it to exit before it removes a run root, and kills and waits on a failure, so nothing
+is writing then; the sweep of stale roots touches only roots a day old, best effort.
+`ErrorReportEndToEndTests` removes its home after `semel stop`, with every build in it
+already settled, and ignores a failure. `WatcherTests` waits for idle before it removes its
+store (B-146). None of them can hit it.
 
 **B-143** `done` — **A fresh `prepare` and `build` could fail on the lock `prepare` had just
 written.** Reported 2026-10-09 on a proprietary tree: `semel-swift prepare` vendored a

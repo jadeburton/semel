@@ -53,9 +53,19 @@ final class SocketFileTests: XCTestCase {
         XCTAssertEqual(process.waitForExit(timeout: 5), 0, process.outputTail())
     }
 
+    /// Removed once the engine is idle. The socket appears while the engine's first pass may
+    /// still be running, interning objects and committing to the graph, and a file that
+    /// pass creates in a folder the removal has already emptied fails the removal with a
+    /// permission error (B-144). A user deleting the home of a busy server sees the same,
+    /// and the server stops all the same; what this test pins is the clean stop, so the
+    /// removal is the whole home, in one go.
     func test_deletingTheServersHomeStopsTheServerCleanly() throws {
         try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
-        let (home, _, process) = try startServer()
+        let (home, socketPath, process) = try startServer()
+        _ = try EndToEndRun.run("semel", arguments: ["wait"],
+                                environment: ["SEMEL_HOME": home.path, "SEMEL_SOCKET": socketPath],
+                                timeout: 30, step: "wait for the first settle",
+                                serverLog: { process.outputTail() })
 
         try FileManager.default.removeItem(at: home)
 
