@@ -1134,6 +1134,43 @@ the memo's visit count over a twenty-error cascade; `RequestHandlerTests` and
 `EnginePluginTests` the grouped report, `errors <product>` and the export line;
 `BuildCommandTests` and `WatcherTests` that line under a failed build and settle.
 
+**B-145** `done` — **The error report is a timeless statement of what has no value, and why.**
+Designed 2026-10-09 (`docs/superpowers/specs/2026-10-09-semel-error-report-design.md`, with
+an "As built" addendum), done 2026-10-10. A failing node publishes an `ErrorDocument`
+(SemelNodeKit, kind 44), interned and carried by `NoValueReason.error(documentHash:)`: the
+`diagnostic` — `.tool(text:tool:)` as the tool wrote it, or `.engine(ErrorCondition)` —
+`subject` (`target`, `product`, `package`, `resource`, `formula`, `project`, `source`) and
+an optional `remedy`. `ErrorCondition` holds every engine condition that reaches a report,
+each case with the values its sentence needs; `NodeError.other(message:)` is gone, every
+site naming its case, and the typed errors of the engine, the converters and the Apple
+nodes map to a condition (`ErrorConditionConvertible`) at the node that meets them. A node
+names what its failure belongs to (`Node.errorSubject(input:)`); helpers build a document
+from a tool's result (`failureDocument`, `asOutputNodeValue(tool:subject:)`), a condition
+(`ErrorDocument.engine`) or several causes (`ErrorDocument.several`), so no node writes a
+sentence. `SettingArgument` names the keys behind an argument a tool rejected, as the
+remedy, where it appended advice. The engine renders nothing: `ErrorReport` gathers
+documents, its default reporter is silent, and its error count is per cause, merged as the
+client merges blocks (`ErrorDocument.mergeKey`). `ErrorRecord` carries the document, the
+products from B-142 and the node's facts (`ErrorFacts`: type, ids, ports, carriers), one
+record per document; `SemelProtocol` depends on `SemelNodeKit`, protocol version 25.
+`Semel.version` 0.1.16, since a stored error port's hash named a sentence. Every node type
+that processes and can fail bumps its `implementationVersion` (twenty-five, listed in the
+pull request). The client draws every line (`ErrorReportRenderer`, `ConditionLines`): line
+one the diagnostic, `input:/` written as the path below the base; then the subject, `needed
+by:` with three products named by file name — the path under `output:` only for two of one
+name — and the rest counted, or `nothing`; the remedy (`re-lock with:`, `missing:`, `set:`,
+`register:`, `write with:`, `vendor with:`, `delete:`). Causes come once each, in the order
+of their first lines, two documents differing only in which subject of one kind merging
+into one block; carriers are never listed. The summary line ends the report — `1 error · 5
+products without a value`, and after an export `· nothing exported`, `· exported to <dir>`
+or `· 3 of 5 products exported`: `build --into` and the watcher's `--into` export what has
+a value. `errors <product>` is the product view under `<name> has no value because:`, or
+`<name> has a value.`; `--verbose` on `errors`, `build` and `watch` adds the node, its ports
+and its carriers; colour at a terminal unless `NO_COLOR`. `ErrorDocumentTests`,
+`ErrorRenderingTests` (a test per condition and per subject), `EnginePluginTests`,
+`BuildCommandTests`, `SettleTimeErrorCountingTests`, `WatcherTests` and
+`ErrorReportEndToEndTests` (the C fixture with an `#error`, line for line) pin it.
+
 ### Formula language
 
 **B-108** `open` — **Formula preludes: built-in functions a plugin provides — residuals.**

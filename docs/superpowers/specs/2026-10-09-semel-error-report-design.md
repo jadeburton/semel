@@ -171,3 +171,55 @@ ErrorDocument
   unique. Proposed: file name, path only to break a tie.
 - Whether `--verbose` is a flag or a `verbose` setting at the prompt that persists for the
   session. Proposed: a flag on `errors` and `build`, and a `watch --verbose`.
+
+## As built (2026-10-10, B-145)
+
+The two open questions were decided as proposed: `needed by:` names products by file name,
+with the path under `output:` only where two products of one report share a name; and
+`--verbose` is a flag on `errors` and `build`, passed through `watch <folder> --verbose` to
+`semel-watch`. Where the code differs from the text above:
+
+- **A subject can be absent.** A condition about the graph rather than about one thing in
+  it — a source nobody pushed, an input in error whose cause has been collected — names its
+  path on line one, and the block has no subject line. A seventh kind, `source:`, names the
+  one file a C preprocess or compile reads, which has no target to name.
+- **A node can have several causes.** A converter missing three packages, or holding two
+  locks that moved, publishes one document whose diagnostic is `.several([ErrorDocument])`,
+  and the report shows each as its own block with its own subject.
+- **A condition can carry labelled lines under line one**, before the subject: `lock:`,
+  `expected:`, `found:` and `not compared:` for a lock mismatch, `installed:` for a tool
+  not installed, `reason:` where the operating system said why. The lock mismatch's line
+  one is `<folder> differs from its lock`; what the comparison left out is `not compared:`
+  rather than on line one, since none of it is what differs (B-143).
+- **Two documents differing only in which subject of one kind they name are one block**,
+  its subject line naming each — three compilers missing one machine setting are one error,
+  `source: hello/src/hello.c, hello/src/hello2.c, hello/src/main.c`. The engine counts by
+  the same key (`ErrorDocument.mergeKey`), so a settle's `N errors` is the number of blocks.
+- **The remedies** are `re-lock with:`, `missing:`, `set:` (one key or several: a tool can
+  reject two settings at once), `register:` (a kind by number, or a type by name), `write
+  with:` for the commands that write the machine file, `vendor with:` for a dependency or an
+  artifact `prepare` puts in place, and `delete:` for a stored object whose bytes are not
+  its name. `SettingArgument`'s advice sentences are gone; the key is the remedy.
+- **The `input:/` substitution drops the prefix.** The input file system's root is the
+  base, so a path below it is written relative to it and the base itself is never printed,
+  whatever it holds.
+- **The summary line with no product short of a value** reads `every product has a value`.
+  `build` exports into its default folder only when every product has a value (an error
+  needed by nothing), `· exported to semel-out/<folder>`; `build --into` and the watcher's
+  `--into` export what has a value, `· 3 of 5 products exported`, or `· nothing exported`
+  when nothing has. A build with no errors prints `No errors.` and `Exported N files into
+  <dir>` as before. The exit status is non-zero whenever there are errors.
+- **Colour** marks the location of a tool's line that holds `: error:` bold and `error:`
+  red, the path leading a condition's line bold, and the labels dim; `TERM=dumb` turns it
+  off as it turns off the progress line.
+- **The engine renders nothing.** `ErrorReport.lines` is gone, and an engine with no server
+  reports to nobody. `NodeError.other(message:)` is gone too: every site names a case, and
+  an error from outside Semel is published as `.unclassified(type:description:)`, the last
+  resort. A plugin refusing an include gives a typed `IncludeRefusal`.
+- **A state a node publishes while its demands are on their way** — the converter's
+  "waiting for …", the preprocessor's "Still resolving include files" — is
+  `.inputsWithoutValue(kind:paths:)`, said as what has no value.
+- **The wire.** `ErrorRecord` is one per document, with `ErrorFacts` (the node's type, its
+  ids, the ports carrying the document, the carriers) for `--verbose`; `SemelProtocol`
+  depends on `SemelNodeKit` to carry the document as the value the node published, protocol
+  version 25. `Semel.version` is 0.1.16, since a stored error port's hash named a sentence.
