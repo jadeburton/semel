@@ -462,8 +462,13 @@ Not fixed, filed here:
   the folder of the formula that names it, never the package's; only a converter no
   formula named, one a test wires by hand, still takes its package's folder.
   `ProjectBuilder` is version 8.
-- (c) A `.fmla` inside a vendored package is built by `FormulaFilePlugin`, which does not
-  skip `Dependencies`.
+- ~~(c) A `.fmla` inside a vendored package is built by `FormulaFilePlugin`, which does not
+  skip `Dependencies`.~~ Done 2026-10-10. `ProjectFinder` makes no builder for a project
+  file at any depth below a locked folder, a folder `F` with `F.semel-lock` beside it, and
+  a notice names each one skipped with the folder whose lock it is under. The lock rather
+  than the name `Dependencies`, because the lock is the engine's own rule, the one the
+  lock barrier reads, and the folder's name is the Swift toolchain's. `ProjectFinder` is
+  version 5.
 
 **B-139** `done` — **`wait` could return before the pass a push asked for had run.**
 Found 2026-10-04: `SettleTests.test_aWaiterNeverSlipsBetweenTheWakeUpAndThePassItAsksFor`

@@ -42,8 +42,9 @@ public struct ProjectFinder: Node {
     /// 2: a new output port, `includableProjects` (B-10); 3: the input file system is read
     /// through its subtree manifest on one port, where two ports walked it (B-135).
     /// 4: a failure is published as an `ErrorDocument`, the typed value a client renders,
-    /// where it was a sentence (B-145).
-    public static let implementationVersion = 4
+    /// where it was a sentence (B-145). 5: no builder for a project file below a locked
+    /// folder (B-143).
+    public static let implementationVersion = 5
 
     // ProjectFinder uses all dynamic ports because there is nobody to wire up static input ports, as it is the first.
     public static let descriptor = NodeDescriptor(
@@ -65,22 +66,78 @@ public struct ProjectFinder: Node {
         false
     }
 
-    private func buildProjectBuildersSpecsFromFolderManifest(folderManifests: [(String, FolderManifest)]) throws -> [String: GraphSpecNode] {
+    /// A builder for every project file a plugin claims, but none below a locked folder.
+    ///
+    /// A locked folder is a copy of someone else's tree, vendored to be read by the
+    /// formula that includes it (B-06): a package that ships a formula of its own would
+    /// otherwise have it built as a project of this tree, with products of its choosing
+    /// written into `output:`. The lock is the rule rather than the name `Dependencies`,
+    /// because it is the engine's own: a folder `F` is locked when `F.semel-lock` is beside
+    /// it, as the lock barrier reads it, whatever the toolchain that vendored it calls the
+    /// folder that holds it. What is skipped is returned, for the notice that names it.
+    static func projectBuilderSpecs(in folderManifests: [(String, FolderManifest)])
+        -> (specs: [String: GraphSpecNode], skipped: [SkippedProject]) {
+        let lockedFolders = lockedFolders(in: folderManifests)
         var result: [String: GraphSpecNode] = [:]
+        var skipped: [SkippedProject] = []
 
         for (folderPath, folderManifest) in folderManifests {
             for entry in folderManifest.entries {
                 let fullPath = (Path(folderPath) / entry.name).string
-                for plugin in ProjectDiscovery.plugins {
-                    if let spec = plugin.spec(forEntry: entry, inFolder: folderPath) {
-                        result[fullPath] = spec
-                        break
-                    }
+                guard let spec = ProjectDiscovery.plugins.lazy.compactMap({ $0.spec(forEntry: entry, inFolder: folderPath) }).first else {
+                    continue
                 }
+                if let lockedFolder = lockedFolder(holding: Path(folderPath), among: lockedFolders) {
+                    skipped.append(SkippedProject(path: fullPath, lockedFolder: lockedFolder))
+                    continue
+                }
+                result[fullPath] = spec
             }
         }
 
-        return result
+        return (result, skipped.sorted { $0.path < $1.path })
+    }
+
+    /// Every folder among the listings with its lock beside it: a pinned file named
+    /// `DependencyLock.lockPath(forDependencyAt:)` of a folder in the same listing.
+    static func lockedFolders(in folderManifests: [(String, FolderManifest)]) -> Set<String> {
+        var locked: Set<String> = []
+        for (folderPath, folderManifest) in folderManifests {
+            let pinnedFiles = Set(folderManifest.entries.filter { $0.isPinned && !$0.isFolder }.map(\.name))
+            for entry in folderManifest.entries where entry.isFolder
+                && pinnedFiles.contains(DependencyLock.lockPath(forDependencyAt: entry.name)) {
+                locked.insert((Path(folderPath) / entry.name).string)
+            }
+        }
+        return locked
+    }
+
+    /// The outermost locked folder at or above `folder`, or nil when none is.
+    private static func lockedFolder(holding folder: Path, among lockedFolders: Set<String>) -> String? {
+        guard !lockedFolders.isEmpty else {
+            return nil
+        }
+        var outermost: String?
+        var candidate: Path? = folder
+        while let current = candidate {
+            if lockedFolders.contains(current.string) {
+                outermost = current.string
+            }
+            candidate = current.deletingLastComponent
+        }
+        return outermost
+    }
+
+    /// A project file no builder is made for, and the locked folder that holds it.
+    struct SkippedProject: Equatable {
+        let path: String
+        let lockedFolder: String
+    }
+
+    /// The notice for the project files below a locked folder, one line naming each.
+    static func notice(skipped: [SkippedProject]) -> String {
+        "Not built, below a locked folder: "
+            + skipped.map { "\($0.path) (in \($0.lockedFolder))" }.joined(separator: ", ")
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
@@ -91,7 +148,10 @@ public struct ProjectFinder: Node {
             .sorted { $0.key < $1.key }
             .map { ($0.key, $0.value) } ?? []
 
-        let projectBuildersSpecs = try buildProjectBuildersSpecsFromFolderManifest(folderManifests: allFolderManifests)
+        let (projectBuildersSpecs, skipped) = Self.projectBuilderSpecs(in: allFolderManifests)
+        if !skipped.isEmpty {
+            NodeNotice.post(Self.notice(skipped: skipped))
+        }
         let includable = try Self.includableProjects(in: allFolderManifests).toSortedJSON()
 
         return .init(outputValues: [Self.includableProjectsOutputPort: .value(try includable.intern())],
