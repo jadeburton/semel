@@ -182,6 +182,7 @@ let package = Package(
             dependencies: [
                 "SemelCLI",
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
             ],
             path: "semel-watch/Sources/SemelWatch"
         ),

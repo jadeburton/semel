@@ -593,7 +593,10 @@ public final class BuildEngine {
             return errorCount
         }
 
-        errorReporter(entries.map(\.entry))
+        // Named only once there is something to print: the walk is the one part of a report
+        // whose cost follows the graph below the failures rather than the failures.
+        var reach = ProductReach(database: database)
+        errorReporter(ErrorReport.namingProducts(of: entries, reach: &reach).map(\.entry))
         return errorCount
     }
 

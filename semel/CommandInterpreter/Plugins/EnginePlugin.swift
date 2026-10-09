@@ -1,7 +1,7 @@
 // EnginePlugin.swift
 // semel
 //
-// Handles: d / debug, n / nudge, e / errors, check, collect, explain / why, reset, t / tools, wait, watch, unwatch
+// Handles: d / debug, n / nudge, e / errors [<product>], check, collect, explain / why, reset, t / tools, wait, watch, unwatch
 
 import Foundation
 import SemelNodeKit
@@ -18,7 +18,7 @@ final class EnginePlugin: CommandPlugin {
         switch verb {
         case "d", "debug":      try handleDebug(tokens: tokens, context: context)
         case "n", "nudge":      _ = try context.request(.nudge)
-        case "e", "errors":     try handleErrors(context: context)
+        case "e", "errors":     try handleErrors(tokens: tokens, context: context)
         case "check":           try handleCheck(context: context)
         case "collect":         try handleCollect(context: context)
         case "explain", "why":  try handleExplain(tokens: tokens, context: context)
@@ -399,13 +399,45 @@ final class EnginePlugin: CommandPlugin {
 
     // MARK: - errors
 
-    private func handleErrors(context: any CommandContext) throws {
-        guard case .errors(let records) = try context.request(.errors).0 else {
+    /// `errors [<product>]`: every failure the graph holds, grouped by the products it
+    /// stops (B-142); with a product, only the failures stopping it. The product is named
+    /// as `ls` and `cp` name a path — with its file system, after `-o`, or relative to the
+    /// session's current directory — and a tree product's folder stands for every entry
+    /// below it. The server filters, so a wide cascade is not shipped only to be dropped.
+    private func handleErrors(tokens: [String], context: any CommandContext) throws {
+        let (flagged, remaining) = parseOptionalFileSystemFlag(tokens: tokens)
+        guard remaining.count <= 1 else {
+            throw CommandParserError.tooManyArguments(command: "errors")
+        }
+
+        var asked: String?
+        var product: String?
+        if let token = remaining.first {
+            let (fileSystem, path) = Self.explainTarget(token, flagged: flagged, context: context)
+            let fullPath = path.isEmpty ? fileSystem.rootName : "\(fileSystem.rootName)/\(path.string)"
+            // Products are published in the output file system and nowhere else, so a path
+            // in the input one is no product, and saying so needs no request.
+            guard fileSystem == .output, !path.isEmpty else {
+                context.outputError("errors: \(ServerError(response: .notAProduct(path: fullPath)).description)")
+                return
+            }
+            asked   = fullPath
+            product = path.string
+        }
+
+        let records: [ErrorRecord]
+        do {
+            guard case .errors(let answered) = try context.request(.errors(product: product)).0 else {
+                return
+            }
+            records = answered
+        } catch let error as ServerError where error.isTheRequestsOwn {
+            context.outputError("errors: \(error.description)")
             return
         }
 
         if records.isEmpty {
-            context.outputMessage("No errors.")
+            context.outputMessage(asked.map(ErrorGroupRenderer.nothingStops) ?? "No errors.")
             return
         }
 
@@ -422,8 +454,8 @@ final class EnginePlugin: CommandPlugin {
         // have already counted this exact one.
         context.countErrorRecords(records)
 
-        for record in records {
-            ErrorRecordRenderer.lines(for: record).forEach { context.outputMessage($0) }
-        }
+        let lines = asked.map { ErrorGroupRenderer.lines(for: records, stopping: $0) }
+            ?? ErrorGroupRenderer.lines(for: records)
+        lines.forEach { context.outputMessage($0) }
     }
 }

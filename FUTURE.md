@@ -1033,6 +1033,49 @@ keeping that record and an `explain <product>` (or `why`) command that walks ups
 a product to the wires whose values changed since the last settle and names them, reading
 the same record. The totals say that four of ten nodes ran; only the record says which four.
 
+**B-142** `done` — **Every error names the products it stops.**
+Asked for 2026-10-09 by the owner: an error belongs to one node, and the person wants to
+know which built artifacts that node keeps from being built.
+Done 2026-10-09. `ProductReach` (SemelCore) walks the wires down from a failing node to
+every `OutputFile` it reaches, memoised per node for the life of one report, so a cascade
+of errors under one product walks the shared graph once; `nodeVisits` counts the nodes
+entered. It stops at an `OutputFile`, which is the product, and at a `ProjectBuilder`:
+reached through its `trees` port it is that tree product, by folder, since a tree that
+failed has no manifest and so no entries; reached any other way — the formula file, an
+include — it is every product the formula holds. An entry of a tree product (B-63) is
+named with its tree's folder, read off the `TreeFile` on its input. A product that holds a
+value is not stopped and is left out: a settings source nobody pushed that a merge reads
+as nothing to add is reported, every product is downstream of it, and on IceCubes all five
+archives were built regardless. `ErrorReport.namingProducts` fills `Entry.products` after
+the fold, once per report, for the `errors` verb and the idle-time report alike; the
+settle's error count, the same fold, walks nothing. `ErrorRecord.products` carries them,
+non-optional, as `StoppedProduct`s (`path`, `treeFolder`), protocol version 24.
+`errors [<product>]` takes a product as `cp` takes a path — `output:/…`, `-o`, or relative
+to the current directory — or a tree product's folder, which matches every entry below
+it, and the server filters (`DaemonRequest.errors(product:)`), the reply still streaming
+(B-137); a product with no errors says `No errors stop <product>.`, and a path no product
+stands at is `ErrorResponse.notAProduct` naming it (`ProductReach.isProduct`: an
+`OutputFile` there, or a builder's `trees` wire of that name). The client's report
+(`ErrorGroupRenderer`) heads each product's errors with `Stopping <product>:`, in path
+order, a tree product as `<folder>/ (<entries>)`, then `Stopping no product:`; a record's
+own lines are as they were. An error under several products is printed in full under the
+first and as one line, `❌ <label> — see <first product>`, under each other: a base
+package's failure stops all five IceCubes roots, and its paragraph five times over is the
+same one fix at five times the length. The idle-time report after a settle and `build`'s
+report go through the same renderer; `build` and `semel-watch`, refusing an export, say
+`Not exported into <dir>: errors stop <products>.` (capped at twenty, with the count of
+the rest), or that none of the errors stops a product. Measured on IceCubes' Packages
+(2,677 nodes, 3,925 wires, a debug `semelserv`): a type error in `Models` folds 22
+carriers under one compiler and the walk enters 23 nodes in 2.8 ms; a missing compiler
+setting fails ten compilers whose walks share most of the graph, 36 nodes in 4.3 ms; the
+widest, the machine file removed above every tool, enters all 179 build nodes in 17 ms.
+Nothing is capped. `ProductReachTests` hold a node feeding two products, one feeding none,
+a built product left out, a tree's entries and a tree with none, a builder's products and
+the memo's visit count over a twenty-error cascade; `RequestHandlerTests` and
+`ServerTests` the records, the filter and the refusal, over the socket too;
+`EnginePluginTests` the grouped report, `errors <product>` and the export line;
+`BuildCommandTests` and `WatcherTests` that line under a failed build and settle.
+
 ### Formula language
 
 **B-108** `open` — **Formula preludes: built-in functions a plugin provides — residuals.**

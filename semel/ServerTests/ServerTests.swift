@@ -109,7 +109,7 @@ final class ServerTests: RequestHandlerTestCase {
         try describeSomethingLargerThanTheJSONCap(marker: "MARKER")
         let client = try connect()
 
-        let (response, _) = try client.send(.daemon(.errors), body: nil)
+        let (response, _) = try client.send(.daemon(.errors(product: nil)), body: nil)
 
         guard case .error(.replyTooLarge(let request, let bytes, let limit)) = response else {
             return XCTFail("expected a replyTooLarge error, got \(response)")
@@ -191,12 +191,12 @@ final class ServerTests: RequestHandlerTestCase {
             try node.writeToOutputPort(SettingsLiteral.outputPort,
                                        value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
         }
-        let expected = daemonInParts(.errors)
+        let expected = daemonInParts(.errors(product: nil))
         let client   = try connect()
         var partCount = 0
 
-        let (last, _) = try client.send(.daemon(.errors), body: nil) { _ in partCount += 1 }
-        let (whole, _) = try daemon(client, .errors)
+        let (last, _) = try client.send(.daemon(.errors(product: nil)), body: nil) { _ in partCount += 1 }
+        let (whole, _) = try daemon(client, .errors(product: nil))
 
         guard case .errors(let records) = whole else {
             return XCTFail("expected the error records")
@@ -205,6 +205,24 @@ final class ServerTests: RequestHandlerTestCase {
         XCTAssertGreaterThan(partCount, 0, "a report over the cap streams")
         XCTAssertEqual(partCount, expected.parts.count, "the client hears every part the handler sent")
         XCTAssertTrue(last == expected.last, "the last frame is the handler's last slice")
+    }
+
+    /// B-142. The products a failure stops cross the socket on its record, typed, and the
+    /// filter crosses with the request.
+    func test_aRecordsProductsArriveOverTheSocket() throws {
+        _ = try GraphSpecNode(OutputFile.self, properties: [OutputFile.pathProperty: "output:/app/bin"],
+                              inputs: [OutputFile.inputPort: ["product": .staticFile(at: "input:/a.c")]])
+            .findOrCreateMatchingNode()
+        let (source, _) = try GraphSpecNode.staticFile(at: "input:/a.c").findOrCreateMatchingNode()
+        try source.writeToOutputPort("output", value: .noValue(reason: .error(messageDataObjectHash: try "boom".intern())))
+        let client = try connect()
+
+        guard case .errors(let records) = try daemon(client, .errors(product: "app/bin")).0 else {
+            return XCTFail("expected the error records")
+        }
+        XCTAssertEqual(records.map(\.products), [[StoppedProduct(path: "output:/app/bin")]])
+        let (refused, _) = try client.send(.daemon(.errors(product: "app")), body: nil)
+        XCTAssertEqual(refused, .error(.notAProduct(path: "output:/app")))
     }
 
     /// One node carrying an error message of a megabyte and a half: the same volume of

@@ -64,7 +64,9 @@ public enum ProtocolVersion {
     /// Version 22 adds `pushFiles` and its reply, several files to a request.
     /// Version 23 lets `list`, `remove` and `errors` arrive in parts, one frame each, with
     /// framing version 2's continue flag on all but the last (B-137).
-    public static let current = 23
+    /// Version 24 gives an error record the products it stops, lets `errors` ask for one
+    /// product's, and adds `notAProduct` for a path that names none (B-142).
+    public static let current = 24
 }
 
 public struct Hello: Codable, Equatable, Sendable {

@@ -81,12 +81,24 @@ public enum ErrorReport {
         /// How many nodes this entry stands for: one, or the several of one type that carry
         /// one report and are named together (B-110).
         public let nodeCount: Int
+        /// The products downstream of the node, in path order (B-142): what the failure
+        /// keeps from being built. Empty until `namingProducts` fills it, and empty after
+        /// for a node nothing under `output:` reads or whose products were built anyway.
+        public let products: [ProductReach.Product]
 
-        public init(label: String, items: [Item], downstreamCarrierCount: Int = 0, nodeCount: Int = 1) {
+        public init(label: String, items: [Item], downstreamCarrierCount: Int = 0, nodeCount: Int = 1,
+                    products: [ProductReach.Product] = []) {
             self.label                  = label
             self.items                  = items
             self.downstreamCarrierCount = downstreamCarrierCount
             self.nodeCount              = nodeCount
+            self.products               = products
+        }
+
+        /// This entry with the products it stops.
+        func naming(_ products: [ProductReach.Product]) -> Entry {
+            Entry(label: label, items: items, downstreamCarrierCount: downstreamCarrierCount, nodeCount: nodeCount,
+                  products: products)
         }
     }
 
@@ -673,6 +685,17 @@ public enum ErrorReport {
         }
 
         return fold(reported)
+    }
+
+    /// The same entries, each with the products downstream of the nodes it stands for
+    /// (B-142), through one walk: the cascade under one product is walked once however
+    /// many entries share it. A separate step from `entries` because only a report that is
+    /// printed wants it — the settle's error count is the same fold and names nothing.
+    public static func namingProducts(of reported: [(nodeIDs: [ObjectID], entry: Entry)],
+                                      reach: inout ProductReach) -> [(nodeIDs: [ObjectID], entry: Entry)] {
+        reported.map { report in
+            (report.nodeIDs, report.entry.naming(reach.products(downstreamOf: report.nodeIDs)))
+        }
     }
 
     /// Nodes of one type carrying one report are one entry, named together: eight

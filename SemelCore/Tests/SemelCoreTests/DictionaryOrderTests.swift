@@ -162,6 +162,8 @@ final class DictionaryOrderTests: XCTestCase {
         // ── a set turned into a sequence: order-free at the far end ─────────────
         "SemelCore/Sources/SemelCore/ErrorReport.swift: Set(upstream)":
             "each failing source found is collected into a set of cause IDs",
+        "SemelCore/Sources/SemelCore/ProductReach.swift: found":
+            "the tree folders the products already name, collected into a set asked only whether it holds one",
         "SemelCore/Sources/SemelCore/ErrorReport.swift: carriers":
             "each carrier adds one to its cause's count, which comes to the same count whichever carrier is counted first; the entries are sorted before they are returned",
         "SemelSwift/Sources/SemelSwift/SwiftSDKFingerprint.swift: keys":

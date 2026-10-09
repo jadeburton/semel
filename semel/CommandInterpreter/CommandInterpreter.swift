@@ -249,7 +249,7 @@ public final class CommandInterpreter: CommandContext {
         switch event {
         case .daemon(.errors(let records)):
             if printsErrorEvents {
-                records.flatMap(ErrorRecordRenderer.lines(for:)).forEach { outputMessage($0) }
+                ErrorGroupRenderer.lines(for: records).forEach { outputMessage($0) }
             }
             countErrorRecords(records)
         case .daemon(.notice(let line)):
@@ -403,6 +403,10 @@ public final class CommandInterpreter: CommandContext {
                 pushExclusions.insert(inTree)
             }
             guard errorsReported == errorsBefore else {
+                // Which products the failures stopped, by name, where the export would
+                // have been said: the report above is grouped by them, and this is the
+                // line a reader looking for the products finds.
+                outputMessage(Self.notExportedLine(into: exportFolder, records: try errorRecords()))
                 if let hint = prepareHint(for: folder) {
                     outputMessage(hint)
                 }
@@ -530,10 +534,21 @@ public final class CommandInterpreter: CommandContext {
     /// newly failed, and a failure that stands from an earlier one leaves the products as
     /// broken as a new one does.
     public func graphHasErrors() throws -> Bool {
-        guard case .errors(let records) = try request(.errors).0 else {
-            return false
+        !(try errorRecords().isEmpty)
+    }
+
+    /// Every failure the graph holds, as `errors` would list it, without printing it.
+    public func errorRecords() throws -> [ErrorRecord] {
+        guard case .errors(let records) = try request(.errors(product: nil)).0 else {
+            return []
         }
-        return !records.isEmpty
+        return records
+    }
+
+    /// What a client says in place of an export a failure stopped — `Not exported into
+    /// <destination>: errors stop output:/…` — naming the products (B-142).
+    public static func notExportedLine(into destination: String, records: [ErrorRecord]) -> String {
+        ErrorGroupRenderer.notExportedLine(into: destination, records: records)
     }
 
     // MARK: - help
@@ -562,7 +577,9 @@ public final class CommandInterpreter: CommandContext {
                       description: "start a semel-watch that pushes the folder as you save, after two quiet seconds; "
                                  + "--into exports after each settle without errors; one per session"),
             HelpEntry(verbs: ["unwatch"], usage: "unwatch", description: "stop the semel-watch `watch <folder>` started"),
-            HelpEntry(verbs: ["errors", "e"], usage: "errors", description: "the current build errors, one entry per cause"),
+            HelpEntry(verbs: ["errors", "e"], usage: "errors [<product>]",
+                      description: "the current build errors, one entry per cause, grouped by the products they stop; "
+                                 + "with a product, or a tree product's folder, only the errors stopping it"),
             HelpEntry(verbs: ["explain", "why"], usage: "explain <path>",
                       description: "why the last settle rebuilt a product: what ran, what came from the cache, "
                                  + "which wires changed, down to the sources"),
@@ -667,7 +684,7 @@ public final class CommandInterpreter: CommandContext {
         var pushed: Set<String> = []
         var errorsBeforeSettle = errorsBeforeSettle
         while true {
-            guard case .errors(let records) = try request(.errors).0 else {
+            guard case .errors(let records) = try request(.errors(product: nil)).0 else {
                 return pushed
             }
             let missing = records

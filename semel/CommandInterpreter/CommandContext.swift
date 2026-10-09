@@ -75,6 +75,8 @@ struct ServerError: Error, CustomStringConvertible {
         switch response {
         case .pathNotFound(let path):          return "\(path): no such file or directory"
         case .notAFolder(let path):            return "\(path): not a directory"
+        case .notAProduct(let path):
+            return "\(path): no product is published there; name a product under output:, or a tree product's folder"
         case .nodeError(let description):      return description
         case .roleNotOffered(let role):        return "the server does not offer the \(role.rawValue) role"
         case .malformedRequest(let description): return "the server could not read the request: \(description)"
@@ -90,7 +92,7 @@ struct ServerError: Error, CustomStringConvertible {
     /// rest are the server's or the protocol's, and no later request would fare better.
     var isTheRequestsOwn: Bool {
         switch response {
-        case .pathNotFound, .notAFolder, .nodeError:
+        case .pathNotFound, .notAFolder, .notAProduct, .nodeError:
             return true
         case .roleNotOffered, .malformedRequest, .replyTooLarge, .unrecoverable:
             return false
