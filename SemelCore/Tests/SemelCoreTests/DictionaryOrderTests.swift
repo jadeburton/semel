@@ -104,6 +104,8 @@ final class DictionaryOrderTests: XCTestCase {
             "an array, in the order the project file lists the target's folders",
         "SemelCore/Sources/SemelCore/Nodes/ProjectFinder.swift: folderManifests":
             "an array of the decoded manifests",
+        "SemelCore/Sources/SemelCore/LockBarrier.swift: foldersToCheck":
+            "an array of pairs, sorted by folder path where `lockedFolders` builds it",
         "SemelCore/Sources/SemelCore/Nodes/Folder.swift: [(Folder.kind,     Folder.pinnedOutputPort),":
             "a literal array of the two kinds a child can be",
         "SemelCore/Sources/SemelCore/Nodes/Folder.swift: [(Folder.kind,     folderPort),":

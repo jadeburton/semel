@@ -106,4 +106,22 @@ final class PinnedPathCreationTests: SemelCoreTestCase {
 
         XCTAssertEqual(before, after)
     }
+
+    /// The removal of a folder takes the folder's row and leaves its files to the
+    /// collector, naming a parent that is gone. A push of one of them before the collector
+    /// runs finds it by identity, and the folder the push makes again is its parent: the
+    /// push lands and the folder's root folds it.
+    func test_aFilePushedBackBeforeItsRemovedFolderIsCollectedIsAdoptedByTheNewFolder() throws {
+        _ = try StaticFile.push([UInt8]("one\n".utf8), mode: 0o644, at: Path("app/lib/one.txt"))
+        try folder("app/lib").deleteInInputFileSystem()
+        XCTAssertNil(try engine.inputFileSystem.childNode(path: Path("app/lib")), "the folder's row is gone")
+
+        _ = try StaticFile.push([UInt8]("one\n".utf8), mode: 0o644, at: Path("app/lib/one.txt"))
+
+        let file = try XCTUnwrap(try engine.inputFileSystem.childNode(path: Path("app/lib/one.txt")))
+        XCTAssertEqual(try XCTUnwrap(try file.nodeAsAny() as? StaticFile).read()?.isNoValue, false)
+        try Folder.flushDirtyManifests()
+        let root = try folder("app/lib").thisNode.readFromOutputPort(Folder.contentRootOutputPort)
+        XCTAssertTrue(try root.expectValue().resolveAsString().contains("one.txt"))
+    }
 }

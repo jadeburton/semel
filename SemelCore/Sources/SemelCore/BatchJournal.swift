@@ -349,15 +349,8 @@ public final class BatchJournal {
             try Folder.inputFileSystem.ensureEntirePathExistsAsFolders($0, pinned: false, forAChild: true)
         } ?? Folder.inputFileSystem
         let specNode = GraphSpecNode(StaticFile.self, properties: [StaticFile.pathProperty: fullPath.string])
-        var (nodeRecord, _) = try specNode.findOrCreateMatchingNode()
-        // A removal that collected the folder above leaves its files, marked for the
-        // collector, naming a parent that is gone; the folder made again is their parent.
-        let parentNodeID = try parentFolder.requireID()
-        if nodeRecord.parentNodeID != parentNodeID {
-            nodeRecord.parentNodeID = parentNodeID
-            try database.node.update(nodeRecord)
-            try nodeRecord.makeNode().notifyParentThisChildAdded()
-        }
+        let (found, _) = try specNode.findOrCreateMatchingNode()
+        let nodeRecord = try StaticFile.adopt(found, into: parentFolder)
         guard let file = try nodeRecord.nodeAsAny() as? StaticFile else {
             throw NodeError.nameCollision(path: fullPath.string, existingKind: nodeRecord.kind)
         }

@@ -237,17 +237,38 @@ extension StaticFile {
         }
 
         let root = try Folder.inputFileSystem
-        _ = try root.ensureEntirePathExistsAsFolders(relativePath.deletingLastComponent ?? .empty, pinned: true,
-                                                     forAChild: true)
+        let parentFolder = try root.ensureEntirePathExistsAsFolders(relativePath.deletingLastComponent ?? .empty,
+                                                                    pinned: true, forAChild: true)
 
         let metadata = try metadataValue(mode: mode, symbolicLinkTarget: symbolicLinkTarget)
-        let (fromNode, _) = try specNode.findOrCreateMatchingNode(outputIfCreated: { node in
+        let (found, _) = try specNode.findOrCreateMatchingNode(outputIfCreated: { node in
             (node as? StaticFile)?.didCreate(metadata: metadata)
         })
+        let fromNode = try adopt(found, into: parentFolder)
         guard let staticFile = try fromNode.nodeAsAny() as? StaticFile else {
             throw NodeError.nameCollision(path: fullPath.string, existingKind: fromNode.kind)
         }
         return try staticFile.replaceContent(try storing(), metadata: metadata)
+    }
+
+    /// Makes `folder` the parent of the file node `nodeRecord`, when it is not already.
+    ///
+    /// The removal of a folder takes the folder's own row as soon as nothing below it is
+    /// pinned, and leaves its files to the collector, marked: until the next idle they name
+    /// a parent that is gone. A push of one of them in that window finds the file by its
+    /// identity under the folder the push has just made again, and that folder is its
+    /// parent now — the one its change is told to, the one whose root folds it.
+    /// Returns the record as it now stands.
+    static func adopt(_ nodeRecord: NodeRecord, into folder: NodeRecord) throws -> NodeRecord {
+        let folderID = try folder.requireID()
+        guard nodeRecord.kind == StaticFile.kind, nodeRecord.parentNodeID != folderID else {
+            return nodeRecord
+        }
+        var adopted = nodeRecord
+        adopted.parentNodeID = folderID
+        try DatabaseLayer.shared.node.update(adopted)
+        try adopted.makeNode().notifyParentThisChildAdded()
+        return adopted
     }
 
     /// What one push would leave in the graph, worked out before anything is read.
