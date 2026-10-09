@@ -280,6 +280,17 @@ struct SwiftCompiler: Node {
     static let headerTrees           = "headerTrees"
     /// The folder the bridging header and the header trees are placed under.
     static let objectiveCFolder      = "objc"
+    /// The executables of the package macros the target uses, one wire each keyed by the
+    /// macro's module name, as `SwiftFormulaConverter` links them (B-80). Each is placed
+    /// under `macros/` at its key and handed to `-load-plugin-executable` as
+    /// `macros/<Module>#<Module>`, which is how SwiftPM gives a target its macros: the
+    /// compiler launches the executable and asks it to expand what the module declares.
+    /// An input like any other, so a changed macro moves the key of every compile that
+    /// loads it and of nothing else. Never `-external-plugin-path`, which searches a folder
+    /// by name for a library the toolchain's plugin server loads.
+    static let macroExecutables      = "macroExecutables"
+    /// The sandbox folder the macro executables are placed in.
+    static let macrosFolder          = "macros"
     static let outputObject          = "object"
     static let outputModule          = "swiftmodule"
     static let infoLog               = "infoLog"
@@ -303,6 +314,7 @@ struct SwiftCompiler: Node {
             .optional(inputModuleMapFolders, .many),
             .optional(bridgingHeader),
             .optional(headerTrees, .many),
+            .optional(macroExecutables, .many),
             .dynamic(inputSourceFiles),
             .dynamic(inputFolderTrees),
             .dynamic(inputModuleMapFiles),
@@ -332,6 +344,9 @@ struct SwiftCompiler: Node {
         let bridgingHeader: FileNameAndContent?
         /// Every file of every header tree, under `objc/`, less the bridging header itself.
         let objectiveCHeaderFiles: [FileNameAndContent]
+        /// Each macro executable under `macros/`, laid executable, with the module it
+        /// implements, ordered by module.
+        let macroExecutables: [(module: String, file: FileNameAndContent)]
         let inputFolderManifests: [(String, FolderManifest)]
         /// The tree of each folder on `inputFolder` that has arrived, keyed by its path.
         let inputFolderTrees: [String: FolderSubtreeManifest]
@@ -388,6 +403,14 @@ struct SwiftCompiler: Node {
             objectiveCHeaderFiles = try TreeManifest.mergedInputFiles(in: input, port: SwiftCompiler.headerTrees,
                                                                       under: SwiftCompiler.objectiveCFolder)
                 .filter { $0.filePath != bridging?.filePath }
+
+            macroExecutables = try (input.inputValues[SwiftCompiler.macroExecutables] ?? [:])
+                .sorted { $0.key < $1.key }
+                .map { module, nodeValue in
+                    (module, FileNameAndContent(filePath: (Path(SwiftCompiler.macrosFolder) / Path(module)).string,
+                                                hash: try nodeValue.expectValue(),
+                                                mode: FileMetadata.executableMode))
+                }
 
             // Module map files: wire key is already "<dirName>/<filename>".
             moduleMapFiles = try (input.inputValues[SwiftCompiler.inputModuleMapFiles] ?? [:])
@@ -613,6 +636,13 @@ struct SwiftCompiler: Node {
             arguments.append("-import-objc-header"); arguments.append(bridgingHeader.filePath)
         }
 
+        // Each package macro the target uses, by its sandbox-relative path and the module it
+        // implements (B-80). A macro the toolchain or the platform ships is found by the
+        // driver's default plugin paths, and needs nothing here (`SwiftCompilerPlugins`).
+        for macro in inputs.macroExecutables {
+            arguments.append("-load-plugin-executable"); arguments.append("\(macro.file.filePath)#\(macro.module)")
+        }
+
         for sourceFile in inputs.sourceFiles {
             arguments.append(sourceFile.filePath)
         }
@@ -627,7 +657,8 @@ struct SwiftCompiler: Node {
             arguments: arguments,
             environment: inputs.configuration.environment,
             inputFiles: inputs.sourceFiles + inputs.moduleFiles + inputs.moduleTreeFiles + inputs.frameworkTreeFiles
-                      + inputs.moduleMapFiles + inputs.objectiveCHeaderFiles + (inputs.bridgingHeader.map { [$0] } ?? []),
+                      + inputs.moduleMapFiles + inputs.objectiveCHeaderFiles + (inputs.bridgingHeader.map { [$0] } ?? [])
+                      + inputs.macroExecutables.map(\.file),
             expectedOutputFileNames: [objectOutput, moduleOutput])
 
         // Stored by the runner; an output the tool did not write is the empty object.

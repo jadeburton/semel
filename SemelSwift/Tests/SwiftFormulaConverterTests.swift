@@ -36,7 +36,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             for target in (object?["targets"] as? [[String: Any]]) ?? [] {
                 let name = target["name"] as? String ?? ""
                 let type = target["type"] as? String ?? "regular"
-                guard !["test", "system", "system-target", "plugin", "macro", "binary"].contains(type) else { continue }
+                guard !["test", "system", "system-target", "plugin", "binary"].contains(type) else { continue }
                 let relative = PackageClangTarget.normalized(target["path"] as? String ?? "Sources/\(name)")
                 let path = PackageClangTarget.joined(folder, relative)
                 var listings = folderContents
@@ -1725,6 +1725,144 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let built = try outcome(try convert(json: manifest(exclude: []), folderContents: schemaFolder))
         XCTAssertTrue(built.hasPrefix("formula: ") && built.contains("func compilerSchema()"),
                       "Old/Legacy.swift is the target's own when nothing excludes it, got:\n\(built)")
+    }
+
+    // MARK: - Macros (B-80)
+
+    /// A package with a macro over swift-syntax's shape: a C target under the Swift ones, a
+    /// library declaring the macro, and an executable using it through the library.
+    private let macroPackage = """
+        {
+          "name": "Stringify",
+          "dependencies": [{"fileSystem": [{"identity": "swift-syntax", "path": "../swift-syntax"}]}],
+          "products": [{"name": "App", "targets": ["App"], "type": {"executable": null}},
+                       {"name": "Stringify", "targets": ["Stringify"], "type": {"library": ["automatic"]}}],
+          "targets": [
+            {"name": "StringifyMacros", "type": "macro", "path": "Sources/StringifyMacros",
+             "dependencies": [{"product": ["SwiftSyntaxMacros", "swift-syntax", null, null]},
+                              {"product": ["SwiftCompilerPlugin", "swift-syntax", null, null]}]},
+            {"name": "Stringify", "type": "regular", "path": "Sources/Stringify",
+             "dependencies": [{"byName": ["StringifyMacros", null]}]},
+            {"name": "App", "type": "executable", "path": "Sources/App", "dependencies": [{"byName": ["Stringify", null]}]}
+          ]
+        }
+        """
+
+    private let swiftSyntaxShapedPackage = """
+        {
+          "name": "swift-syntax",
+          "dependencies": [],
+          "products": [{"name": "SwiftSyntaxMacros", "targets": ["SwiftSyntaxMacros"], "type": {"library": ["automatic"]}},
+                       {"name": "SwiftCompilerPlugin", "targets": ["SwiftCompilerPlugin"], "type": {"library": ["automatic"]}}],
+          "targets": [
+            {"name": "_SwiftSyntaxCShims", "type": "regular", "path": "Sources/_SwiftSyntaxCShims", "dependencies": []},
+            {"name": "SwiftSyntax", "type": "regular", "path": "Sources/SwiftSyntax",
+             "dependencies": [{"byName": ["_SwiftSyntaxCShims", null]}]},
+            {"name": "SwiftSyntaxMacros", "type": "regular", "path": "Sources/SwiftSyntaxMacros",
+             "dependencies": [{"byName": ["SwiftSyntax", null]}]},
+            {"name": "SwiftCompilerPlugin", "type": "regular", "path": "Sources/SwiftCompilerPlugin",
+             "dependencies": [{"byName": ["SwiftSyntaxMacros", null]}]}
+          ]
+        }
+        """
+
+    private func macroConversion(linkerSettings: String?) throws -> ProcessOutput {
+        try convert(packageFolder: "input:/repo/Stringify", json: macroPackage,
+                    externalManifests: ["input:/repo/swift-syntax": swiftSyntaxShapedPackage],
+                    folderContents: ["input:/repo/swift-syntax/Sources/_SwiftSyntaxCShims":         [file("dummy.c"), folder("include")],
+                                     "input:/repo/swift-syntax/Sources/_SwiftSyntaxCShims/include": [file("_includes.h")]],
+                    linkerSettings: linkerSettings)
+    }
+
+    private func macroFormula() throws -> String {
+        try XCTUnwrap(macroConversion(linkerSettings: "sdk=macosx").outputValues[SwiftFormulaConverter.formulaOutput])
+            .expectValue().resolveAsString()
+    }
+
+    /// A macro target is compiled as a library is, against the swift-syntax targets it
+    /// reaches, and linked with them — the C one through the clang nodes — into an
+    /// executable of its own, defined once however many products reach it.
+    func test_aMacroTargetIsLinkedIntoAnExecutableWithWhatItReaches() throws {
+        let result = try macroFormula()
+
+        let executable = try funcDefinition("macroExecutableStringifyMacros", in: result)
+        XCTAssertTrue(executable.contains("SwiftLinker("), "got:\n\(executable)")
+        XCTAssertTrue(executable.contains("linkage: 'executable'"), "got:\n\(executable)")
+        XCTAssertTrue(executable.contains("outputName: 'StringifyMacros'"), "got:\n\(executable)")
+        for object in ["'StringifyMacros.o': compilerStringifyMacros().object", "'SwiftSyntax.o': compilerSwiftSyntax().object",
+                       "'SwiftSyntaxMacros.o': compilerSwiftSyntaxMacros().object",
+                       "'SwiftCompilerPlugin.o': compilerSwiftCompilerPlugin().object",
+                       "{f: 'input:/repo/swift-syntax/Sources/_SwiftSyntaxCShims/**/*.c'} \"%%f%%.o\": ClangCompiler("] {
+            XCTAssertTrue(executable.contains(object), "\(object) is linked into the macro, got:\n\(executable)")
+        }
+        XCTAssertEqual(result.components(separatedBy: "func macroExecutableStringifyMacros()").count, 2,
+                       "defined once for the two products that reach it, got:\n\(result)")
+
+        let compiler = try funcDefinition("compilerStringifyMacros", in: result)
+        XCTAssertFalse(compiler.contains("parseAsLibrary"), "a macro compiles as a library, its @main the entry, got:\n\(compiler)")
+        XCTAssertTrue(compiler.contains("'SwiftCompilerPlugin': compilerSwiftCompilerPlugin().swiftmodule"), "got:\n\(compiler)")
+        XCTAssertTrue(compiler.contains("'_SwiftSyntaxCShims': headers_SwiftSyntaxCShims().files"),
+                      "the C target's headers reach it, got:\n\(compiler)")
+    }
+
+    /// Every compile reaching the macro loads its executable, keyed by the macro's module —
+    /// the library declaring the macro and, through it, the executable that expands it — and
+    /// none imports the macro's module or swift-syntax's, which run in the macro alone.
+    func test_everyTargetReachingAMacroLoadsItsExecutable() throws {
+        let result = try macroFormula()
+
+        let wire = "macroExecutables: [\n            'StringifyMacros': macroExecutableStringifyMacros().output\n    ]"
+        for target in ["Stringify", "App"] {
+            let compiler = try funcDefinition("compiler\(target)", in: result)
+            XCTAssertTrue(compiler.contains(wire), "got:\n\(compiler)")
+            XCTAssertFalse(compiler.contains("compilerStringifyMacros()"), "got:\n\(compiler)")
+            XCTAssertFalse(compiler.contains("compilerSwiftSyntax()"), "got:\n\(compiler)")
+            XCTAssertFalse(compiler.contains("headers_SwiftSyntaxCShims"), "got:\n\(compiler)")
+        }
+        XCTAssertFalse(try funcDefinition("compilerStringifyMacros", in: result).contains("macroExecutables"),
+                       "a macro loads no macro of its own")
+        // Defined before the compiles that name it.
+        let executableAt = try XCTUnwrap(result.range(of: "func macroExecutableStringifyMacros()")).lowerBound
+        let compilerAt   = try XCTUnwrap(result.range(of: "func compilerStringify()")).lowerBound
+        XCTAssertLessThan(executableAt, compilerAt)
+    }
+
+    /// What a product links and what it vends for import stop at the macro: its objects and
+    /// swift-syntax's are the macro's executable, not the product's.
+    func test_aProductLinksAndVendsNothingOfTheMacrosItsTargetsUse() throws {
+        let result = try macroFormula()
+
+        let product = try productBlock("App", in: result)
+        XCTAssertTrue(product.contains("'App.o': compilerApp().object"), "got:\n\(product)")
+        XCTAssertTrue(product.contains("'Stringify.o': compilerStringify().object"), "got:\n\(product)")
+        for absent in ["StringifyMacros.o", "SwiftSyntax", "ClangCompiler("] {
+            XCTAssertFalse(product.contains(absent), "\(absent) is the macro's, got:\n\(product)")
+        }
+        let modules = try funcDefinition("modules_Stringify", in: result)
+        XCTAssertFalse(modules.contains("StringifyMacros"), "got:\n\(modules)")
+        XCTAssertFalse(modules.contains("SwiftSyntax"), "got:\n\(modules)")
+    }
+
+    /// The compiler runs a macro on the Mac that builds, so a package with one asks which
+    /// platform is built, as a platform-conditional setting does.
+    func test_aPackageWithAMacroAsksForThePlatform() throws {
+        let output = try macroConversion(linkerSettings: nil)
+
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.linkerConfiguration]).keys.sorted(),
+                       [SwiftLinkerConfiguration.settingNamespace])
+        XCTAssertEqual(try pendingCondition(output),
+                       .inputsWithoutValue(kind: .platformSettings, paths: [SwiftLinkerConfiguration.settingNamespace]))
+    }
+
+    /// In a build for another platform the macro would have to be built for the Mac beside
+    /// it, which is not done; the conversion names the macro, rather than build an
+    /// executable for the simulator that the compiler cannot run.
+    func test_aMacroInABuildForAnotherPlatformIsTheConversionsError() throws {
+        let output = try macroConversion(linkerSettings: "sdk=iphonesimulator")
+
+        XCTAssertEqual(try pendingDocument(output),
+                       .engine(.macroForAnotherPlatform(package: "Stringify", target: "StringifyMacros", platform: "ios"),
+                               subject: .target(name: "StringifyMacros")))
     }
 
     /// Settings that hold everywhere need no platform, and the conversion does not ask.

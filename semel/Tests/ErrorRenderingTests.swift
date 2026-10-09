@@ -688,6 +688,15 @@ final class ErrorRenderingTests: XCTestCase {
         ])
     }
 
+    func test_macroForAnotherPlatform() {
+        XCTAssertEqual(block(.macroForAnotherPlatform(package: "swift-dependencies", target: "DependenciesMacrosPlugin",
+                                                      platform: "ios")), [
+            "DependenciesMacrosPlugin is a macro, which the compiler runs on this Mac, and a macro is built only in a build for macOS",
+            "  package: swift-dependencies",
+            "  platform: ios",
+        ])
+    }
+
     // MARK: - Xcode projects
 
     func test_notAProject() {
@@ -875,7 +884,7 @@ final class ErrorRenderingTests: XCTestCase {
                  .includeRefused,
                  .inputsWithoutValue, .noSources,
                  .manifestUnreadable, .packageNotPresent, .targetFolderMissing, .lockMismatch, .lockFoldChanged,
-                 .lockUnreadable, .batchRejected, .binaryTargetNotBuilt, .sourcesOnlyFromPlugins,
+                 .lockUnreadable, .batchRejected, .binaryTargetNotBuilt, .sourcesOnlyFromPlugins, .macroForAnotherPlatform,
                  .notAProject, .projectNotPushed, .projectHasNoContent, .noSuchTarget, .targetHasNoSources,
                  .noSuchConfiguration, .unsupportedSources, .noApplicationTarget, .noApplicationForSDK,
                  .severalApplicationsForSDK, .noSuchApplication, .localPackagesNotFound, .xcconfigIncludeCycle,

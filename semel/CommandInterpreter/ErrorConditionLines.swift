@@ -313,6 +313,11 @@ struct ConditionLines {
             }
             return Drawn(headline: "\(target) has no source of its own, only what its build-tool plugins would generate, "
                                  + "and no plugin is run", details: details)
+        case .macroForAnotherPlatform(let package, let target, let platform):
+            return Drawn(headline: "\(target) is a macro, which the compiler runs on this Mac, and a macro is built only "
+                                 + "in a build for macOS",
+                         details: [Detail(label: "package", value: package),
+                                   Detail(label: "platform", value: platform ?? "not one SwiftPM names")])
 
         // MARK: Xcode projects
 

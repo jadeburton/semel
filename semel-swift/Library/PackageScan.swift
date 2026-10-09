@@ -175,7 +175,7 @@ public enum PackageScan {
             }
         }
 
-        // The targets the converter turns into compilers; a test, plugin, macro, system or
+        // The targets the converter turns into compilers; a test, plugin, system or
         // binary target is not one, as `isCompilable` says.
         var targets: [PackageSummary.Target] = []
         var binaryTargets: [PackageSummary.BinaryTarget] = []
@@ -187,7 +187,7 @@ public enum PackageScan {
                 continue
             }
             guard let targetName = target["name"] as? String,
-                  ["regular", "executable"].contains(target["type"] as? String ?? "regular") else {
+                  ["regular", "executable", "macro"].contains(target["type"] as? String ?? "regular") else {
                 continue
             }
             let path = target["path"] as? String ?? defaultTargetPath(named: targetName, in: folder)
