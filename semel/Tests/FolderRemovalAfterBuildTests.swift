@@ -85,7 +85,7 @@ final class FolderRemovalAfterBuildTests: XCTestCase {
     }
 
     private func errorRecords() throws -> [ErrorRecord] {
-        let (response, _) = try connection.send(.daemon(.errors), body: nil)
+        let (response, _) = try connection.send(.daemon(.errors(product: nil)), body: nil)
         guard case .daemon(.errors(let records)) = response else {
             XCTFail("expected errors, got \(response)")
             return []

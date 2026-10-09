@@ -270,6 +270,23 @@ final class BuildCommandTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    /// B-142. The report under a failed build is grouped by the products the errors stop,
+    /// and where the export would have been said, the products it was refused for are
+    /// named.
+    func test_aFailedBuildNamesTheProductsItDidNotExport() throws {
+        try publishProduct("lib.a", contents: "archive")
+        try publishFailedProduct("broken.a", message: "the source is gone")
+        let destination = makeTempDirectory()
+        var lines: [String] = []
+        interpreter.output = { lines.append($0) }
+
+        interpreter.handleCommand("build src --into \(destination.path)")
+
+        XCTAssertTrue(lines.contains("Stopping output:/src/broken.a:"), lines.joined(separator: "\n"))
+        XCTAssertEqual(lines.last { $0.hasPrefix("Not exported") },
+                       "Not exported into \(destination.path): errors stop output:/src/broken.a.")
+    }
+
     func test_intoNeedsADirectory() throws {
         interpreter.handleCommand("build src --into")
 

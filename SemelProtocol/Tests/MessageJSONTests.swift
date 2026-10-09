@@ -47,9 +47,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsTwentyThree() {
-        XCTAssertEqual(ProtocolVersion.current, 23)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 23,
+    func test_currentProtocolVersionIsTwentyFour() {
+        XCTAssertEqual(ProtocolVersion.current, 24)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 24,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -149,7 +149,8 @@ final class MessageJSONTests: XCTestCase {
             .folderChildren(paths: ["src", "src/lib"]),
             .remove(pattern: "src/*.o"),
             .fetch(fileSystem: .output, path: "bin/app"),
-            .errors,
+            .errors(product: nil),
+            .errors(product: "Packages/libModels.a"),
             .check,
             .collect,
             .tools(platform: "macos"),
@@ -250,6 +251,16 @@ final class MessageJSONTests: XCTestCase {
         XCTAssertEqual(ErrorEntry(ports: ["output"], message: "boom").writers, [])
     }
 
+    /// B-142. The products travel on every record, each under its own keys, and a record
+    /// without the list is refused rather than read as a node that stops nothing.
+    func test_anErrorRecordCarriesTheProductsItStops() throws {
+        XCTAssertEqual(try json(StoppedProduct(path: "output:/app/Res/Assets.car", treeFolder: "output:/app/Res")),
+                       #"{"path":"output:\/app\/Res\/Assets.car","treeFolder":"output:\/app\/Res"}"#)
+
+        let withoutProducts = Data(#"{"label":"x","entries":[],"downstreamCarrierCount":0,"nodeCount":1}"#.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(ErrorRecord.self, from: withoutProducts))
+    }
+
     func test_roundTripsEveryDaemonResponse() throws {
         let record = ErrorRecord(label: "SwiftCompiler #12 'input:/a.swift'",
                                  entries: [ErrorEntry(ports: ["output", "errorLog"], message: "boom")])
@@ -268,6 +279,11 @@ final class MessageJSONTests: XCTestCase {
             .fetch(mode: 0o644),
             .symbolicLink(target: "Versions/Current/Tiny"),
             .errors(records: [record]),
+            .errors(records: [ErrorRecord(label: "SwiftCompiler #12 'input:/a.swift'",
+                                          entries: [ErrorEntry(ports: ["output"], message: "boom")],
+                                          products: [StoppedProduct(path: "output:/app/bin"),
+                                                     StoppedProduct(path: "output:/app/Res/Assets.car",
+                                                                    treeFolder: "output:/app/Res")])]),
             .tools(namespaces: [ToolNamespaceRecord(namespace: "swift.compiler", toolName: "swiftc",
                                               descriptors: [descriptor])]),
             .reset(archivedGraphPath: "/tmp/semel-home/graph.sqlite.broken-2026-09-23T101500Z"),
@@ -360,6 +376,7 @@ final class MessageJSONTests: XCTestCase {
         let errors: [ErrorResponse] = [
             .pathNotFound(path: "input:/nope"),
             .notAFolder(path: "input:/file"),
+            .notAProduct(path: "output:/app"),
             .nodeError(description: "wire missing"),
             .roleNotOffered(role: .runner),
             .malformedRequest(description: "unknown case"),

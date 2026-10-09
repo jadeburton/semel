@@ -221,7 +221,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         let second = try makeFailingFile(path: "input:/b.c", message: "second")
         let first  = try makeFailingFile(path: "input:/a.c", message: "first")
 
-        let (response, _) = try daemon(.errors)
+        let (response, _) = try daemon(.errors(product: nil))
 
         XCTAssertEqual(response, .errors(records: [
             ErrorRecord(label: "StaticFile #\(first) 'input:/a.c'",
@@ -241,7 +241,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
             try makeFailingMerger(message: message)
         }
 
-        let (response, _) = try daemon(.errors)
+        let (response, _) = try daemon(.errors(product: nil))
         engine.reportIdleTimeErrors()
 
         guard case .errors(let records) = response else {
@@ -259,7 +259,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
             try makeFailingMerger(message: "boom", tag: tag)
         }
 
-        let (response, _) = try daemon(.errors)
+        let (response, _) = try daemon(.errors(product: nil))
         engine.reportIdleTimeErrors()
 
         guard case .errors(let records) = response else {
@@ -293,7 +293,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
             try carrier.writeToOutputPort("output", value: .noValue(reason: .inputInError))
         }
 
-        let (response, _) = try daemon(.errors)
+        let (response, _) = try daemon(.errors(product: nil))
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(response, .errors(records: [
@@ -308,7 +308,65 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     }
 
     func test_errorsIsEmptyWhenNothingFailed() throws {
-        XCTAssertEqual(try daemon(.errors).0, .errors(records: []))
+        XCTAssertEqual(try daemon(.errors(product: nil)).0, .errors(records: []))
+    }
+
+    // MARK: - The products an error stops (B-142)
+
+    /// `input:/a.c` feeds two products and `input:/b.c` none. Wired before either fails, as
+    /// a graph is wired before it fails.
+    private func makeFailuresUnderTwoProducts() throws -> (feeding: ObjectID, orphan: ObjectID) {
+        for path in ["output:/app/lib", "output:/app/bin"] {
+            _ = try GraphSpecNode(OutputFile.self, properties: [OutputFile.pathProperty: path],
+                                  inputs: [OutputFile.inputPort: ["product": .staticFile(at: "input:/a.c")]])
+                .findOrCreateMatchingNode()
+        }
+        return (try makeFailingFile(path: "input:/a.c", message: "first"),
+                try makeFailingFile(path: "input:/b.c", message: "second"))
+    }
+
+    func test_eachRecordNamesTheProductsItStopsInPathOrder() throws {
+        let (feeding, orphan) = try makeFailuresUnderTwoProducts()
+
+        XCTAssertEqual(try daemon(.errors(product: nil)).0, .errors(records: [
+            ErrorRecord(label: "StaticFile #\(feeding) 'input:/a.c'",
+                        entries: [ErrorEntry(ports: ["output"], message: "first")],
+                        products: [StoppedProduct(path: "output:/app/bin"), StoppedProduct(path: "output:/app/lib")]),
+            ErrorRecord(label: "StaticFile #\(orphan) 'input:/b.c'",
+                        entries: [ErrorEntry(ports: ["output"], message: "second")],
+                        products: []),
+        ]))
+    }
+
+    /// The idle-time report names them too, through the same walk.
+    func test_theIdleTimeEventNamesTheProducts() throws {
+        _ = try makeFailuresUnderTwoProducts()
+
+        engine.reportIdleTimeErrors()
+
+        guard case .daemon(.errors(let records))? = sink.events.first else {
+            return XCTFail("expected an error event, got \(sink.events)")
+        }
+        XCTAssertEqual(records.map { $0.products.map(\.path) }, [["output:/app/bin", "output:/app/lib"], []])
+    }
+
+    /// Filtered on the server: only the records stopping the product are sent.
+    func test_errorsForOneProductAnswersOnlyTheRecordsStoppingIt() throws {
+        let (feeding, _) = try makeFailuresUnderTwoProducts()
+
+        guard case .errors(let records) = try daemon(.errors(product: "app/bin")).0 else {
+            return XCTFail("expected errors")
+        }
+        XCTAssertEqual(records.map(\.label), ["StaticFile #\(feeding) 'input:/a.c'"])
+    }
+
+    /// A folder holding products is no product, nor is a path nothing stands at; either is
+    /// an error naming the path, where an empty answer would read as "nothing is wrong".
+    func test_errorsForAPathThatIsNoProductIsAnErrorNamingIt() throws {
+        _ = try makeFailuresUnderTwoProducts()
+
+        XCTAssertEqual(daemonError(.errors(product: "app")), .notAProduct(path: "output:/app"))
+        XCTAssertEqual(daemonError(.errors(product: "app/nothing")), .notAProduct(path: "output:/app/nothing"))
     }
 
     // MARK: - Events
@@ -343,7 +401,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         try makeFailingFile(path: "input:/a.c", message: "boom")
         try makeFailingFile(path: "input:/b.c", message: "bang")
 
-        guard case .errors(let records) = try daemon(.errors).0 else {
+        guard case .errors(let records) = try daemon(.errors(product: nil)).0 else {
             return XCTFail("expected errors")
         }
         let verbCount = records.reduce(0) { $0 + $1.entries.reduce(0) { $0 + $1.ports.count } }

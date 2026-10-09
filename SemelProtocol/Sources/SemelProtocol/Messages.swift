@@ -160,6 +160,9 @@ private struct AnyCodingKey: CodingKey {
 public enum ErrorResponse: Codable, Equatable, Sendable {
     case pathNotFound(path: String)
     case notAFolder(path: String)
+    /// `errors <product>` named a path no product stands at (B-142): a folder holding
+    /// products, a source, or nothing. The full path, `output:/…`, as it was asked for.
+    case notAProduct(path: String)
     case nodeError(description: String)
     case roleNotOffered(role: Role)
     case malformedRequest(description: String)

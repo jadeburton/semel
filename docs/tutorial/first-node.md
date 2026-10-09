@@ -14,7 +14,8 @@ term stops making sense.
 Last walked through at commit `d5cc9f1`, Parts 1 and 2 again when the prompt learned to
 print a settle summary, and every transcript again when a build learned to print its
 summary once, after its last settle, with the artifact diff under it; the cleanup's
-wrong-order transcripts when a node of a removed type became an error the report names. The commits in
+wrong-order transcripts when a node of a removed type became an error the report names; the
+two failed builds' reports when they learned to group by the products the errors stop. The commits in
 between change documents, comments, tests and the shape of the reference node's loop — not
 what anything prints.
 
@@ -132,6 +133,13 @@ Settled.
 ❌ 19 nodes scheduled, 19 computed, 0 from cache, 25 errors
 25 errors across 9 nodes:
 
+Stopping output:/hello/config.txt:
+❌ StaticFile #17 'input:/semel.machine.config'
+   · semel.machine.config has not been pushed
+   · run semel-clang . to write it
+   · and 1 node downstream carries it
+
+Stopping output:/hello/hello:
 ❌ ClangCompiler ×3 (#24, #28, #30)
    · errorLog, infoLog, output:
      Missing machine settings. Run 'semel-clang <folder>': it writes semel.machine.config with the tool descriptors and SDK facts of the tools installed here, these among them:
@@ -140,15 +148,21 @@ Settled.
      clang.compiler.toolDescriptor.platform
      clang.compiler.toolDescriptor.version
 …
-❌ StaticFile #17 'input:/semel.machine.config'
-   · semel.machine.config has not been pushed
-   · run semel-clang . to write it
-   · and 1 node downstream carries it
+Stopping output:/hello/hello.dylib:
+❌ ClangCompiler ×3 (#24, #28, #30) — see output:/hello/hello
+❌ ClangLinker ×2 (#19, #33) — see output:/hello/hello
+❌ ClangPreprocessor ×3 (#26, #29, #31) — see output:/hello/hello
+❌ StaticFile #17 'input:/semel.machine.config' — see output:/hello/config.txt
+
+Not exported into /Users/you/semel-playground/out: errors stop output:/hello/config.txt, output:/hello/hello, output:/hello/hello.dylib.
 ```
 
 It failed, and it says why: the formula names `<../semel.machine.config>` beside `hello/`,
 nothing is there, and every tool below it lacks the settings that file would hold — and
-each names the command that writes them. The file's own entry says it once, with the
+each names the command that writes them. The report is grouped by the products each
+error stops, a product in `output:` at a time; an error under several is printed under the
+first and named under the rest, and `errors output:/hello/hello` would show that one's
+alone. The file's own entry says it once, with the
 folder the file goes in, `.` being the base directory. That command is not one of Semel's:
 what this machine has is the toolchain's to say, so its own tool writes it, outside Semel,
 as `semel-swift prepare` does for a Swift tree. In the **shell** terminal, on the folder the
@@ -709,12 +723,15 @@ Settled.
 ❌ 11 nodes scheduled, 8 computed, 3 from cache, 2 errors
 2 errors across 2 nodes:
 
+Stopping output:/hello/lines.txt:
 ❌ ProjectBuilder #13 'input:/hello/hello.fmla'
    · no node type is registered under the name 'MyLineCounter'
 
 ❌ kind 43 #37
    · its kind 43 is a type this server does not link. Link the type again, or take it out of the formula and build, which lets the node go; reset discards the derived state that is stuck.
    · and 1 node downstream carries it
+
+Not exported into /Users/you/semel-playground/out: errors stop output:/hello/lines.txt.
 ```
 
 Two failures, one cause. The formula names a type the server does not register, and the

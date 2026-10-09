@@ -11,6 +11,7 @@
 import Foundation
 import SemelCLI
 import SemelNodeKit
+import SemelProtocol
 
 /// A connection to the engine with an interpreter over it, the handshake done.
 public struct WatchSession {
@@ -266,19 +267,19 @@ public final class Watcher {
     /// from an earlier settle leaves the products as broken as a new one.
     private func reportAndExport(in session: WatchSession) {
         let interpreter = session.interpreter
-        let hasErrors: Bool
+        let records: [ErrorRecord]
         do {
-            hasErrors = try interpreter.graphHasErrors()
+            records = try interpreter.errorRecords()
         } catch {
             output("semel-watch: could not ask the engine for its errors: \(error)")
             return
         }
-        guard !hasErrors else {
+        guard records.isEmpty else {
             if configuration.printsReports {
                 interpreter.handleCommand(verb: "errors", arguments: [])
             }
             if let destination = configuration.exportDestination {
-                output("Not exported into \(destination): the build has errors.")
+                output(CommandInterpreter.notExportedLine(into: destination, records: records))
             }
             return
         }

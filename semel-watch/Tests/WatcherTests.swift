@@ -188,6 +188,27 @@ final class WatcherTests: XCTestCase {
         XCTAssertTrue(lines.contains("export: src: no such folder in the output file system"), lines.joined(separator: "\n"))
     }
 
+    /// B-142. A settle that leaves errors exports nothing, and says which products the
+    /// errors stop, by name.
+    func test_aSettleWithErrorsNamesTheProductsItDidNotExport() throws {
+        try write("int a;", at: "src/a.c")
+        _ = try XCTUnwrap(engine).inputFileSystem.ensureEntirePathExistsAsFolders(Path("stand-in"), pinned: true)
+        let (source, _) = try GraphSpecNode.staticFile(at: "input:/stand-in/broken.a").findOrCreateMatchingNode()
+        _ = try GraphSpecNode(OutputFile.self, properties: [OutputFile.pathProperty: "output:/src/broken.a"],
+                              inputs: [OutputFile.inputPort: ["product": .staticFile(at: "input:/stand-in/broken.a")]])
+            .findOrCreateMatchingNode()
+        try source.writeToOutputPort(StaticFile.outputPort,
+                                     value: .noValue(reason: .error(messageDataObjectHash: try "gone".intern())))
+        let destination = try XCTUnwrap(base).appendingPathComponent("out").path
+        let watcher = try makeWatcher(folders: ["src"], exportDestination: destination, events: [])
+
+        try watcher.run()
+
+        XCTAssertTrue(lines.contains("Not exported into \(destination): errors stop output:/src/broken.a."),
+                      lines.joined(separator: "\n"))
+        XCTAssertFalse(lines.contains { $0.hasPrefix("Exported") })
+    }
+
     // MARK: - Helpers
 
     private var removeOnFirstWait: [String] = []

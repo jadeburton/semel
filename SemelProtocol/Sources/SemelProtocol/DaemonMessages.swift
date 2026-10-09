@@ -110,12 +110,36 @@ public struct ErrorRecord: Codable, Equatable, Sendable {
     /// How many nodes the record stands for: one, or the several of one type that carry
     /// one report and are named together in the label (B-110).
     public let nodeCount: Int
+    /// The products downstream of the failing node, in path order: what the failure keeps
+    /// from being built (B-142). Empty for a node nothing under `output:` reads, or whose
+    /// products were built all the same — a settings source read as nothing to add — which a
+    /// client reports as such. Not optional, so a peer that does not send it is refused at
+    /// decoding rather than read as a node that stops nothing.
+    public let products: [StoppedProduct]
 
-    public init(label: String, entries: [ErrorEntry], downstreamCarrierCount: Int = 0, nodeCount: Int = 1) {
+    public init(label: String, entries: [ErrorEntry], downstreamCarrierCount: Int = 0, nodeCount: Int = 1,
+                products: [StoppedProduct] = []) {
         self.label                  = label
         self.entries                = entries
         self.downstreamCarrierCount = downstreamCarrierCount
         self.nodeCount              = nodeCount
+        self.products               = products
+    }
+}
+
+/// One product an error stops, as the person sees it at the prompt (B-142).
+public struct StoppedProduct: Codable, Equatable, Hashable, Sendable {
+    /// The product's path, `output:/Packages/libModels.a`. For a tree product whose entries
+    /// are not known — the tree is what failed, so no manifest arrived — the tree's folder.
+    public let path: String
+    /// The folder of the tree product `path` is an entry of (B-63), nil for a product named
+    /// on its own; equal to `path` when the entries are not known. What lets a client put
+    /// every entry of one tree under that folder without taking paths apart.
+    public let treeFolder: String?
+
+    public init(path: String, treeFolder: String? = nil) {
+        self.path       = path
+        self.treeFolder = treeFolder
     }
 }
 
@@ -383,7 +407,12 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
     case folderChildren(paths: [String])
     case remove(pattern: String)
     case fetch(fileSystem: FileSystemKind, path: String)
-    case errors
+    /// Every failure the graph holds, or with `product` only those that stop it: a path in
+    /// the output file system, relative to its root and resolved by the client as
+    /// `fetch`'s is, naming a product or a tree product's folder, which matches every entry
+    /// below it (B-142). Filtered on the server, so a wide cascade is not sent only to be
+    /// dropped. A path that names no product is answered `notAProduct`.
+    case errors(product: String?)
     /// Walks the graph and answers every invariant that does not hold. Repairs nothing:
     /// `reset` is the repair, and this is how one learns whether it is needed.
     ///

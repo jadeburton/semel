@@ -158,11 +158,11 @@ public final class RequestHandler {
             case .fetch(let fileSystem, let path):
                 let (response, bytes) = try fetch(fileSystem: fileSystem, path: path)
                 return (.daemon(response), bytes)
-            case .errors:
+            case .errors(let product):
                 // Sliced once the report is whole: `ErrorReport` orders and folds over
                 // every failure at once, so there is nothing to send before it is done.
                 let slicer = ReplySlicer<ErrorRecord>(verb: "errors", stream: replyStream) { .errors(records: $0) }
-                try slicer.append(contentsOf: try errorRecords())
+                try slicer.append(contentsOf: try errorRecords(stopping: product))
                 return (.daemon(slicer.last), nil)
             case .check:
                 let report = GraphCheck.run(database: database)
@@ -278,11 +278,26 @@ public final class RequestHandler {
     /// the reply and the event list the same failures the same way. The selection is the
     /// only difference: this verb is asked for everything, where the event reports what is
     /// newly appearing.
-    private func errorRecords() throws -> [ErrorRecord] {
-        ErrorReport.entries(forErrorPorts: try ErrorReport.portsToReport(database: database),
-                            database: database,
-                            select: { _, messages in messages })
-            .map { ErrorRecord($0.entry) }
+    ///
+    /// Each record names the products downstream of its nodes, through one walk for the
+    /// whole answer (B-142). With `product` — a path relative to the output root — only the
+    /// records stopping it are answered: the product itself, or for a tree product's folder
+    /// any entry below it. The walk still starts from every failure, since which of them
+    /// reach the product is what it finds out, but what is sent is what was asked for.
+    private func errorRecords(stopping product: String?) throws -> [ErrorRecord] {
+        let asked = product.map { (Path(FileSystemName.output) / Path($0)).string }
+        if let asked, !(try ProductReach.isProduct(asked, database: database)) {
+            throw HandlerFailure.notAProduct(path: asked)
+        }
+
+        let reported = ErrorReport.entries(forErrorPorts: try ErrorReport.portsToReport(database: database),
+                                           database: database,
+                                           select: { _, messages in messages })
+        var reach = ProductReach(database: database)
+        return ErrorReport.namingProducts(of: reported, reach: &reach)
+            .map(\.entry)
+            .filter { entry in asked.map { asked in entry.products.contains { $0.isNamed(by: asked) } } ?? true }
+            .map(ErrorRecord.init)
     }
 
     /// Why the last settle did what it did to the node at `path` (B-91). A path with no node
@@ -378,6 +393,7 @@ public final class RequestHandler {
 enum HandlerFailure: Error {
     case pathNotFound(path: String)
     case notAFolder(path: String)
+    case notAProduct(path: String)
     case node(description: String)
     case malformed(description: String)
     /// One item of a streamed reply too large for a frame on its own (`ReplySlicer`).
@@ -387,6 +403,7 @@ enum HandlerFailure: Error {
         switch self {
         case .pathNotFound(let path):     return .pathNotFound(path: path)
         case .notAFolder(let path):       return .notAFolder(path: path)
+        case .notAProduct(let path):      return .notAProduct(path: path)
         case .node(let description):      return .nodeError(description: description)
         case .malformed(let description): return .malformedRequest(description: description)
         case .replyTooLarge(let request, let bytes):
@@ -406,7 +423,8 @@ extension ErrorRecord {
                                  writers: $0.writers.map { SourceWriter(command: $0.command, folder: $0.folder) })
                   },
                   downstreamCarrierCount: entry.downstreamCarrierCount,
-                  nodeCount: entry.nodeCount)
+                  nodeCount: entry.nodeCount,
+                  products: entry.products.map { StoppedProduct(path: $0.path, treeFolder: $0.treeFolder) })
     }
 }
 
