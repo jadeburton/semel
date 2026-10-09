@@ -344,6 +344,22 @@ use. `selectPath` decoding whole nodes is now the push queue's largest single co
 
 ## Design, correctness and code quality
 
+**B-144** `open` — **Deleting a running server's home sometimes fails with a permission error.**
+Seen 2026-10-09 twice in one day, once on the hosted runner (PR #170's first check) and
+once on the owner's Mac (an agent's root suite run), and passed on rerun both times:
+`SocketFileTests.test_deletingTheServersHomeStopsTheServerCleanly` fails in its
+`removeItem(at: home)` with `NSCocoaErrorDomain 513`, "“home” couldn't be removed because
+you don't have permission to access it". The test starts `semelserv` over a home of its
+own and removes the home while the server runs. Nothing in the home is a read-only
+directory by design, so the failure is a race with the server writing while the walk
+removes: a file or folder appearing in a directory the walk has emptied, or an object
+being written under a temporary name, leaves the top folder non-empty and Foundation
+reports it as the top path with the wrong reason. Not yet reproduced on demand; the
+nightly's run of the same test passes. To establish: what the server writes between its
+start and the removal (the log, the socket, the database's WAL, the store's first
+objects), and whether the test should stop writes first or retry the removal once the
+server has gone. The end-to-end harness's own cleanup of run roots may hit the same race.
+
 **B-143** `done` — **A fresh `prepare` and `build` could fail on the lock `prepare` had just
 written.** Reported 2026-10-09 on a proprietary tree: `semel-swift prepare` vendored a
 dependency and wrote its lock, and the next `build` stopped with `is not the tree its lock
