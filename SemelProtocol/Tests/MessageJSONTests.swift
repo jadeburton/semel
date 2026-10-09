@@ -47,9 +47,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsTwentyFour() {
-        XCTAssertEqual(ProtocolVersion.current, 24)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 24,
+    func test_currentProtocolVersionIsTwentyFive() {
+        XCTAssertEqual(ProtocolVersion.current, 25)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 25,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -162,6 +162,10 @@ final class MessageJSONTests: XCTestCase {
             .debug(cacheKey: "285a5050ac7e8501af9c3bab064c1cf5432b67646d915ae3477fe816dced6419"),
             .explain(fileSystem: .output, path: "hello/hello"),
             .subscribe,
+            .checkpoint(name: nil),
+            .checkpoint(name: "before-update"),
+            .checkpoints,
+            .restore(name: "latest"),
         ]
         for request in requests {
             XCTAssertEqual(try roundTrip(Request.daemon(request)), .daemon(request))
@@ -294,6 +298,10 @@ final class MessageJSONTests: XCTestCase {
             .collected(removed: 3, removedBytes: 4096, kept: 12),
             .explain(explanation: nil),
             .explain(explanation: Self.sampleExplanation),
+            .checkpoint(name: "latest", contentRoot: "4d5d"),
+            .checkpoints(entries: [CheckpointRecord(name: "latest", contentRoot: "4d5d")]),
+            .checkpoints(entries: []),
+            .restored(name: "latest", contentRoot: "4d5d", changedPaths: 3),
         ]
         for response in responses {
             XCTAssertEqual(try roundTrip(Response.daemon(response)), .daemon(response))
@@ -382,6 +390,14 @@ final class MessageJSONTests: XCTestCase {
             .malformedRequest(description: "unknown case"),
             .replyTooLarge(request: "debug", bytes: 3_000_000, limit: 1_048_576),
             .unrecoverable(message: "object store is read-only"),
+            .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
+                           expected: .contentRoot("4d5d"), found: "9e1f", paths: ["Dependencies/Pkg/a.swift"]),
+            .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
+                           expected: .unreadable(line: 2, problem: "line 2: bogus"), found: nil, paths: []),
+            .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
+                           expected: .otherFold(fold: "semel-folder-content-root 3", contentRoot: "4d5d"),
+                           found: "9e1f", paths: []),
+            .checkpointNotFound(name: "nope", known: ["latest"]),
         ]
         for error in errors {
             XCTAssertEqual(try roundTrip(Response.error(error)), .error(error))

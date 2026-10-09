@@ -66,7 +66,9 @@ public enum ProtocolVersion {
     /// framing version 2's continue flag on all but the last (B-137).
     /// Version 24 gives an error record the products it stops, lets `errors` ask for one
     /// product's, and adds `notAProduct` for a path that names none (B-142).
-    public static let current = 24
+    /// Version 25 adds `batchRejected`, the lock barrier's refusal of a batch at `commit`,
+    /// and `checkpoint`, `checkpoints` and `restore` with their replies (B-146).
+    public static let current = 25
 }
 
 public struct Hello: Codable, Equatable, Sendable {
