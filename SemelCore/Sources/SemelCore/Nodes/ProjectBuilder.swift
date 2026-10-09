@@ -17,8 +17,9 @@ public struct ProjectBuilder: Node {
     /// 6: several wires on `projectFile` are an error naming them, where one was read
     /// (B-141).
     /// 7: a failure is published as an `ErrorDocument`, the typed value a client renders,
-    /// where it was a sentence (B-145).
-    public static let implementationVersion = 7
+    /// where it was a sentence (B-145). 8: a node whose type declares a
+    /// `formulaFolderProperty` is given the formula's folder there (B-143).
+    public static let implementationVersion = 8
 
     static let outputFolderProperty   = "outputFolder"
     static let projectFileInputPort   = "projectFile"
@@ -47,6 +48,24 @@ public struct ProjectBuilder: Node {
             return false
         }
         return !type.descriptor.staticInputPorts.isEmpty
+    }
+
+    /// `spec` with every node in it whose type declares a `formulaFolderProperty` given
+    /// `folder` there, unless the formula gave that property itself.
+    static func fillingFormulaFolder(_ folder: String, in spec: GraphSpecNode) -> GraphSpecNode {
+        var properties = spec.properties
+        if let type = TypeRegistry.nodeType(forTypeName: spec.typeName) as? Node.Type,
+           let key = type.descriptor.formulaFolderProperty,
+           !properties.contains(where: { $0.key == key }) {
+            properties.append(GraphSpecProperty(key: key, value: folder))
+        }
+        let inputs = spec.inputs.map { port in
+            GraphSpecInputPort(portName: port.portName, wires: port.wires.map { wire in
+                GraphSpecWire(name: wire.name, node: fillingFormulaFolder(folder, in: wire.node))
+            })
+        }
+        return GraphSpecNode(typeName: spec.typeName, properties: properties, inputs: inputs,
+                             outputs: spec.outputs, outputPort: spec.outputPort)
     }
 
     public static let descriptor = NodeDescriptor(
@@ -144,7 +163,8 @@ public struct ProjectBuilder: Node {
         final class IncludeRecord { var specs: [String: GraphSpecNode] = [:]; var anyMissing = false }
         let includeRecord = IncludeRecord()
 
-        let includeReader: (GraphSpecNode) throws -> String? = { included in
+        let includeReader: (GraphSpecNode) throws -> String? = { named in
+            let included = Self.fillingFormulaFolder(parentFolder.string, in: named)
             let spec = included.asString(omitOutputPort: false)
             includeRecord.specs[spec] = included
             guard let nodeValue = input.inputValues[Self.includesInputPort]?[spec],
@@ -197,8 +217,8 @@ public struct ProjectBuilder: Node {
         /// The wrapper that publishes `shapeNode`'s value at `fullPath`, with the source's
         /// `fileMetadata` port wired in when it has one, so chmod can be applied on cp.
         func outputFileSpec(fullPath: Path, shapeNode: GraphSpecNode) -> GraphSpecNode {
-            let shapeNode = shapeNode.adding(property: Self.projectRootProperty, value: outputFolder.string,
-                                             where: Self.isCacheable)
+            let shapeNode = Self.fillingFormulaFolder(parentFolder.string, in: shapeNode)
+                .adding(property: Self.projectRootProperty, value: outputFolder.string, where: Self.isCacheable)
             return GraphSpecNode(OutputFile.self,
                                  properties: [OutputFile.pathProperty: fullPath.string],
                                  inputs: [OutputFile.inputPort: ["product": shapeNode]])
@@ -232,7 +252,7 @@ public struct ProjectBuilder: Node {
                 // by the node that made them, so it is wired here first and expanded once
                 // it has arrived — as a wildcard's folder manifest is. Until then the
                 // tree's files are simply not yet products.
-                let treeSpec = shapeNode
+                let treeSpec = Self.fillingFormulaFolder(parentFolder.string, in: shapeNode)
                     .adding(property: Self.projectRootProperty, value: outputFolder.string, where: Self.isCacheable)
                 treeSpecs[fullPath.string] = treeSpec
                 guard let manifest = treeManifests[fullPath.string] else {

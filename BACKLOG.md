@@ -454,8 +454,14 @@ Not fixed, filed here:
 - (a) A dot-named declared resource is still asked for as declared, so the follow pushes
   it by name. It is built and not locked. A dot-named declared *folder* cannot be pushed at
   all (`hiddenFile` takes files only).
-- (b) A hand-written `SwiftFormulaConverter` with no `root:` over a vendored folder reads
-  `semel.config` and `semel.machine.config` from inside it.
+- ~~(b) A hand-written `SwiftFormulaConverter` with no `root:` over a vendored folder reads
+  `semel.config` and `semel.machine.config` from inside it.~~ Done 2026-10-10. A node type
+  can declare a property the formula's folder fills when the formula that names it leaves
+  it out (`NodeDescriptor.formulaFolderProperty`), and `ProjectBuilder` fills it, in an
+  `include` and at any depth of a product. The converter declares `root`, so `root:` is
+  the folder of the formula that names it, never the package's; only a converter no
+  formula named, one a test wires by hand, still takes its package's folder.
+  `ProjectBuilder` is version 8.
 - (c) A `.fmla` inside a vendored package is built by `FormulaFilePlugin`, which does not
   skip `Dependencies`.
 
