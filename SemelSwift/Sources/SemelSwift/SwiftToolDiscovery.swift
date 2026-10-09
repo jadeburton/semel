@@ -9,11 +9,13 @@ import SemelNodeKit
 
 enum SwiftToolDiscovery {
 
-    /// The tools this package runs, each located through the active toolchain.
+    /// The tools this package runs, each located through the active toolchain. The
+    /// compiler's fingerprint covers the macro plugins it runs beside itself (B-80); the
+    /// package tool reads a manifest, which expands no macro.
     static var finders: [ToolFinder] {
-        ["swiftc", "swift"].map { name in
-            ToolFinder(name: name, locate: { locate(name) }, version: version(ofToolAt:))
-        }
+        [ToolFinder(name: "swiftc", locate: { locate("swiftc") }, version: version(ofToolAt:),
+                    companionFingerprint: SwiftCompilerPlugins.fingerprint(ofToolAt:)),
+         ToolFinder(name: "swift", locate: { locate("swift") }, version: version(ofToolAt:))]
     }
 
     /// Absolute path to `toolName` in the active toolchain, via `xcrun --find`, or nil if

@@ -24,11 +24,24 @@ public struct ToolFinder {
     public let locate: () -> String?
     /// The version the tool at the path reports, or nil if it reports nothing usable.
     public let version: (String) -> String?
+    /// A fingerprint of what the tool at the path runs beside its own binary, or nil when
+    /// it runs nothing else. `swiftc` expands a macro by loading or launching a compiler
+    /// plugin its toolchain and its platforms ship (B-80): code the expansion follows that
+    /// the binary's bytes do not cover, so it is part of what the descriptor fingerprints.
+    public let companionFingerprint: (String) -> String?
 
     public init(name: String, locate: @escaping () -> String?, version: @escaping (String) -> String?) {
-        self.name    = name
-        self.locate  = locate
-        self.version = version
+        self.init(name: name, locate: locate, version: version, companionFingerprint: { _ in nil })
+    }
+
+    public init(name: String,
+                locate: @escaping () -> String?,
+                version: @escaping (String) -> String?,
+                companionFingerprint: @escaping (String) -> String?) {
+        self.name                 = name
+        self.locate               = locate
+        self.version              = version
+        self.companionFingerprint = companionFingerprint
     }
 }
 
@@ -59,7 +72,9 @@ public enum ToolDiscovery {
     /// version apart in a cache key. It is taken here rather than declared anywhere: a
     /// config file names a tool by the four identity fields, and which binary answers to
     /// them is a fact about this machine. Reading every installed tool costs a fraction of
-    /// a second, once per process, beside the subprocesses this loop already runs.
+    /// a second, once per process, beside the subprocesses this loop already runs. What a
+    /// tool runs of its toolchain's beside its binary — a compiler's macro plugins — is
+    /// folded in through its finder's `companionFingerprint`.
     ///
     /// Nothing is warned about here. Installing a newer toolchain is not by itself a
     /// problem, and a node that does not use the changed tool is unaffected — so there is
@@ -81,7 +96,8 @@ public enum ToolDiscovery {
                                   version: version,
                                   platform: MachineQuery.hostPlatform,
                                   architecture: MachineQuery.hostArchitecture,
-                                  recursiveHash: toolBinaryFingerprint(ofFileAt: path)),
+                                  recursiveHash: toolFingerprint(binary:     toolBinaryFingerprint(ofFileAt: path),
+                                                                 companions: finder.companionFingerprint(path))),
                 toolExecutor: try LocalFileSystemTool(localPath: path))
         }
     }

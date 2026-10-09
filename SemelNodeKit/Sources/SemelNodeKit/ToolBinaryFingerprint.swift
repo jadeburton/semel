@@ -92,6 +92,21 @@ public func toolBinaryFingerprint(ofFileAt path: String) -> String? {
     ToolBinaryFingerprints.shared.fingerprint(ofFileAt: path)
 }
 
+/// What a descriptor records for a tool: its binary's fingerprint, folded with the
+/// fingerprint of what the tool runs beside it when it runs anything (B-80). A tool with
+/// no companions records its binary's fingerprint as it stands. Nil when the binary could
+/// not be read, which fails open as the binary's own fingerprint does.
+public func toolFingerprint(binary: String?, companions: String?) -> String? {
+    guard let binary else {
+        return nil
+    }
+    guard let companions else {
+        return binary
+    }
+    let digest = SHA256.hash(data: Data("binary=\(binary)\ncompanions=\(companions)".utf8))
+    return digest.map { String(format: "%02x", $0) }.joined()
+}
+
 /// A tool node's contribution to its cache key: the fingerprint of the binary behind the
 /// tool its configuration names. Every node that runs a discovered tool returns this from
 /// `cacheKeyMaterial`, so that two binaries a configuration cannot tell apart key
