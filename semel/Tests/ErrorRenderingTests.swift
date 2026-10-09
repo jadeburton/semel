@@ -4,9 +4,10 @@
 //
 //  The error report, drawn from the documents nodes publish (the 2026-10-09 design): one
 //  test per condition and per subject pinning the exact lines, and the report's own rules —
-//  the `needed by:` cut and its ties, a tool's text over several lines, a tool that said
-//  nothing, the summary line in its four forms, `--verbose`, the `input:/` substitution and
-//  colour.
+//  one heading per set of products with the same errors, an error printed once and
+//  `(above)` after, the heading's cut and its ties, a tool's text over several lines, a
+//  tool that said nothing, the summary line in its four forms, `--verbose`, the `input:/`
+//  substitution and colour.
 //
 
 @testable import SemelCLI
@@ -23,12 +24,13 @@ final class ErrorRenderingTests: XCTestCase {
         ErrorFacts(nodeType: type, nodeIDs: ids, ports: ports, carrierCount: carried)
     }
 
-    /// One document's block: the report without the blank line and the summary under it.
+    /// One document's block: the report without its heading, and without the blank line and
+    /// the summary under it.
     private func block(_ document: ErrorDocument, products: [StoppedProduct] = [],
                        style: ErrorReportStyle = ErrorReportStyle()) -> [String] {
         let lines = ErrorReportRenderer.lines(for: [ErrorRecord(document: document, products: products, facts: facts())],
                                               style: style)
-        return Array(lines.dropLast(2))
+        return Array(lines.dropFirst().dropLast(2))
     }
 
     /// One condition's block, its remedy the one it implies unless one is given.
@@ -36,8 +38,6 @@ final class ErrorRenderingTests: XCTestCase {
                        remedy: ErrorDocument.Remedy? = nil, products: [StoppedProduct] = []) -> [String] {
         block(.engine(condition, subject: subject, remedy: remedy), products: products)
     }
-
-    private let nothing = "  needed by: nothing"
 
     private func products(_ names: String...) -> [StoppedProduct] {
         names.map { StoppedProduct(path: "output:/\($0)") }
@@ -47,12 +47,12 @@ final class ErrorRenderingTests: XCTestCase {
 
     func test_toolExitedSilently() {
         XCTAssertEqual(block(.toolExitedSilently(tool: "swiftc", status: 1)),
-                       ["swiftc exited with status 1 and said nothing", nothing])
+                       ["swiftc exited with status 1 and said nothing"])
     }
 
     func test_toolWroteNothing() {
         XCTAssertEqual(block(.toolWroteNothing(tool: "ibtool", status: 0, paths: ["Base.lproj/MainMenu.nib"])),
-                       ["ibtool exited with status 0 and wrote nothing at Base.lproj/MainMenu.nib", nothing])
+                       ["ibtool exited with status 0 and wrote nothing at Base.lproj/MainMenu.nib"])
         XCTAssertEqual(block(.toolWroteNothing(tool: "swift package dump-package", status: 0, paths: [])).first,
                        "swift package dump-package exited with status 0 and wrote nothing at its output")
     }
@@ -68,31 +68,30 @@ final class ErrorRenderingTests: XCTestCase {
             "no tool installed here matches clang 17.0.0 (macos/arm64)",
             "  installed: clang 16.0.0 (macos/arm64)",
             "  named by: clang.compiler.toolDescriptor",
-            nothing,
             "  write with: semel-clang <folder> --force",
         ])
     }
 
     func test_toolNotFound() {
-        XCTAssertEqual(block(.toolNotFound(path: "/usr/bin/nonesuch")), ["no tool exists at /usr/bin/nonesuch", nothing])
+        XCTAssertEqual(block(.toolNotFound(path: "/usr/bin/nonesuch")), ["no tool exists at /usr/bin/nonesuch"])
     }
 
     func test_toolNotExecutable() {
-        XCTAssertEqual(block(.toolNotExecutable(path: "/tmp/tool")), ["/tmp/tool is not executable", nothing])
+        XCTAssertEqual(block(.toolNotExecutable(path: "/tmp/tool")), ["/tmp/tool is not executable"])
     }
 
     func test_toolInputNotWritten() {
         XCTAssertEqual(block(.toolInputNotWritten(file: "input:/a.c", reason: "disk full")),
-                       ["a.c cannot be laid in the tool's sandbox", "  reason: disk full", nothing])
+                       ["a.c cannot be laid in the tool's sandbox", "  reason: disk full"])
     }
 
     func test_toolOutputNotRead() {
-        XCTAssertEqual(block(.toolOutputNotRead(file: "out.o")), ["the tool's output out.o cannot be read back", nothing])
+        XCTAssertEqual(block(.toolOutputNotRead(file: "out.o")), ["the tool's output out.o cannot be read back"])
     }
 
     func test_toolLaunchFailed() {
         XCTAssertEqual(block(.toolLaunchFailed(reason: "no such file")),
-                       ["the tool cannot be started", "  reason: no such file", nothing])
+                       ["the tool cannot be started", "  reason: no such file"])
     }
 
     // MARK: - Settings
@@ -104,19 +103,16 @@ final class ErrorRenderingTests: XCTestCase {
 
         XCTAssertEqual(block(.settingsMissing(project: [], machine: ["clang.compiler.toolDescriptor.name"], writer: writer)), [
             "missing settings: clang.compiler.toolDescriptor.name",
-            nothing,
             "  write with: semel-clang <folder>",
         ])
         XCTAssertEqual(block(.settingsMissing(project: ["clang.compiler.target"], machine: ["clang.compiler.toolDescriptor.name"],
                                               writer: writer)), [
             "missing settings: clang.compiler.target, clang.compiler.toolDescriptor.name",
             "  set: clang.compiler.target",
-            nothing,
             "  write with: semel-clang <folder>",
         ])
         XCTAssertEqual(block(.settingsMissing(project: ["clang.compiler.target"], machine: [], writer: nil)), [
             "missing settings: clang.compiler.target",
-            nothing,
             "  set: clang.compiler.target",
         ])
     }
@@ -125,7 +121,6 @@ final class ErrorRenderingTests: XCTestCase {
         XCTAssertEqual(block(.settingNotAccepted(key: "swift.linker.linkage", value: "dynamik",
                                                  accepted: ["static", "dynamic", "executable"])), [
             "swift.linker.linkage is 'dynamik', which is not one of static, dynamic, executable",
-            nothing,
             "  set: swift.linker.linkage",
         ])
     }
@@ -133,7 +128,6 @@ final class ErrorRenderingTests: XCTestCase {
     func test_settingNotAList() {
         XCTAssertEqual(block(.settingNotAList(key: "swift.compiler.unsafeFlags", value: "-Xfoo")), [
             "swift.compiler.unsafeFlags is '-Xfoo', which is not a JSON list of strings",
-            nothing,
             "  set: swift.compiler.unsafeFlags",
         ])
     }
@@ -142,7 +136,6 @@ final class ErrorRenderingTests: XCTestCase {
         XCTAssertEqual(block(.sdkNotFound(sdk: "iphoneos", key: "swift.compiler.sdk")), [
             "no SDK named iphoneos is installed here",
             "  named by: swift.compiler.sdk",
-            nothing,
             "  set: swift.compiler.sdk",
         ])
     }
@@ -155,13 +148,12 @@ final class ErrorRenderingTests: XCTestCase {
         XCTAssertEqual(block(.sdkVersionDiffers(sdk: "macosx", declared: "26.5", found: "26.5 (25F70)")).first,
                        "sdkVersion is 26.5, without the SDK's build number; this machine's macosx SDK is 26.5 (25F70)")
         XCTAssertEqual(block(.sdkVersionDiffers(sdk: "macosx", declared: "26.4 (25E50)", found: "26.5 (25F70)")),
-                       ["sdkVersion is 26.4 (25E50), and this machine's macosx SDK is 26.5 (25F70)", nothing])
+                       ["sdkVersion is 26.4 (25E50), and this machine's macosx SDK is 26.5 (25F70)"])
     }
 
     func test_settingNotSupported() {
         XCTAssertEqual(block(.settingNotSupported(key: "apple.codeSigner.identity", value: "Apple Development", supported: "-")), [
             "apple.codeSigner.identity is 'Apple Development', and '-' is the one value built with",
-            nothing,
             "  set: apple.codeSigner.identity",
         ])
     }
@@ -170,7 +162,7 @@ final class ErrorRenderingTests: XCTestCase {
 
     func test_notPushed() {
         XCTAssertEqual(block(.notPushed(path: "input:/Packages/Kit/Sources/Kit", isFolder: true)),
-                       ["Packages/Kit/Sources/Kit has not been pushed", nothing])
+                       ["Packages/Kit/Sources/Kit has not been pushed"])
     }
 
     /// The machine file nobody has written names the command that writes it, in the folder
@@ -181,23 +173,22 @@ final class ErrorRenderingTests: XCTestCase {
                                                                   MachineFileCommand(command: "semel-swift prepare", folder: ".")]),
                              products: products("hello/hello")), [
             "semel.machine.config has not been pushed",
-            "  needed by: hello",
             "  write with: semel-clang . and semel-swift prepare .",
         ])
     }
 
     func test_removed() {
-        XCTAssertEqual(block(.removed(path: "input:/src/main.c", isFolder: false)), ["src/main.c has been removed", nothing])
+        XCTAssertEqual(block(.removed(path: "input:/src/main.c", isFolder: false)), ["src/main.c has been removed"])
         XCTAssertEqual(block(.removed(path: nil, isFolder: false)).first, "a source this node reads has been removed")
     }
 
     func test_inputInError() {
-        XCTAssertEqual(block(.inputInError), ["an input is in error, and no node above it says why", nothing])
+        XCTAssertEqual(block(.inputInError), ["an input is in error, and no node above it says why"])
     }
 
     func test_documentUnreadable() {
         XCTAssertEqual(block(.documentUnreadable(hash: "abc")),
-                       ["an error whose document cannot be read", "  document: abc", nothing])
+                       ["an error whose document cannot be read", "  document: abc"])
         XCTAssertEqual(block(.documentUnreadable(hash: "")).dropFirst().first, "  document: none")
     }
 
@@ -206,7 +197,6 @@ final class ErrorRenderingTests: XCTestCase {
     func test_unlinkedKind() {
         XCTAssertEqual(block(.unlinkedKind(kind: 43), products: products("hello/lines.txt")), [
             "a node of kind 43 is of a type this server does not link",
-            "  needed by: lines.txt",
             "  register: kind 43",
         ])
     }
@@ -215,14 +205,13 @@ final class ErrorRenderingTests: XCTestCase {
         XCTAssertEqual(block(.unknownTypeName(name: "MyLineCounter"), subject: .formula(path: "input:/hello/hello.fmla")), [
             "no node type is registered under the name 'MyLineCounter'",
             "  formula: hello/hello.fmla",
-            nothing,
             "  register: MyLineCounter",
         ])
     }
 
     func test_requiredPortUnwired() {
         XCTAssertEqual(block(.requiredPortUnwired(type: "ClangLinker", port: "objectFiles")),
-                       ["ClangLinker's required input 'objectFiles' has nothing wired to it", nothing])
+                       ["ClangLinker's required input 'objectFiles' has nothing wired to it"])
         XCTAssertEqual(block(.requiredPortUnwired(type: nil, port: "input")).first, "required input 'input' has nothing wired to it")
     }
 
@@ -230,23 +219,22 @@ final class ErrorRenderingTests: XCTestCase {
         XCTAssertEqual(block(.severalWiresOnOneWirePort(type: "SampleTool", port: "configuration", wires: ["machine", "project"])), [
             "SampleTool's input 'configuration' takes one wire, and 2 are wired to it",
             "  wires: machine, project",
-            nothing,
         ])
     }
 
     func test_portNotDeclared() {
-        XCTAssertEqual(block(.portNotDeclared(type: "SampleTool", port: "nope")), ["SampleTool declares no input port 'nope'", nothing])
+        XCTAssertEqual(block(.portNotDeclared(type: "SampleTool", port: "nope")), ["SampleTool declares no input port 'nope'"])
         XCTAssertEqual(block(.portNotDeclared(type: nil, port: "nope")).first, "this node declares no input port 'nope'")
     }
 
     func test_outputPortMissing() {
         XCTAssertEqual(block(.outputPortMissing(nodeID: 12, port: "output")),
-                       ["node #12 holds no row for its output port 'output', which its type declares", nothing])
+                       ["node #12 holds no row for its output port 'output', which its type declares"])
     }
 
     func test_nodePropertyMissing() {
         XCTAssertEqual(block(.nodePropertyMissing(kind: 3, nodeID: 7, property: "path")),
-                       ["node #7 of kind 3 has no 'path', which its type is always made with", nothing])
+                       ["node #7 of kind 3 has no 'path', which its type is always made with"])
     }
 
     func test_propertyMissing() {
@@ -254,91 +242,90 @@ final class ErrorRenderingTests: XCTestCase {
                                               alternatives: ["packageFolder", "packageJSON"])), [
             "SwiftFormulaConverter is given no 'path'",
             "  or wired: packageFolder, packageJSON",
-            nothing,
         ])
         XCTAssertEqual(block(.propertyMissing(type: "XcodeProjectConverter", property: "path", alternatives: [])),
-                       ["XcodeProjectConverter is given no 'path'", nothing])
+                       ["XcodeProjectConverter is given no 'path'"])
     }
 
     func test_propertiesExclusive() {
         XCTAssertEqual(block(.propertiesExclusive(type: "ModuleMapWriter", properties: ["umbrellaHeader", "umbrellaDirectory"])),
-                       ["ModuleMapWriter takes exactly one of umbrellaHeader and umbrellaDirectory", nothing])
+                       ["ModuleMapWriter takes exactly one of umbrellaHeader and umbrellaDirectory"])
     }
 
     func test_propertyNotOfForm() {
         XCTAssertEqual(block(.propertyNotOfForm(type: "InfoPlistBuilder", property: "keys", form: .jsonDictionary)),
-                       ["InfoPlistBuilder's 'keys' is not a JSON dictionary", nothing])
+                       ["InfoPlistBuilder's 'keys' is not a JSON dictionary"])
     }
 
     func test_inputNotOfForm() {
         XCTAssertEqual(block(.inputNotOfForm(port: "partials", wire: "input:/a.plist", form: .propertyListDictionary)),
-                       ["'a.plist' on partials is not a property list dictionary", nothing])
+                       ["'a.plist' on partials is not a property list dictionary"])
     }
 
     func test_inputHasNoContent() {
         XCTAssertEqual(block(.inputHasNoContent(port: "base", wire: "input:/Info.plist")),
-                       ["'Info.plist' on base has no content", nothing])
+                       ["'Info.plist' on base has no content"])
     }
 
     func test_sourceCannotProcess() {
         XCTAssertEqual(block(.sourceCannotProcess(type: "StaticFile")),
-                       ["StaticFile declares no input ports and does not process", nothing])
+                       ["StaticFile declares no input ports and does not process"])
     }
 
     func test_processNotSupported() {
-        XCTAssertEqual(block(.processNotSupported(type: nil)), ["this node does not process", nothing])
+        XCTAssertEqual(block(.processNotSupported(type: nil)), ["this node does not process"])
     }
 
     func test_cannotHaveProperties() {
-        XCTAssertEqual(block(.cannotHaveProperties), ["this node takes no properties", nothing])
+        XCTAssertEqual(block(.cannotHaveProperties), ["this node takes no properties"])
     }
 
     func test_cannotDeleteNodeWithOutputs() {
-        XCTAssertEqual(block(.cannotDeleteNodeWithOutputs), ["a node whose outputs are wired is not deleted", nothing])
+        XCTAssertEqual(block(.cannotDeleteNodeWithOutputs), ["a node whose outputs are wired is not deleted"])
     }
 
     func test_nodeNotFound() {
-        XCTAssertEqual(block(.nodeNotFound), ["there is no such node", nothing])
+        XCTAssertEqual(block(.nodeNotFound), ["there is no such node"])
     }
 
     func test_nameCollision() {
         XCTAssertEqual(block(.nameCollision(path: "input:/src/a", existingKind: 1)),
-                       ["src/a is a node of kind 1, and two children of one folder do not share a name", nothing])
+                       ["src/a is a node of kind 1, and two children of one folder do not share a name"])
     }
 
     func test_graphSpecBadIntegrity() {
         XCTAssertEqual(block(.graphSpecBadIntegrity(found: "A", expected: "B", log: "line one\nline two")),
-                       ["the graph holds A where its spec has B", "  line one", "  line two", nothing])
+                       ["the graph holds A where its spec has B", "  line one", "  line two"])
     }
 
     func test_wireWithoutOutputPort() {
         XCTAssertEqual(block(.wireWithoutOutputPort(wire: "x", type: "StaticFile")),
-                       ["the StaticFile feeding the wire 'x' names no output port to take a value from", nothing])
+                       ["the StaticFile feeding the wire 'x' names no output port to take a value from"])
         XCTAssertEqual(block(.wireWithoutOutputPort(wire: nil, type: "StaticFile")).first,
                        "the StaticFile feeding this node names no output port to take a value from")
     }
 
     func test_identityMismatch() {
         XCTAssertEqual(block(.identityMismatch(type: "SampleTool", filedUnder: "0123456789abcdef", computed: "fedcba9876543210")),
-                       ["a spec table files a SampleTool under 01234567…, and its row gives fedcba98…", nothing])
+                       ["a spec table files a SampleTool under 01234567…, and its row gives fedcba98…"])
     }
 
     func test_emptyWireName() {
-        XCTAssertEqual(block(.emptyWireName), ["a wire is asked for under an empty name", nothing])
+        XCTAssertEqual(block(.emptyWireName), ["a wire is asked for under an empty name"])
     }
 
     func test_specTableMissingRow() {
         XCTAssertEqual(block(.specTableMissingRow(identity: "0123456789abcdef")),
-                       ["a spec table names the node 01234567… and holds no row for it", nothing])
+                       ["a spec table names the node 01234567… and holds no row for it"])
     }
 
     func test_specTableCycle() {
         XCTAssertEqual(block(.specTableCycle(identity: "0123456789abcdef")),
-                       ["a spec table has the node 01234567… among its own sources", nothing])
+                       ["a spec table has the node 01234567… among its own sources"])
     }
 
     func test_specUnreadable() {
-        XCTAssertEqual(block(.specUnreadable(found: nil, context: "in a port")), ["a graph spec ends early — in a port", nothing])
+        XCTAssertEqual(block(.specUnreadable(found: nil, context: "in a port")), ["a graph spec ends early — in a port"])
         XCTAssertEqual(block(.specUnreadable(found: "", context: "")).first,
                        "a graph spec has an empty name where a type or a port belongs")
         XCTAssertEqual(block(.specUnreadable(found: "}", context: "in a port")).first,
@@ -346,64 +333,64 @@ final class ErrorRenderingTests: XCTestCase {
     }
 
     func test_duplicateWireName() {
-        XCTAssertEqual(block(.duplicateWireName(name: "a")), ["an input port holds a different wire named 'a'", nothing])
+        XCTAssertEqual(block(.duplicateWireName(name: "a")), ["an input port holds a different wire named 'a'"])
     }
 
     func test_wireNotDisconnected() {
-        XCTAssertEqual(block(.wireNotDisconnected), ["a wire does not disconnect", nothing])
+        XCTAssertEqual(block(.wireNotDisconnected), ["a wire does not disconnect"])
     }
 
     func test_circularWiring() {
         XCTAssertEqual(block(.circularWiring(fromNodeID: 1, toNodeID: 2)),
-                       ["a wire from node #1 into node #2 would make the graph circular", nothing])
+                       ["a wire from node #1 into node #2 would make the graph circular"])
     }
 
     func test_staticPortWiredAfterCreation() {
         XCTAssertEqual(block(.staticPortWiredAfterCreation(type: "SampleTool", port: "input")),
-                       ["SampleTool's input 'input' is wired when the node is made, from its spec, and not after", nothing])
+                       ["SampleTool's input 'input' is wired when the node is made, from its spec, and not after"])
     }
 
     func test_sourceWithoutIdentity() {
-        XCTAssertEqual(block(.sourceWithoutIdentity(nodeID: 9)), ["node #9 has no identity, so nothing wired from it has one", nothing])
+        XCTAssertEqual(block(.sourceWithoutIdentity(nodeID: 9)), ["node #9 has no identity, so nothing wired from it has one"])
     }
 
     func test_nodeNotPersisted() {
         XCTAssertEqual(block(.nodeNotPersisted(kind: 3, name: "a.c")),
-                       ["a node of kind 3 named 'a.c' is not saved, so it has no id", nothing])
+                       ["a node of kind 3 named 'a.c' is not saved, so it has no id"])
     }
 
     func test_nodeHasNoName() {
-        XCTAssertEqual(block(.nodeHasNoName(kind: 1, nodeID: 4)), ["node #4 of kind 1 has no name, and a path is made of names", nothing])
+        XCTAssertEqual(block(.nodeHasNoName(kind: 1, nodeID: 4)), ["node #4 of kind 1 has no name, and a path is made of names"])
         XCTAssertEqual(block(.nodeHasNoName(kind: nil, nodeID: nil)).first, "a node has no name, and a path is made of names")
     }
 
     func test_noSuchFolder() {
-        XCTAssertEqual(block(.noSuchFolder(path: "input:/src")), ["no folder is at src", nothing])
+        XCTAssertEqual(block(.noSuchFolder(path: "input:/src")), ["no folder is at src"])
     }
 
     func test_unexpectedNodeKind() {
-        XCTAssertEqual(block(.unexpectedNodeKind(kind: 5)), ["a node of kind 5 is not one a folder holds", nothing])
+        XCTAssertEqual(block(.unexpectedNodeKind(kind: 5)), ["a node of kind 5 is not one a folder holds"])
     }
 
     func test_folderNotDeletable() {
-        XCTAssertEqual(block(.folderNotDeletable(path: "input:/src")), ["src holds something that is not deletable", nothing])
+        XCTAssertEqual(block(.folderNotDeletable(path: "input:/src")), ["src holds something that is not deletable"])
         XCTAssertEqual(block(.folderNotDeletable(path: nil)).first, "a folder holds something that is not deletable")
     }
 
     func test_unexpectedValueType() {
-        XCTAssertEqual(block(.unexpectedValueType), ["a value is not of the type its reader takes", nothing])
+        XCTAssertEqual(block(.unexpectedValueType), ["a value is not of the type its reader takes"])
     }
 
     func test_kindNotSerializable() {
-        XCTAssertEqual(block(.kindNotSerializable(kind: 5)), ["the type registered for kind 5 is not serializable", nothing])
+        XCTAssertEqual(block(.kindNotSerializable(kind: 5)), ["the type registered for kind 5 is not serializable"])
     }
 
     func test_kindNotANode() {
-        XCTAssertEqual(block(.kindNotANode(kind: 5)), ["the type registered for kind 5 is not a node type", nothing])
+        XCTAssertEqual(block(.kindNotANode(kind: 5)), ["the type registered for kind 5 is not a node type"])
     }
 
     func test_duplicateKind() {
-        XCTAssertEqual(block(.duplicateKind(kind: 5, existing: "A", duplicate: "B")), ["kind 5 is claimed by both A and B", nothing])
+        XCTAssertEqual(block(.duplicateKind(kind: 5, existing: "A", duplicate: "B")), ["kind 5 is claimed by both A and B"])
     }
 
     // MARK: - Values
@@ -411,35 +398,34 @@ final class ErrorRenderingTests: XCTestCase {
     func test_objectCorrupted() {
         XCTAssertEqual(block(.objectCorrupted(path: "/store/ab/cd", expected: "abcd", found: "ef01")), [
             "/store/ab/cd is filed as abcd, and its bytes hash to ef01",
-            nothing,
             "  delete: /store/ab/cd",
         ])
     }
 
     func test_valueUnreadable() {
         XCTAssertEqual(block(.valueUnreadable(form: .folderManifest, port: "inputFolder", wire: "input:/src")),
-                       ["the folder manifest for 'src' on inputFolder cannot be read", nothing])
+                       ["the folder manifest for 'src' on inputFolder cannot be read"])
         XCTAssertEqual(block(.valueUnreadable(form: .folderManifest, port: nil, wire: "input:/src")).first,
                        "the folder manifest for 'src' cannot be read")
     }
 
     func test_subtreeUnreadable() {
         XCTAssertEqual(block(.subtreeUnreadable(folder: "input:/src", hash: "abc")),
-                       ["the subtree manifest of src cannot be read", "  manifest: abc", nothing])
+                       ["the subtree manifest of src cannot be read", "  manifest: abc"])
     }
 
     func test_folderUnreadable() {
         XCTAssertEqual(block(.folderUnreadable(path: "/tmp/x", reason: "permission denied")),
-                       ["/tmp/x cannot be read to fold its content root", "  reason: permission denied", nothing])
+                       ["/tmp/x cannot be read to fold its content root", "  reason: permission denied"])
     }
 
     func test_treeCollision() {
         XCTAssertEqual(block(.treeCollision(path: "Info.plist", first: "input:/a", second: "input:/b")),
-                       ["two trees hold 'Info.plist': a and b", nothing])
+                       ["two trees hold 'Info.plist': a and b"])
     }
 
     func test_treeHasNoEntry() {
-        XCTAssertEqual(block(.treeHasNoEntry(name: "x", entries: ["a", "b"])), ["the tree holds no file 'x'", "  it holds: a, b", nothing])
+        XCTAssertEqual(block(.treeHasNoEntry(name: "x", entries: ["a", "b"])), ["the tree holds no file 'x'", "  it holds: a, b"])
         XCTAssertEqual(block(.treeHasNoEntry(name: "x", entries: [])).dropFirst().first, "  it holds: nothing")
     }
 
@@ -454,7 +440,6 @@ final class ErrorRenderingTests: XCTestCase {
             "Packages/semel.fmla:3:5: error: 'x' is not defined",
             "  product 'a' = x",
             "  formula: Packages/semel.fmla",
-            nothing,
         ])
         XCTAssertEqual(block(.formulaInvalid(path: "input:/Packages/semel.fmla", problem: .undefinedIdentifier(name: "x"),
                                              line: nil, column: nil, lineText: nil)).first,
@@ -499,29 +484,29 @@ final class ErrorRenderingTests: XCTestCase {
 
     func test_twoProductsAtOnePath() {
         XCTAssertEqual(block(.twoProductsAtOnePath(path: "output:/hello/hello")),
-                       ["two products of one formula are at hello/hello", nothing])
+                       ["two products of one formula are at hello/hello"])
     }
 
     func test_productPathInvalid() {
-        XCTAssertEqual(block(.productPathInvalid(path: "x", root: nil)), ["the product path 'x' names nothing", nothing])
+        XCTAssertEqual(block(.productPathInvalid(path: "x", root: nil)), ["the product path 'x' names nothing"])
         XCTAssertEqual(block(.productPathInvalid(path: "build:/x", root: "build:")).first,
                        "the product path 'build:/x' begins with 'build:', which is neither input: nor output:")
     }
 
     func test_includeUnanswered() {
         XCTAssertEqual(block(.includeUnanswered(name: "rust", installed: ["SemelClang"])),
-                       ["include 'rust': no plugin answers this name", "  plugins: SemelClang", nothing])
+                       ["include 'rust': no plugin answers this name", "  plugins: SemelClang"])
         XCTAssertEqual(block(.includeUnanswered(name: "rust", installed: [])).dropFirst().first, "  plugins: none")
     }
 
     func test_includeClaimedTwice() {
         XCTAssertEqual(block(.includeClaimedTwice(name: "c", plugins: ["OtherC", "SemelClang"])),
-                       ["include 'c' is claimed by both OtherC and SemelClang", nothing])
+                       ["include 'c' is claimed by both OtherC and SemelClang"])
     }
 
     func test_includeRefused() {
         XCTAssertEqual(block(.includeRefused(name: "clang/c++26", plugin: "SemelClang", reason: .notSupported(feature: "C++26"))),
-                       ["include 'clang/c++26': SemelClang does not support C++26", nothing])
+                       ["include 'clang/c++26': SemelClang does not support C++26"])
         XCTAssertEqual(block(.includeRefused(name: "clang", plugin: "SemelClang", reason: .toolNotInstalled(tool: "clang"))).first,
                        "include 'clang': SemelClang finds no clang installed here")
     }
@@ -532,7 +517,6 @@ final class ErrorRenderingTests: XCTestCase {
         XCTAssertEqual(block(.inputsWithoutValue(kind: .includeFiles, paths: ["input:/hello/src/a.h"]), subject: .source(path: "input:/hello/src/main.c")), [
             "include files without a value: hello/src/a.h",
             "  source: hello/src/main.c",
-            nothing,
         ])
         XCTAssertEqual(block(.inputsWithoutValue(kind: .packageFolderAndManifest, paths: ["input:/Packages/Kit"])).first,
                        "Packages/Kit and its Package.swift have no value")
@@ -551,14 +535,14 @@ final class ErrorRenderingTests: XCTestCase {
     }
 
     func test_noSources() {
-        XCTAssertEqual(block(.noSources, subject: .target(name: "Models")), ["no Swift source to compile", "  target: Models", nothing])
+        XCTAssertEqual(block(.noSources, subject: .target(name: "Models")), ["no Swift source to compile", "  target: Models"])
     }
 
     // MARK: - Swift packages
 
     func test_manifestUnreadable() {
         XCTAssertEqual(block(.manifestUnreadable(path: "input:/Packages/Kit/Package.swift", reason: "bad JSON")),
-                       ["Packages/Kit/Package.swift cannot be read", "  reason: bad JSON", nothing])
+                       ["Packages/Kit/Package.swift cannot be read", "  reason: bad JSON"])
         XCTAssertEqual(block(.manifestUnreadable(path: nil, reason: "bad JSON")).first, "a package manifest cannot be read")
     }
 
@@ -569,13 +553,12 @@ final class ErrorRenderingTests: XCTestCase {
             "Packages/Dependencies/GRDB.swift holds no package",
             "  from: https://github.com/groue/GRDB.swift.git",
             "  package: GRDB.swift",
-            "  needed by: libModels.a",
             "  vendor with: semel-swift prepare",
         ])
         XCTAssertEqual(block(.packageNotPresent(path: "input:/x", origin: .registry(identity: "mona.LinkedList"))).dropFirst().first,
                        "  from: registry package mona.LinkedList")
         XCTAssertEqual(block(.packageNotPresent(path: "input:/x", origin: nil)),
-                       ["x holds no package", "  from: a local path dependency", nothing])
+                       ["x holds no package", "  from: a local path dependency"])
     }
 
     /// The design's example, line for line.
@@ -584,7 +567,6 @@ final class ErrorRenderingTests: XCTestCase {
                              subject: .target(name: "Kit"), products: products("Packages/libKit.a")), [
             "Packages/Kit/Sources/Kit has not been pushed",
             "  target: Kit",
-            "  needed by: libKit.a",
             "  missing: Sources/Kit (also tried Source/Kit, src/Kit, srcs/Kit)",
         ])
     }
@@ -608,7 +590,6 @@ final class ErrorRenderingTests: XCTestCase {
             "  found: sha256:bbb",
             "  not compared: 2 dot-named (.spi.yml, Sources/.swiftlint.yml)",
             "  package: GRDB.swift",
-            "  needed by: libConversations.a, libExplore.a, libLists.a and 2 more",
             "  re-lock with: semel-swift prepare",
         ])
     }
@@ -620,7 +601,6 @@ final class ErrorRenderingTests: XCTestCase {
             "  lock: Packages/Dependencies/GRDB.swift.semel-lock (version 7.1.0, from https://github.com/groue/GRDB.swift.git)",
             "  folded as: semel-folder-content-root 1",
             "  this Semel folds as: semel-folder-content-root 4",
-            nothing,
             "  re-lock with: semel-swift prepare",
         ])
     }
@@ -630,7 +610,6 @@ final class ErrorRenderingTests: XCTestCase {
                                              lockPath: "input:/Packages/Dependencies/GRDB.swift.semel-lock",
                                              problem: .missingKey(key: "fold"))), [
             "Packages/Dependencies/GRDB.swift.semel-lock is not a lock: there is no 'fold' line",
-            nothing,
             "  re-lock with: semel-swift prepare",
         ])
         let problems: [(LockProblem, String)] = [
@@ -646,6 +625,33 @@ final class ErrorRenderingTests: XCTestCase {
         }
     }
 
+    /// The lock barrier's refusal of a batch: the facts a reader compares, the paths that
+    /// moved the folder, and the re-lock as the remedy. Not a build's error, so no heading.
+    func test_batchRejected() {
+        XCTAssertEqual(ErrorReportRenderer.lines(for: .batchRejected(
+            folder: "Packages/Dependencies/GRDB.swift", lock: "Packages/Dependencies/GRDB.swift.semel-lock",
+            expected: .contentRoot("aaa"), found: "bbb",
+            paths: ["Packages/Dependencies/GRDB.swift/a.swift", "Packages/Dependencies/GRDB.swift/b.swift"])), [
+            "Packages/Dependencies/GRDB.swift is locked, and the batch changes it without a lock it matches: "
+                + "nothing of the batch is committed",
+            "  lock: Packages/Dependencies/GRDB.swift.semel-lock",
+            "  expected: sha256:aaa",
+            "  found: sha256:bbb",
+            "  paths: Packages/Dependencies/GRDB.swift/a.swift, Packages/Dependencies/GRDB.swift/b.swift",
+            "  re-lock with: semel-swift prepare",
+        ])
+        let expectations: [(LockExpectation, String)] = [
+            (.otherFold(fold: "semel-folder-content-root 3", contentRoot: "aaa"),
+             "  expected: sha256:aaa, folded as 'semel-folder-content-root 3'; this Semel folds as '\(FolderContentRoot.formatTag)'"),
+            (.unreadable(problem: .missingKey(key: "fold")), "  expected: nothing: the lock is not a lock, there is no 'fold' line"),
+        ]
+        for (expected, line) in expectations {
+            let lines = ErrorReportRenderer.lines(for: .batchRejected(folder: "f", lock: "f.semel-lock", expected: expected,
+                                                                      found: nil, paths: []))
+            XCTAssertEqual(lines.dropFirst().prefix(3), ["  lock: f.semel-lock", line, "  found: no folder"])
+        }
+    }
+
     func test_binaryTargetNotBuilt() {
         let missing = UnbuiltBinaryTarget(package: "Sparkle", packageFolder: "input:/pkg", target: "Sparkle",
                                           artifact: .remote(url: "https://example.com/Sparkle.zip"),
@@ -655,7 +661,6 @@ final class ErrorRenderingTests: XCTestCase {
             "  from: https://example.com/Sparkle.zip",
             "  products: Sparkle",
             "  target: Sparkle",
-            nothing,
             "  vendor with: semel-swift prepare",
         ])
         let bundle = UnbuiltBinaryTarget(package: "Sparkle", packageFolder: "input:/pkg", target: "Lint",
@@ -666,7 +671,6 @@ final class ErrorRenderingTests: XCTestCase {
             "pkg/Lint.artifactbundle is not an .xcframework, which is the binary artifact linked here",
             "  holds: info.json",
             "  products: Lint",
-            nothing,
         ])
         let zipped = UnbuiltBinaryTarget(package: "Sparkle", packageFolder: "input:/pkg", target: "Sparkle",
                                          artifact: .zip(path: "Sparkle.xcframework.zip"),
@@ -679,7 +683,6 @@ final class ErrorRenderingTests: XCTestCase {
             "Schema has no source of its own, only what its build-tool plugins would generate, and no plugin is run",
             "  package: Gen",
             "  plugins: Generate (GenPlugin), Stamp",
-            nothing,
         ])
     }
 
@@ -687,7 +690,7 @@ final class ErrorRenderingTests: XCTestCase {
 
     func test_notAProject() {
         XCTAssertEqual(block(.notAProject),
-                       ["the project file is not a project.pbxproj: it has no objects table and root object", nothing])
+                       ["the project file is not a project.pbxproj: it has no objects table and root object"])
     }
 
     func test_projectNotPushed() {
@@ -695,88 +698,86 @@ final class ErrorRenderingTests: XCTestCase {
                              subject: .project(path: "input:/repo/App.xcodeproj")), [
             "repo/App.xcodeproj/project.pbxproj has not been pushed",
             "  project: App.xcodeproj",
-            nothing,
         ])
     }
 
     func test_projectHasNoContent() {
         XCTAssertEqual(block(.projectHasNoContent(path: "input:/repo/App.xcodeproj/project.pbxproj")),
-                       ["repo/App.xcodeproj/project.pbxproj has no content", nothing])
+                       ["repo/App.xcodeproj/project.pbxproj has no content"])
     }
 
     func test_noSuchTarget() {
-        XCTAssertEqual(block(.noSuchTarget(name: "App")), ["the project has no target named 'App'", nothing])
+        XCTAssertEqual(block(.noSuchTarget(name: "App")), ["the project has no target named 'App'"])
     }
 
     func test_targetHasNoSources() {
         XCTAssertEqual(block(.targetHasNoSources(name: "App")),
-                       ["App has no synchronized folder, no listed sources and no borrowed sources", nothing])
+                       ["App has no synchronized folder, no listed sources and no borrowed sources"])
     }
 
     func test_noSuchConfiguration() {
         XCTAssertEqual(block(.noSuchConfiguration(name: "Beta", available: ["Debug", "Release"])),
-                       ["the project has no configuration named 'Beta'", "  configurations: Debug, Release", nothing])
+                       ["the project has no configuration named 'Beta'", "  configurations: Debug, Release"])
     }
 
     func test_unsupportedSources() {
         XCTAssertEqual(block(.unsupportedSources(target: "App", files: ["input:/repo/a.m"])),
-                       ["App lists sources that are not Swift, and they are not compiled", "  sources: repo/a.m", nothing])
+                       ["App lists sources that are not Swift, and they are not compiled", "  sources: repo/a.m"])
     }
 
     func test_noApplicationTarget() {
-        XCTAssertEqual(block(.noApplicationTarget), ["the project has no application target", nothing])
+        XCTAssertEqual(block(.noApplicationTarget), ["the project has no application target"])
     }
 
     func test_noApplicationForSDK() {
         XCTAssertEqual(block(.noApplicationForSDK(sdk: "iphoneos", applications: ["Mac (macosx)"])),
-                       ["no application target builds for iphoneos", "  applications: Mac (macosx)", nothing])
+                       ["no application target builds for iphoneos", "  applications: Mac (macosx)"])
     }
 
     func test_severalApplicationsForSDK() {
         XCTAssertEqual(block(.severalApplicationsForSDK(sdk: "iphoneos", applications: ["A", "B"])),
-                       ["2 application targets build for iphoneos, and nothing names one", "  applications: A, B", nothing])
+                       ["2 application targets build for iphoneos, and nothing names one", "  applications: A, B"])
     }
 
     func test_noSuchApplication() {
         XCTAssertEqual(block(.noSuchApplication(name: "X", applications: [])),
-                       ["the project has no application target named 'X'", "  applications: none", nothing])
+                       ["the project has no application target named 'X'", "  applications: none"])
     }
 
     func test_localPackagesNotFound() {
         XCTAssertEqual(block(.localPackagesNotFound(application: "IceCubes", products: ["Account", "Models"], synchronizedFolders: [])), [
             "IceCubes links Account, Models from local packages, and the project has none where they are looked for",
             "  synchronized folders: none",
-            nothing,
         ])
     }
 
     func test_xcconfigIncludeCycle() {
         XCTAssertEqual(block(.xcconfigIncludeCycle(chain: ["input:/a.xcconfig", "input:/b.xcconfig", "input:/a.xcconfig"])),
-                       ["xcconfig files include each other in a cycle: a.xcconfig → b.xcconfig → a.xcconfig", nothing])
+                       ["xcconfig files include each other in a cycle: a.xcconfig → b.xcconfig → a.xcconfig"])
     }
 
     func test_xcconfigMissing() {
         XCTAssertEqual(block(.xcconfigMissing(paths: ["input:/repo/App.xcconfig"], undefined: ["BUNDLE_ID_PREFIX"])),
-                       ["repo/App.xcconfig has not been pushed", "  undefined: BUNDLE_ID_PREFIX", nothing])
+                       ["repo/App.xcconfig has not been pushed", "  undefined: BUNDLE_ID_PREFIX"])
         XCTAssertEqual(block(.xcconfigMissing(paths: ["input:/a.xcconfig", "input:/b.xcconfig"], undefined: ["X"])).first,
                        "a.xcconfig, b.xcconfig have not been pushed")
     }
 
     func test_undefinedPlistVariables() {
         XCTAssertEqual(block(.undefinedPlistVariables(names: ["A", "B"])),
-                       ["the Info.plist names settings nothing defines: A, B", nothing])
+                       ["the Info.plist names settings nothing defines: A, B"])
     }
 
     // MARK: - Apple resources
 
     func test_notAnInterfaceBuilderDocument() {
         XCTAssertEqual(block(.notAnInterfaceBuilderDocument(path: "Base.lproj/Main.strings", compiles: [".storyboard", ".xib"])),
-                       ["Base.lproj/Main.strings is not an Interface Builder document", "  compiled: .storyboard, .xib", nothing])
+                       ["Base.lproj/Main.strings is not an Interface Builder document", "  compiled: .storyboard, .xib"])
     }
 
     func test_bundleWireKeyInvalid() {
         XCTAssertEqual(block(.bundleWireKeyInvalid(key: "Contents/Tiny.app")),
-                       ["the bundle's wire is keyed 'Contents/Tiny.app', which is not one folder's name", nothing])
+                       ["the bundle's wire is keyed 'Contents/Tiny.app', which is not one folder's name"])
     }
 
     func test_xcframeworkUnusable() {
@@ -803,7 +804,7 @@ final class ErrorRenderingTests: XCTestCase {
         for (problem, sentence) in sentences {
             XCTAssertEqual(block(.xcframeworkUnusable(path: "input:/pkg/Tiny.xcframework", problem: problem),
                                  subject: .resource(path: "input:/pkg/Tiny.xcframework")),
-                           ["pkg/Tiny.xcframework: \(sentence)", "  resource: Tiny.xcframework", nothing])
+                           ["pkg/Tiny.xcframework: \(sentence)", "  resource: Tiny.xcframework"])
         }
     }
 
@@ -814,7 +815,6 @@ final class ErrorRenderingTests: XCTestCase {
             headline,
             "  entries: 4 in actool's, 3 in the canonical one",
             "  resource: Media.xcassets",
-            nothing,
         ])
         let details: [(AssetCatalogProblem, [String])] = [
             (.unreadableByAssetutil(copy: .canonical, output: "bad file"), ["  assetutil: fails on the canonical one", "  bad file"]),
@@ -827,7 +827,7 @@ final class ErrorRenderingTests: XCTestCase {
             (.roundTripDiffers(variable: "FACETKEYS"), ["  reads back differently: FACETKEYS"]),
         ]
         for (problem, lines) in details {
-            XCTAssertEqual(block(.assetCatalogNotCanonical(problem: problem)), [headline] + lines + [nothing])
+            XCTAssertEqual(block(.assetCatalogNotCanonical(problem: problem)), [headline] + lines)
         }
         let bom: [(BOMProblem, String)] = [
             (.unsupportedVersion(version: 2), "version 2, and version 1 is the one known"),
@@ -848,7 +848,7 @@ final class ErrorRenderingTests: XCTestCase {
 
     func test_unclassified() {
         XCTAssertEqual(block(.unclassified(type: "Foreign", description: "a foreign failure\nwith detail")),
-                       ["a foreign failure", "  error: Foreign", "  with detail", nothing])
+                       ["a foreign failure", "  error: Foreign", "  with detail"])
     }
 
     /// The test above each condition is the one that pins it; this one fails to compile
@@ -873,7 +873,7 @@ final class ErrorRenderingTests: XCTestCase {
                  .includeRefused,
                  .inputsWithoutValue, .noSources,
                  .manifestUnreadable, .packageNotPresent, .targetFolderMissing, .lockMismatch, .lockFoldChanged,
-                 .lockUnreadable, .binaryTargetNotBuilt, .sourcesOnlyFromPlugins,
+                 .lockUnreadable, .batchRejected, .binaryTargetNotBuilt, .sourcesOnlyFromPlugins,
                  .notAProject, .projectNotPushed, .projectHasNoContent, .noSuchTarget, .targetHasNoSources,
                  .noSuchConfiguration, .unsupportedSources, .noApplicationTarget, .noApplicationForSDK,
                  .severalApplicationsForSDK, .noSuchApplication, .localPackagesNotFound, .xcconfigIncludeCycle,
@@ -899,7 +899,7 @@ final class ErrorRenderingTests: XCTestCase {
             (.source(path: "input:/hello/src/main.c"), "  source: hello/src/main.c"),
         ]
         for (subject, line) in subjects {
-            XCTAssertEqual(block(.noSources, subject: subject), ["no Swift source to compile", line, nothing])
+            XCTAssertEqual(block(.noSources, subject: subject), ["no Swift source to compile", line])
         }
     }
 
@@ -917,9 +917,9 @@ final class ErrorRenderingTests: XCTestCase {
 
         XCTAssertEqual(ErrorReportRenderer.lines(for: [ErrorRecord(document: document, products: needing, facts: facts())],
                                                  style: plain, export: .nothing), [
+            "libConversations.a, libExplore.a, libLists.a and 2 more:",
             "Packages/Models/Sources/Models/Account.swift:201:28: error: cannot convert value of type 'String' to specified type 'Int'",
             "  target: Models",
-            "  needed by: libConversations.a, libExplore.a, libLists.a and 2 more",
             "",
             "1 error · 5 products without a value · nothing exported",
         ])
@@ -938,7 +938,8 @@ final class ErrorRenderingTests: XCTestCase {
 
         try EnginePlugin().handle(verb: "errors", tokens: [], context: context)
 
-        XCTAssertEqual(Array(context.messages.prefix(3)), [
+        XCTAssertEqual(Array(context.messages.prefix(4)), [
+            "no product:",
             "Sources/My App/main.swift:1:1: error: x",
             "    note: see Sources/My App/other.swift",
             "  source: Sources/My App/main.swift",
@@ -951,40 +952,115 @@ final class ErrorRenderingTests: XCTestCase {
         XCTAssertEqual(block(.tool(text: "", tool: "actool", status: 70, subject: .resource(path: "input:/App/Media.xcassets"))), [
             "actool exited with status 70 and said nothing",
             "  resource: Media.xcassets",
-            nothing,
         ])
     }
 
-    // MARK: - Needed by
+    // MARK: - Headings
+
+    /// The report's first line: the heading of one condition's products.
+    private func heading(_ products: [StoppedProduct]) -> String? {
+        ErrorReportRenderer.lines(for: [ErrorRecord(document: .engine(.noSources, subject: nil), products: products,
+                                                    facts: facts())], style: plain).first
+    }
 
     /// Up to three named, the rest counted; three is three, with nothing counted.
-    func test_neededByNamesThreeAndCountsTheRest() {
-        XCTAssertEqual(block(.noSources, products: products("a/1.a", "a/2.a", "a/3.a")).last, "  needed by: 1.a, 2.a, 3.a")
-        XCTAssertEqual(block(.noSources, products: products("a/1.a", "a/2.a", "a/3.a", "a/4.a")).last,
-                       "  needed by: 1.a, 2.a, 3.a and 1 more")
+    func test_aHeadingNamesThreeAndCountsTheRest() {
+        XCTAssertEqual(heading(products("a/1.a", "a/2.a", "a/3.a")), "1.a, 2.a, 3.a:")
+        XCTAssertEqual(heading(products("a/1.a", "a/2.a", "a/3.a", "a/4.a")), "1.a, 2.a, 3.a and 1 more:")
     }
 
     /// File names unless two products of the report share one: then the path under
-    /// `output:` tells them apart, on every line of the report alike.
+    /// `output:` tells them apart, in every heading of the report alike.
     func test_aFileNameTwoProductsShareIsTheirPath() {
         let first  = ErrorRecord(document: .failure("a"), products: products("Packages/A/libKit.a"), facts: facts())
         let second = ErrorRecord(document: .failure("b"), products: products("Packages/B/libKit.a", "Packages/libOther.a"),
                                  facts: facts())
 
-        XCTAssertEqual(ErrorReportRenderer.lines(for: [first, second], style: plain).filter { $0.contains("needed by") },
-                       ["  needed by: Packages/A/libKit.a", "  needed by: Packages/B/libKit.a, libOther.a"])
+        XCTAssertEqual(ErrorReportRenderer.lines(for: [first, second], style: plain).filter { $0.hasSuffix(":") },
+                       ["Packages/A/libKit.a:", "Packages/B/libKit.a, libOther.a:"])
     }
 
-    /// A tree product is named once, by its folder with a separator, however many of its
-    /// entries a cause reaches; a tree whose entries are not known is named the same.
+    /// A tree product is named once, by its folder, however many of its entries a cause
+    /// reaches; a tree whose entries are not known is named the same.
     func test_aTreeProductIsNamedByItsFolderOnce() {
         let entries = [StoppedProduct(path: "output:/App/IceCubesApp.app/Info.plist", treeFolder: "output:/App/IceCubesApp.app"),
                        StoppedProduct(path: "output:/App/IceCubesApp.app/IceCubesApp", treeFolder: "output:/App/IceCubesApp.app")]
 
-        XCTAssertEqual(block(.noSources, products: entries).last, "  needed by: IceCubesApp.app/")
-        XCTAssertEqual(block(.noSources, products: [StoppedProduct(path: "output:/App/IceCubesApp.app",
-                                                                   treeFolder: "output:/App/IceCubesApp.app")]).last,
-                       "  needed by: IceCubesApp.app/")
+        XCTAssertEqual(heading(entries), "IceCubesApp.app:")
+        XCTAssertEqual(heading([StoppedProduct(path: "output:/App/IceCubesApp.app", treeFolder: "output:/App/IceCubesApp.app")]),
+                       "IceCubesApp.app:")
+    }
+
+    /// Products with the same errors share a heading; one with an error more has its own,
+    /// in path order of each heading's first product. An error under an earlier heading is
+    /// its first line and `(above)` under a later one, in line-one order with the rest.
+    func test_productsWithTheSameErrorsShareAHeadingAndAnErrorIsPrintedOnce() {
+        let models = ErrorRecord(document: .tool(text: "input:/Models/Account.swift:1:1: error: models", tool: "swiftc",
+                                                 status: 1, subject: .target(name: "Models")),
+                                 products: products("App/IceCubesApp.app", "Packages/libExplore.a", "Packages/libLists.a"),
+                                 facts: facts())
+        let app = ErrorRecord(document: .tool(text: "input:/App/App.swift:1:1: error: app", tool: "swiftc", status: 1,
+                                              subject: .target(name: "IceCubesApp")),
+                              products: products("App/IceCubesApp.app"), facts: facts())
+
+        XCTAssertEqual(ErrorReportRenderer.lines(for: [models, app], style: plain), [
+            "IceCubesApp.app:",
+            "App/App.swift:1:1: error: app",
+            "  target: IceCubesApp",
+            "",
+            "Models/Account.swift:1:1: error: models",
+            "  target: Models",
+            "",
+            "libExplore.a, libLists.a:",
+            "Models/Account.swift:1:1: error: models (above)",
+            "",
+            "2 errors · 3 products without a value",
+        ])
+    }
+
+    /// An error printed above, then one printed in full: a blank line between them.
+    func test_anErrorInFullAfterAnAboveLineHasABlankLineBeforeIt() {
+        let shared = ErrorRecord(document: .failure("a"), products: products("x/1.a", "x/2.a"), facts: facts())
+        let own    = ErrorRecord(document: .failure("b"), products: products("x/2.a"), facts: facts())
+
+        XCTAssertEqual(ErrorReportRenderer.lines(for: [shared, own], style: plain), [
+            "1.a:",
+            "a",
+            "",
+            "2.a:",
+            "a (above)",
+            "",
+            "b",
+            "",
+            "2 errors · 2 products without a value",
+        ])
+    }
+
+    /// The errors no product needs come after every product's, under their own heading.
+    func test_errorsNoProductNeedsComeLast() {
+        let needed   = ErrorRecord(document: .failure("b"), products: products("x/1.a"), facts: facts())
+        let unneeded = ErrorRecord(document: .failure("a"), products: [], facts: facts())
+
+        XCTAssertEqual(ErrorReportRenderer.lines(for: [unneeded, needed], style: plain), [
+            "1.a:",
+            "b",
+            "",
+            "no product:",
+            "a",
+            "",
+            "2 errors · 1 product without a value",
+        ])
+    }
+
+    /// `errors <product>`: the product's heading and its errors alone, or that it has a value.
+    func test_theProductViewIsItsHeadingAndItsErrors() {
+        let record = ErrorRecord(document: .failure("boom"), products: products("Packages/libModels.a", "Packages/libKit.a"),
+                                 facts: facts())
+
+        XCTAssertEqual(ErrorReportRenderer.productView([record], product: "output:/Packages/libModels.a", style: plain),
+                       ["libModels.a:", "boom", "", "1 error · 2 products without a value"])
+        XCTAssertEqual(ErrorReportRenderer.productView([], product: "output:/Packages/libModels.a", style: plain),
+                       ["libModels.a has a value."])
     }
 
     // MARK: - Causes, once each
@@ -1002,9 +1078,9 @@ final class ErrorRenderingTests: XCTestCase {
         ]
 
         XCTAssertEqual(ErrorReportRenderer.lines(for: records, style: ErrorReportStyle(verbose: true)), [
+            "hello, hello.dylib:",
             "missing settings: clang.compiler.toolDescriptor.name",
             "  source: hello/src/main.c, hello/src/hello.c",
-            "  needed by: hello, hello.dylib",
             "  write with: semel-clang <folder>",
             "  node: ClangCompiler #24, #28",
             "  ports: output",
@@ -1026,7 +1102,7 @@ final class ErrorRenderingTests: XCTestCase {
         let lines = ErrorReportRenderer.lines(for: [ErrorRecord(document: several, products: [], facts: facts())], style: plain)
 
         XCTAssertEqual(lines.filter { !$0.hasPrefix(" ") && !$0.isEmpty },
-                       ["Packages/Kit/Sources/Kit has not been pushed", "Packages/Kit/Sources/Util has not been pushed",
+                       ["no product:", "Packages/Kit/Sources/Kit has not been pushed", "Packages/Kit/Sources/Util has not been pushed",
                         "2 errors · every product has a value"])
     }
 
@@ -1053,10 +1129,10 @@ final class ErrorRenderingTests: XCTestCase {
         let record = ErrorRecord(document: .failure("boom"), products: [],
                                  facts: facts("SwiftCompiler", [2510], ports: ["swiftmodule", "object"], carried: 22))
 
-        XCTAssertEqual(ErrorReportRenderer.lines(for: [record], style: plain), ["boom", nothing, "", "1 error · every product has a value"])
+        XCTAssertEqual(ErrorReportRenderer.lines(for: [record], style: plain), ["no product:", "boom", "", "1 error · every product has a value"])
         XCTAssertEqual(ErrorReportRenderer.lines(for: [record], style: ErrorReportStyle(verbose: true)), [
+            "no product:",
             "boom",
-            nothing,
             "  node: SwiftCompiler #2510",
             "  ports: object, swiftmodule",
             "  carried by: 22 nodes",
@@ -1079,9 +1155,8 @@ final class ErrorRenderingTests: XCTestCase {
         XCTAssertEqual(block(document, style: ErrorReportStyle(colour: true)), [
             "\(bold)a.c:1:2\(reset): \(red)error:\(reset) boom",
             "  \(dim)source:\(reset) a.c",
-            "  \(dim)needed by:\(reset) nothing",
         ])
-        XCTAssertEqual(block(document), ["a.c:1:2: error: boom", "  source: a.c", nothing])
+        XCTAssertEqual(block(document), ["a.c:1:2: error: boom", "  source: a.c"])
         XCTAssertEqual(block(.notPushed(path: "input:/a.c", isFolder: false)).first, "a.c has not been pushed")
     }
 

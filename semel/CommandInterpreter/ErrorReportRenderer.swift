@@ -5,16 +5,19 @@
 // error report design).
 //
 // Every line is drawn here from the typed values a node published — its `ErrorDocument` —
-// and nothing the engine sends is a sentence to repeat or take apart. A block is a cause:
+// and nothing the engine sends is a sentence to repeat or take apart. The report leads
+// with products: one heading per set of products that share the same errors, and under it
+// each error, a block:
 //
+//     libConversations.a, libExplore.a, libLists.a and 2 more:
 //     Packages/Models/Sources/Models/Account.swift:201:28: error: cannot convert value …
 //       target: Models
-//       needed by: libConversations.a, libExplore.a, libLists.a and 2 more
 //
-// line one the diagnostic, then what the failing function belongs to, then the products
-// that have no value because of it, then — where the engine can state one as a fact — what
-// to change. The report ends with one summary line, counting errors and products; nodes
-// are not counted.
+// line one the diagnostic, then what the failing function belongs to, then — where the
+// engine can state one as a fact — what to change. An error is printed in full once; a
+// later heading that needs it again names it by its first line and `(above)`. Errors no
+// product needs come last, under `no product:`. The report ends with one summary line,
+// counting errors and products; nodes are not counted.
 
 import Foundation
 import SemelNodeKit
@@ -76,37 +79,55 @@ struct ErrorBlock: Equatable {
 
 enum ErrorReportRenderer {
 
-    /// How many products the `needed by:` line names before it counts the rest.
+    /// How many products a heading names before it counts the rest.
     static let productsNamed = 3
 
     /// How many paths a condition's own lines name before they count the rest.
     static let pathsNamed = 5
 
+    /// The heading of the errors no product needs.
+    static let noProductHeading = "no product:"
+
+    /// What follows an error's first line under a heading after the one it is printed under.
+    static let aboveMarker = "(above)"
+
     // MARK: - The whole report
 
-    /// The blocks, a blank line between them, and the summary line at the end. What
-    /// `errors` prints, and the idle-time report after a settle.
+    /// The headings, each with its errors, and the summary line at the end. What `errors`
+    /// prints, and the idle-time report after a settle.
     static func lines(for records: [ErrorRecord], style: ErrorReportStyle,
                       export: ExportOutcome? = nil) -> [String] {
         let blocks = Self.blocks(for: records)
-        return blockLines(blocks, style: style)
+        return groupLines(blocks, style: style)
             + [summaryLine(errors: blocks.count, productsWithoutValue: productCount(blocks), export: export)]
     }
 
-    /// `errors <product>`: the blocks of the causes reaching `product`, under one heading.
-    /// `product` is the full path asked about, `output:/…`; the records are the server's
-    /// answer for it, and none means the product has a value.
+    /// One condition as a report draws it, with no heading and no summary: an error a
+    /// command meets outside a build, such as a batch the lock barrier refuses.
+    static func lines(for condition: ErrorCondition) -> [String] {
+        let document = ErrorDocument.engine(condition, subject: nil)
+        return BlockRenderer(names: ProductNames(products: []), style: ErrorReportStyle())
+            .lines(for: ErrorBlock(document: document, subjects: [], products: [], facts: []))
+    }
+
+    /// `errors <product>`: that product's heading and its errors, alone. `product` is the
+    /// full path asked about, `output:/…`; the records are the server's answer for it, and
+    /// none means the product has a value.
     static func productView(_ records: [ErrorRecord], product: String, style: ErrorReportStyle) -> [String] {
         let isTree = records.contains { record in record.products.contains { $0.treeFolder == product } }
         let name   = ProductNames(products: [StoppedProduct(path: product, treeFolder: isTree ? product : nil)])
             .name(of: product, isTree: isTree)
         guard !records.isEmpty else {
-            return ["\(name) has a value."]
+            return ["\(ProductNames.headingName(name)) has a value."]
         }
-        let blocks = Self.blocks(for: records)
-        return ["\(name) has no value because:", ""]
-            + blockLines(blocks, style: style)
-            + [summaryLine(errors: blocks.count, productsWithoutValue: productCount(blocks), export: nil)]
+        let blocks   = Self.blocks(for: records)
+        let renderer = BlockRenderer(names: ProductNames(products: blocks.flatMap(\.products)), style: style)
+        var lines    = [renderer.heading("\(ProductNames.headingName(name)):")]
+        for block in blocks {
+            lines.append(contentsOf: renderer.lines(for: block))
+            lines.append("")
+        }
+        return lines + [summaryLine(errors: blocks.count, productsWithoutValue: productCount(blocks), export: nil)]
     }
 
     /// The summary line, in its four forms: the counts alone, as `errors` and the report
@@ -132,7 +153,7 @@ enum ErrorReportRenderer {
         return parts.joined(separator: " · ")
     }
 
-    /// The products a report's records name, each once, as `needed by:` counts them: a
+    /// The products a report's records name, each once, as the headings count them: a
     /// tree product once, by its folder.
     static func productsWithoutValue(_ records: [ErrorRecord]) -> Set<String> {
         Set(records.flatMap { $0.products.map(ProductNames.key(of:)) })
@@ -173,12 +194,75 @@ enum ErrorReportRenderer {
             .map(\.0)
     }
 
-    private static func blockLines(_ blocks: [ErrorBlock], style: ErrorReportStyle) -> [String] {
-        let renderer = BlockRenderer(names: ProductNames(products: blocks.flatMap(\.products)), style: style)
+    // MARK: - Headings
+
+    /// The products that share one set of errors, under one heading: `productKeys` in path order,
+    /// empty for the errors no product needs; `blocks` indices into the report's blocks, in
+    /// line-one order.
+    struct Group: Equatable {
+        var productKeys: [String]
+        var blocks:      [Int]
+    }
+
+    /// One group per set of products with the same errors, in path order of each group's
+    /// first product, and the errors no product needs last.
+    static func groups(of blocks: [ErrorBlock]) -> [Group] {
+        var blocksByKey: [String: [Int]] = [:]
+        var unneeded: [Int] = []
+        for (index, block) in blocks.enumerated() {
+            let productKeys = Set(block.products.map(ProductNames.key(of:)))
+            if productKeys.isEmpty {
+                unneeded.append(index)
+            }
+            for key in productKeys.sorted() {
+                blocksByKey[key, default: []].append(index)
+            }
+        }
+        var groups: [Group] = []
+        var positionBySet: [[Int]: Int] = [:]
+        for key in blocksByKey.keys.sorted() {
+            let set = blocksByKey[key] ?? []
+            if let position = positionBySet[set] {
+                groups[position].productKeys.append(key)
+            } else {
+                positionBySet[set] = groups.count
+                groups.append(Group(productKeys: [key], blocks: set))
+            }
+        }
+        if !unneeded.isEmpty {
+            groups.append(Group(productKeys: [], blocks: unneeded))
+        }
+        return groups
+    }
+
+    /// Each heading and its errors: an error in full under the first heading that needs
+    /// it, and by its first line and `(above)` under every later one, so the report holds
+    /// each error once and every product's heading still names all it waits on.
+    private static func groupLines(_ blocks: [ErrorBlock], style: ErrorReportStyle) -> [String] {
+        let names    = ProductNames(products: blocks.flatMap(\.products))
+        let renderer = BlockRenderer(names: names, style: style)
+        var printed: Set<Int> = []
         var lines: [String] = []
-        for block in blocks {
-            lines.append(contentsOf: renderer.lines(for: block))
-            lines.append("")
+        for group in groups(of: blocks) {
+            lines.append(renderer.heading(group.productKeys.isEmpty ? noProductHeading : names.heading(ofKeys: group.productKeys)))
+            var afterAbove = false
+            for index in group.blocks {
+                if printed.contains(index) {
+                    lines.append(renderer.aboveLine(for: blocks[index]))
+                    afterAbove = true
+                    continue
+                }
+                if afterAbove {
+                    lines.append("")
+                    afterAbove = false
+                }
+                printed.insert(index)
+                lines.append(contentsOf: renderer.lines(for: blocks[index]))
+                lines.append("")
+            }
+            if lines.last != "" {
+                lines.append("")
+            }
         }
         return lines
     }
@@ -190,7 +274,7 @@ enum ErrorReportRenderer {
 
 // MARK: - Product names
 
-/// How `needed by:` names products: by file name, and by the path under `output:` only
+/// How a heading names products: by file name, and by the path under `output:` only
 /// where two products of the report share a file name. A tree product is named by its
 /// folder, `IceCubesApp.app/`, once for all its entries.
 struct ProductNames {
@@ -205,8 +289,8 @@ struct ProductNames {
         ambiguous = Set(keysByName.filter { $0.value.count > 1 }.keys)
     }
 
-    /// The product a `needed by:` entry stands for: its own path, or its tree's folder
-    /// with a separator.
+    /// The product a heading's name stands for: its own path, or its tree's folder with a
+    /// separator.
     static func key(of product: StoppedProduct) -> String {
         product.treeFolder.map { "\($0)/" } ?? product.path
     }
@@ -214,6 +298,21 @@ struct ProductNames {
     /// The names of the products, each once, in path order.
     func names(of products: [StoppedProduct]) -> [String] {
         Set(products.map(Self.key(of:))).sorted().map(name(ofKey:))
+    }
+
+    /// A heading for products by their keys: three names in path order, then how many
+    /// more, and a colon.
+    func heading(ofKeys keys: [String]) -> String {
+        let named = keys.sorted().map { Self.headingName(name(ofKey: $0)) }
+        let shown = named.prefix(ErrorReportRenderer.productsNamed).joined(separator: ", ")
+        let rest  = named.count - ErrorReportRenderer.productsNamed
+        return (rest > 0 ? "\(shown) and \(rest) more" : shown) + ":"
+    }
+
+    /// A name as a heading carries it: a tree's without its separator, since the colon
+    /// after it ends the name.
+    static func headingName(_ name: String) -> String {
+        name.hasSuffix("/") ? String(name.dropLast()) : name
     }
 
     func name(of path: String, isTree: Bool) -> String {
@@ -238,7 +337,7 @@ struct ProductNames {
 }
 
 enum OutputPaths {
-    /// A path in the output file system without its root: what `needed by:` falls back to.
+    /// A path in the output file system without its root: what a heading falls back to.
     static func underOutput(_ path: String) -> String {
         let prefix = "\(FileSystemName.output)/"
         return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : path
@@ -258,7 +357,6 @@ struct BlockRenderer {
         if let subjectLine = subjectLine(block.subjects) {
             lines.append(subjectLine)
         }
-        lines.append(labelled("needed by", neededBy(block.products)))
         if let remedy = block.document.remedy {
             lines.append(remedyLine(remedy))
         }
@@ -360,16 +458,16 @@ struct BlockRenderer {
         }
     }
 
-    // MARK: Needed by
+    // MARK: Headings
 
-    private func neededBy(_ products: [StoppedProduct]) -> String {
-        let named = names.names(of: products)
-        guard !named.isEmpty else {
-            return "nothing"
-        }
-        let shown = named.prefix(ErrorReportRenderer.productsNamed).joined(separator: ", ")
-        let rest  = named.count - ErrorReportRenderer.productsNamed
-        return rest > 0 ? "\(shown) and \(rest) more" : shown
+    /// A heading, bold where there is colour.
+    func heading(_ text: String) -> String {
+        bold(text)
+    }
+
+    /// An error already printed under an earlier heading: its first line, and `(above)`.
+    func aboveLine(for block: ErrorBlock) -> String {
+        (diagnosticLines(block.document.diagnostic).first ?? "") + " " + dim(ErrorReportRenderer.aboveMarker)
     }
 
     // MARK: Remedy

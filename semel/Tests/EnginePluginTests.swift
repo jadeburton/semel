@@ -132,8 +132,8 @@ final class EnginePluginTests: XCTestCase {
         ErrorFacts(nodeType: type, nodeIDs: [id], ports: ports, carrierCount: carried)
     }
 
-    /// Each cause as its block — the diagnostic, what it belongs to, what needs it — and the
-    /// summary under them. The count goes through `countErrorRecords`, not `outputError`, so
+    /// Each cause as its block under its heading — the diagnostic and what it belongs to —
+    /// and the summary under them. The count goes through `countErrorRecords`, not `outputError`, so
     /// the settle report the idle-time event already counted is not counted twice.
     func test_errorsRendersEachCauseAndTheSummary() throws {
         let record = ErrorRecord(document: .tool(text: "input:/a.c:1:1: error: boom", tool: "clang", status: 1,
@@ -144,9 +144,9 @@ final class EnginePluginTests: XCTestCase {
         try run("errors")
 
         XCTAssertEqual(context.messages, [
+            "no product:",
             "a.c:1:1: error: boom",
             "  source: a.c",
-            "  needed by: nothing",
             "",
             "1 error · every product has a value",
         ])
@@ -169,12 +169,12 @@ final class EnginePluginTests: XCTestCase {
         try run("errors")
 
         XCTAssertEqual(context.messages, [
+            "hello:",
             "hello/src/hello.c:12:9: error: incompatible pointer to integer conversion",
             "     12 |     int count = \"one\";",
             "        |         ^",
             "  1 error generated.",
             "  source: hello/src/hello.c",
-            "  needed by: hello",
             "",
             "1 error · 1 product without a value",
         ])
@@ -192,12 +192,12 @@ final class EnginePluginTests: XCTestCase {
         try run("errors", ["--verbose"])
 
         XCTAssertEqual(context.messages, [
+            "no product:",
             "shared.h has not been pushed",
-            "  needed by: nothing",
             "",
             "1 error · every product has a value",
+            "no product:",
             "shared.h has not been pushed",
-            "  needed by: nothing",
             "  node: StaticFile #12",
             "  ports: output",
             "  carried by: 20 nodes",
@@ -224,25 +224,25 @@ final class EnginePluginTests: XCTestCase {
         document: .engine(.removed(path: "input:/notes.txt", isFolder: false), subject: nil),
         products: [], facts: facts("StaticFile", 3))
 
-    /// Each cause once, in the order of its first line, with the products that have no value
-    /// because of it on one line: a tree product by its folder, once for all its entries,
-    /// and a cause no product reaches as needed by nothing.
-    func test_errorsNamesWhatNeedsEachCauseInTheOrderOfTheirFirstLines() throws {
+    /// A heading per set of products with the same errors, in path order: a tree product by
+    /// its folder, once for all its entries; and a cause no product reaches last, under
+    /// `no product:`.
+    func test_errorsLeadsWithTheProductsAndEndsWithWhatNoProductNeeds() throws {
         connection.reply(.errors(records: [Self.unread, Self.compile, Self.catalog]))
 
         try run("errors")
 
         XCTAssertEqual(context.messages, [
+            "Res:",
             "App/Res/Assets.xcassets: error: actool failed",
             "  resource: Assets.xcassets",
-            "  needed by: Res/",
             "",
+            "libApp.a, libModels.a:",
             "Packages/Models/A.swift:3:5: error: cannot find 'x' in scope",
             "  target: Models",
-            "  needed by: libApp.a, libModels.a",
             "",
+            "no product:",
             "notes.txt has been removed",
-            "  needed by: nothing",
             "",
             "3 errors · 3 products without a value",
         ])
@@ -256,7 +256,7 @@ final class EnginePluginTests: XCTestCase {
     }
 
     /// The product as `cp` reads a path: with its file system, here from its root. The view
-    /// is the blocks of the causes reaching it, under one heading naming it.
+    /// is its heading and the errors it has no value because of, alone.
     func test_errorsForAProductIsTheProductView() throws {
         connection.reply(.errors(records: [Self.compile]))
 
@@ -264,11 +264,9 @@ final class EnginePluginTests: XCTestCase {
 
         XCTAssertEqual(connection.daemonRequests, [.errors(product: "Packages/libModels.a")])
         XCTAssertEqual(context.messages, [
-            "libModels.a has no value because:",
-            "",
+            "libModels.a:",
             "Packages/Models/A.swift:3:5: error: cannot find 'x' in scope",
             "  target: Models",
-            "  needed by: libApp.a, libModels.a",
             "",
             "1 error · 2 products without a value",
         ])
@@ -276,7 +274,7 @@ final class EnginePluginTests: XCTestCase {
     }
 
     /// Relative to the session's current directory, and a tree product's folder is named in
-    /// the heading as a tree is everywhere else: with its separator.
+    /// the heading as a tree is in every heading: by its folder.
     func test_errorsForATreeProductsFolderReadsRelativeToTheCurrentDirectory() throws {
         context.currentFileSystem    = .output
         context.currentDirectoryPath = Path("App/sub")
@@ -285,7 +283,7 @@ final class EnginePluginTests: XCTestCase {
         try run("errors", ["../Res"])
 
         XCTAssertEqual(connection.daemonRequests, [.errors(product: "App/Res")])
-        XCTAssertEqual(context.messages.first, "Res/ has no value because:")
+        XCTAssertEqual(context.messages.first, "Res:")
     }
 
     /// A product nothing is wrong with has a value, and says so; it is not an error.

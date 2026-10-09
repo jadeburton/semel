@@ -174,10 +174,37 @@ ErrorDocument
 
 ## As built (2026-10-10, B-145)
 
-The two open questions were decided as proposed: `needed by:` names products by file name,
-with the path under `output:` only where two products of one report share a name; and
-`--verbose` is a flag on `errors` and `build`, passed through `watch <folder> --verbose` to
-`semel-watch`. Where the code differs from the text above:
+The two open questions were decided as proposed: products are named by file name, with the
+path under `output:` only where two products of one report share a name; and `--verbose` is
+a flag on `errors` and `build`, passed through `watch <folder> --verbose` to `semel-watch`.
+Where the code differs from the text above:
+
+- **The default view is product first** (the owner's decision, 2026-10-10), and there is
+  no `needed by:` line: the heading carries it. One heading per set of products that share
+  the same errors — `IceCubesApp.app:`, or `libConversations.a, libExplore.a, libLists.a
+  and 2 more:`, three named and the rest counted, a tree product by its folder — in path
+  order of each heading's first product. Under it each error in full, in line-one order,
+  with its `target:`/`source:`/`package:` line and its remedy; an error already printed
+  under an earlier heading is its first line followed by `(above)`. Errors no product needs
+  come last, under `no product:`. The summary line is unchanged. `errors <product>` is that
+  product's heading and its errors alone:
+
+  ```
+  hello, hello.dylib:
+  c/src/hello.c:10:2: error: "deliberate"
+       10 | #error "deliberate"
+          |  ^
+    1 error generated.
+    source: c/src/hello.c
+
+  1 error · 2 products without a value · nothing exported
+  ```
+- **The lock barrier's refusal of a batch is a condition** (B-146 merged first):
+  `ErrorCondition.batchRejected(folder:lock:expected:found:paths:)`, drawn as `<folder> is
+  locked, and the batch changes it without a lock it matches: nothing of the batch is
+  committed` with `lock:`, `expected:`, `found:` and `paths:` lines and `re-lock with:`.
+  `LockExpectation` lives in `SemelNodeKit` beside it, its unreadable case the typed
+  `LockProblem`. It is drawn with no heading: a refusal is no build's error.
 
 - **A subject can be absent.** A condition about the graph rather than about one thing in
   it — a source nobody pushed, an input in error whose cause has been collected — names its
@@ -205,7 +232,7 @@ with the path under `output:` only where two products of one report share a name
   whatever it holds.
 - **The summary line with no product short of a value** reads `every product has a value`.
   `build` exports into its default folder only when every product has a value (an error
-  needed by nothing), `· exported to semel-out/<folder>`; `build --into` and the watcher's
+  no product needs), `· exported to semel-out/<folder>`; `build --into` and the watcher's
   `--into` export what has a value, `· 3 of 5 products exported`, or `· nothing exported`
   when nothing has. A build with no errors prints `No errors.` and `Exported N files into
   <dir>` as before. The exit status is non-zero whenever there are errors.
@@ -222,4 +249,5 @@ with the path under `output:` only where two products of one report share a name
 - **The wire.** `ErrorRecord` is one per document, with `ErrorFacts` (the node's type, its
   ids, the ports carrying the document, the carriers) for `--verbose`; `SemelProtocol`
   depends on `SemelNodeKit` to carry the document as the value the node published, protocol
-  version 25. `Semel.version` is 0.1.16, since a stored error port's hash named a sentence.
+  version 26 (25 is B-146's). `Semel.version` is 0.1.16, since a stored error port's hash
+  named a sentence.

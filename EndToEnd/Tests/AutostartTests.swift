@@ -62,7 +62,6 @@ final class AutostartTests: XCTestCase {
         // names it as unpushed and every tool below it says what it lacks and what writes it.
         let failed = try semelExpectingFailure("base \(tree.path)", "build c --into \(out)", step: "build without the machine file")
         XCTAssertTrue(failed.contains("semel.machine.config has not been pushed\n"
-                                      + "  needed by: config.txt, hello, hello.dylib\n"
                                       + "  write with: semel-clang ."), failed)
         XCTAssertTrue(failed.contains("  write with: semel-clang <folder>"), failed)
 

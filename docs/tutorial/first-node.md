@@ -132,34 +132,36 @@ Push file: hello/src/hello2.c
 Push file: hello/src/main.c
 Settled.
 ❌ 19 nodes scheduled, 19 computed, 0 from cache, 4 errors
+config.txt:
+semel.machine.config has not been pushed
+  write with: semel-clang .
+
+hello, hello.dylib:
 missing settings: clang.compiler.toolDescriptor.architecture, clang.compiler.toolDescriptor.name, clang.compiler.toolDescriptor.platform, clang.compiler.toolDescriptor.version
   source: hello/src/hello.c, hello/src/hello2.c, hello/src/main.c
-  needed by: hello, hello.dylib
   write with: semel-clang <folder>
 
 missing settings: clang.linker.toolDescriptor.architecture, clang.linker.toolDescriptor.name, clang.linker.toolDescriptor.platform, clang.linker.toolDescriptor.version
-  needed by: hello, hello.dylib
   write with: semel-clang <folder>
 
 missing settings: clang.preprocessor.toolDescriptor.architecture, clang.preprocessor.toolDescriptor.name, clang.preprocessor.toolDescriptor.platform, clang.preprocessor.toolDescriptor.version
   source: hello/src/hello.c, hello/src/hello2.c, hello/src/main.c
-  needed by: hello, hello.dylib
   write with: semel-clang <folder>
 
-semel.machine.config has not been pushed
-  needed by: config.txt, hello, hello.dylib
-  write with: semel-clang .
+semel.machine.config has not been pushed (above)
 
 4 errors · 3 products without a value · nothing exported
 ```
 
 It failed, and it says why: the formula names `<../semel.machine.config>` beside `hello/`,
-nothing is there, and every tool below it lacks the settings that file would hold. Each
-error is a block: its first line is what is wrong, then what it belongs to — the sources a
-tool reads — then `needed by:`, the products that have no value because of it, and last
-what to change. The three compilers missing one set of settings are one error naming the
-three sources; `errors output:/hello/hello` would show the errors that product has no value
-because of, alone. The summary line counts errors and products, and says nothing was
+nothing is there, and every tool below it lacks the settings that file would hold. The
+report leads with the products: a heading names the products that share the same errors —
+`config.txt` waits on one, `hello` and `hello.dylib` on four — and under it each error is a
+block: its first line is what is wrong, then what it belongs to — the sources a tool reads —
+and last what to change. An error printed under an earlier heading comes back under a later
+one as its first line and `(above)`. The three compilers missing one set of settings are
+one error naming the three sources; `errors output:/hello/hello` would show that product's
+heading and its errors alone. The summary line counts errors and products, and says nothing was
 exported: a build with errors leaves `--into` without what has no value. The file's own
 block names the command with the folder the file goes in, `.` being the base directory;
 the tools' blocks name it with `<folder>`, since they do not know where the settings were
@@ -721,13 +723,12 @@ Push file: hello/src/hello2.c
 Push file: hello/src/main.c [no change]
 Settled.
 ❌ 11 nodes scheduled, 8 computed, 3 from cache, 2 errors
+lines.txt:
 a node of kind 45 is of a type this server does not link
-  needed by: lines.txt
   register: kind 45
 
 no node type is registered under the name 'MyLineCounter'
   formula: hello/hello.fmla
-  needed by: lines.txt
   register: MyLineCounter
 
 2 errors · 1 product without a value · 3 of 4 products exported
@@ -735,8 +736,8 @@ no node type is registered under the name 'MyLineCounter'
 
 Two errors, one cause. The formula names a type the server does not register, and the
 node the formula made from it is still in the graph, named by its kind — the number you
-gave `MyLineCounter`, which is `45` here — since there is no type to name it by. What
-needs both is `lines.txt`, the one product without a value; the other three have values,
+gave `MyLineCounter`, which is `45` here — since there is no type to name it by. Both
+are under one heading, `lines.txt`, the one product without a value; the other three have values,
 and `--into` gets those. `--verbose` on `errors` or `build` adds the engine's facts under
 each error: the node's type and its row in the graph — the number `check` names it by —
 its ports, and how many nodes downstream carry the failure.

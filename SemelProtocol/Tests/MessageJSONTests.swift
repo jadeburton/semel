@@ -8,6 +8,7 @@
 //
 
 @testable import SemelProtocol
+import SemelNodeKit
 import XCTest
 
 final class MessageJSONTests: XCTestCase {
@@ -47,9 +48,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsTwentyFive() {
-        XCTAssertEqual(ProtocolVersion.current, 25)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 25,
+    func test_currentProtocolVersionIsTwentySix() {
+        XCTAssertEqual(ProtocolVersion.current, 26)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 26,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -389,7 +390,7 @@ final class MessageJSONTests: XCTestCase {
             .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
                            expected: .contentRoot("4d5d"), found: "9e1f", paths: ["Dependencies/Pkg/a.swift"]),
             .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
-                           expected: .unreadable(line: 2, problem: "line 2: bogus"), found: nil, paths: []),
+                           expected: .unreadable(problem: .emptyValue(key: "content", line: 2)), found: nil, paths: []),
             .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
                            expected: .otherFold(fold: "semel-folder-content-root 3", contentRoot: "4d5d"),
                            found: "9e1f", paths: []),

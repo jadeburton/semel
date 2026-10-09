@@ -125,20 +125,7 @@ extension LockExpectation {
         case .otherFold(let fold, let root):
             self = .otherFold(fold: fold, contentRoot: root)
         case .unreadable(let error):
-            self = .unreadable(line: error.line, problem: error.description)
-        }
-    }
-}
-
-extension DependencyLockError {
-
-    /// The line the error names, when it names one.
-    var line: Int? {
-        switch self {
-        case .unknownKey(_, let line), .repeatedKey(_, let line), .emptyValue(_, let line):
-            return line
-        case .missingKey, .unknownContentScheme, .malformedArtifact:
-            return nil
+            self = .unreadable(problem: error.problem)
         }
     }
 }

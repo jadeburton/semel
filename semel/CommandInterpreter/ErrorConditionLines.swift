@@ -293,6 +293,17 @@ struct ConditionLines {
                                    Detail(label: "this Semel folds as", value: currentFold)])
         case .lockUnreadable(_, let lockPath, let problem):
             return Drawn(path: path(lockPath), headline: " is not a lock: \(sentence(problem))")
+        case .batchRejected(let folder, let lock, let expected, let found, let paths):
+            var details = [Detail(label: "lock", value: path(lock)),
+                           Detail(label: "expected", value: described(expected)),
+                           Detail(label: "found", value: found.map { DependencyLock.contentScheme + $0 } ?? "no folder")]
+            if !paths.isEmpty {
+                details.append(Detail(label: "paths", value: capped(paths.map(path))))
+            }
+            return Drawn(path: path(folder),
+                         headline: " is locked, and the batch changes it without a lock it matches: "
+                                 + "nothing of the batch is committed",
+                         details: details)
         case .binaryTargetNotBuilt(let target):
             return binaryTarget(target)
         case .sourcesOnlyFromPlugins(let package, let target, let plugins):
@@ -388,6 +399,17 @@ struct ConditionLines {
     private func described(_ lock: LockFacts) -> String {
         let recorded = [lock.version.map { "version \($0)" }, lock.origin.map { "from \($0)" }].compactMap { $0 }
         return recorded.isEmpty ? path(lock.lockPath) : "\(path(lock.lockPath)) (\(recorded.joined(separator: ", ")))"
+    }
+
+    private func described(_ expected: LockExpectation) -> String {
+        switch expected {
+        case .contentRoot(let root):
+            return DependencyLock.contentScheme + root
+        case .otherFold(let fold, let root):
+            return "\(DependencyLock.contentScheme)\(root), folded as '\(fold)'; this Semel folds as '\(FolderContentRoot.formatTag)'"
+        case .unreadable(let problem):
+            return "nothing: the lock is not a lock, \(sentence(problem))"
+        }
     }
 
     private func phrase(_ form: ValueForm) -> String {

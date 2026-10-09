@@ -5,7 +5,7 @@
 //  The error report as a person reads it (the 2026-10-09 design): the C fixture built by
 //  the real executables with a deliberate error in one source, and the report under the
 //  build compared line for line — the tool's own diagnostic with the path as it is on disk,
-//  what it belongs to, what needs it, and the summary.
+//  under the heading of the products that need it, what it belongs to, and the summary.
 //
 
 import Foundation
@@ -84,12 +84,12 @@ final class ErrorReportEndToEndTests: XCTestCase {
         let end   = try XCTUnwrap(lines[start...].firstIndex { $0.hasPrefix("1 error · ") }, output)
         XCTAssertEqual(Array(lines[start...end]), [
             "   appeared: output:/c/config.txt",
+            "hello, hello.dylib:",
             "c/src/hello.c:10:2: error: \"deliberate\"",
             "     10 | #error \"deliberate\"",
             "        |  ^",
             "  1 error generated.",
             "  source: c/src/hello.c",
-            "  needed by: hello, hello.dylib",
             "",
             "1 error · 2 products without a value · nothing exported",
         ], output)

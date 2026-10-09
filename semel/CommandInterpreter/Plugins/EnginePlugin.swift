@@ -407,12 +407,12 @@ final class EnginePlugin: CommandPlugin {
 
     // MARK: - errors
 
-    /// `errors [<product>] [--verbose]`: what has no value in the graph and why — each cause
-    /// once, with the products that need it (B-142); with a product, the causes it has no
-    /// value because of. The product is named as `ls` and `cp` name a path — with its file
-    /// system, after `-o`, or relative to the session's current directory — and a tree
-    /// product's folder stands for every entry below it. The server filters, so a wide
-    /// cascade is not shipped only to be dropped.
+    /// `errors [<product>] [--verbose]`: what has no value in the graph and why — a heading
+    /// per set of products with the same errors, each error under it (B-142); with a
+    /// product, that product's heading and errors alone. The product is named as `ls`
+    /// and `cp` name a path — with its file system, after `-o`, or relative to the
+    /// session's current directory — and a tree product's folder stands for every entry
+    /// below it. The server filters, so a wide cascade is not shipped only to be dropped.
     private func handleErrors(tokens: [String], context: any CommandContext) throws {
         let verbose = tokens.contains("--verbose")
         let (flagged, remaining) = parseOptionalFileSystemFlag(tokens: tokens.filter { $0 != "--verbose" })

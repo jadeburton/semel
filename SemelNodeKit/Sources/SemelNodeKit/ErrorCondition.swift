@@ -222,6 +222,11 @@ public enum ErrorCondition: Codable, Hashable, Sendable, Error, ErrorConditionCo
     case lockFoldChanged(folder: String, lock: LockFacts, lockFold: String, currentFold: String)
     /// A lock whose text is not a lock.
     case lockUnreadable(folder: String, lockPath: String, problem: LockProblem)
+    /// A batch that changes a locked folder without a lock it matches, refused at `commit`
+    /// (B-146): the folder and its lock, relative to `input:`; what the lock records; the
+    /// root the batch would leave, nil where it removes the folder; and the paths of the
+    /// batch inside the folder.
+    case batchRejected(folder: String, lock: String, expected: LockExpectation, found: String?, paths: [String])
     /// A binary target a product reaches whose artifact is not an `.xcframework` that is
     /// there (B-77, B-133).
     case binaryTargetNotBuilt(target: UnbuiltBinaryTarget)
@@ -283,7 +288,8 @@ public enum ErrorCondition: Codable, Hashable, Sendable, Error, ErrorConditionCo
         switch self {
         case .lockMismatch(let folder, _, _, _, _),
              .lockFoldChanged(let folder, _, _, _),
-             .lockUnreadable(let folder, _, _):
+             .lockUnreadable(let folder, _, _),
+             .batchRejected(let folder, _, _, _, _):
             return .relock(package: Path(folder).lastComponent ?? folder)
         case .unlinkedKind(let kind):
             return .register(kind: kind)
@@ -401,6 +407,17 @@ public enum LockProblem: Codable, Hashable, Sendable {
     case missingKey(key: String)
     case unknownContentScheme(value: String, scheme: String)
     case malformedArtifact(item: String)
+}
+
+/// What a lock in `input:` says about its folder, as far as the lock barrier could read it.
+public enum LockExpectation: Codable, Hashable, Sendable {
+    /// The lock records this content root, under this Semel's fold.
+    case contentRoot(String)
+    /// The lock was folded under another format, `fold`, so its root cannot be compared:
+    /// the folder may hold exactly what was vendored.
+    case otherFold(fold: String, contentRoot: String)
+    /// The lock's text is not a lock.
+    case unreadable(problem: LockProblem)
 }
 
 /// A binary target that is not built, and why.

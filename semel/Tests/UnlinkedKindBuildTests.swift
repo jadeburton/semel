@@ -100,9 +100,9 @@ final class UnlinkedKindBuildTests: XCTestCase {
         guard let block = lines.firstIndex(of: "a node of kind \(unlinkedKind) is of a type this server does not link") else {
             return XCTFail("the report names the node by its kind\n\(transcript)")
         }
-        XCTAssertEqual(Array(lines[block...].prefix(3)),
+        XCTAssertEqual(lines[block - 1], "a.txt:", transcript)
+        XCTAssertEqual(Array(lines[block...].prefix(2)),
                        ["a node of kind \(unlinkedKind) is of a type this server does not link",
-                        "  needed by: a.txt",
                         "  register: kind \(unlinkedKind)"], transcript)
         XCTAssertGreaterThan(interpreter.errorsReported, 0)
         XCTAssertEqual(lines.last, "1 error · 1 product without a value · 1 of 2 products exported", transcript)

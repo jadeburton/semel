@@ -700,8 +700,8 @@ public final class CommandInterpreter: CommandContext {
                                  + "--into exports what has a value after each settle; one per session"),
             HelpEntry(verbs: ["unwatch"], usage: "unwatch", description: "stop the semel-watch `watch <folder>` started"),
             HelpEntry(verbs: ["errors", "e"], usage: "errors [<product>] [--verbose]",
-                      description: "what has no value and why: each cause once, with the products that need it; "
-                                 + "with a product, or a tree product's folder, the causes it has no value because of; "
+                      description: "what has no value and why: a heading per set of products with the same "
+                                 + "errors, each error under it; with a product, or a tree product's folder, that product's errors alone; "
                                  + "--verbose adds the engine's facts"),
             HelpEntry(verbs: ["explain", "why"], usage: "explain <path>",
                       description: "why the last settle rebuilt a product: what ran, what came from the cache, "

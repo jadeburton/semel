@@ -208,7 +208,7 @@ final class WatcherTests: XCTestCase {
 
         try watcher.run()
 
-        XCTAssertTrue(lines.contains("  needed by: broken.a"), lines.joined(separator: "\n"))
+        XCTAssertTrue(lines.contains("broken.a:"), lines.joined(separator: "\n"))
         XCTAssertEqual(lines.last, "1 error · 1 product without a value · nothing exported", lines.joined(separator: "\n"))
         XCTAssertFalse(lines.contains { $0.hasPrefix("Exported") })
     }
@@ -298,7 +298,7 @@ final class WatcherTests: XCTestCase {
 
         XCTAssertEqual(watcher.batchesIssued, 2)
         XCTAssertEqual(watcher.batchesRefused, 1)
-        XCTAssertTrue(lines.contains { $0.hasPrefix("input:/app/Dependencies/Pkg is locked, and the batch changed it") },
+        XCTAssertTrue(lines.contains { $0.hasPrefix("app/Dependencies/Pkg is locked, and the batch changes it") },
                       lines.joined(separator: "\n"))
         XCTAssertTrue(lines.contains("semel-watch: the batch was not committed; nothing was built or exported from it."))
         XCTAssertEqual(try heldText("app/Dependencies/Pkg/Pkg.swift"), "public struct Pkg {}\n")

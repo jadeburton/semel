@@ -175,10 +175,10 @@ final class CheckpointTests: XCTestCase {
         try write("public struct Pkg { let edited = true }\n", to: "app/Dependencies/Pkg/Pkg.swift")
         XCTAssertEqual(interpreter.handleCommand("push app"), .failed)
         let report = lines.all.joined(separator: "\n")
-        XCTAssertTrue(report.contains("input:/app/Dependencies/Pkg is locked, and the batch changed it without a lock it matches"),
+        XCTAssertTrue(report.contains("app/Dependencies/Pkg is locked, and the batch changes it without a lock it matches"),
                       report)
-        XCTAssertTrue(report.contains("  lock:     input:/app/Dependencies/Pkg.semel-lock"), report)
-        XCTAssertTrue(report.contains("  paths:    input:/app/Dependencies/Pkg/Pkg.swift"), report)
+        XCTAssertTrue(report.contains("  lock: app/Dependencies/Pkg.semel-lock"), report)
+        XCTAssertTrue(report.contains("  paths: app/Dependencies/Pkg/Pkg.swift"), report)
         XCTAssertEqual(try held("app/Dependencies/Pkg/Pkg.swift"), "public struct Pkg {}\n")
         XCTAssertEqual(interpreter.batchesRefused, 1)
     }

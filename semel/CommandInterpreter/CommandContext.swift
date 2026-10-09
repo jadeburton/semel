@@ -90,8 +90,8 @@ struct ServerError: Error, CustomStringConvertible {
         case .unrecoverable(let message):      return "the server stopped: \(message)"
         // Locked folders and checkpoints (B-146).
         case .batchRejected(let folder, let lock, let expected, let found, let paths):
-            return BatchRejectionRenderer.lines(folder: folder, lock: lock, expected: expected, found: found, paths: paths)
-                .joined(separator: "\n")
+            let condition = ErrorCondition.batchRejected(folder: folder, lock: lock, expected: expected, found: found, paths: paths)
+            return ErrorReportRenderer.lines(for: condition).joined(separator: "\n")
         case .checkpointNotFound(let name, let known):
             return "there is no checkpoint named '\(name)'; "
                  + (known.isEmpty ? "`checkpoint` records one" : "there are \(known.joined(separator: ", "))")

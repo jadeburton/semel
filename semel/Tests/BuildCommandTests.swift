@@ -289,8 +289,8 @@ final class BuildCommandTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: destination.appendingPathComponent("lib.a"), encoding: .utf8), "archive")
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.appendingPathComponent("broken.a").path))
         XCTAssertEqual(Array(lines.suffix(4)), [
+            "broken.a:",
             "the source is gone",
-            "  needed by: broken.a",
             "",
             "1 error · 1 product without a value · 1 of 2 products exported",
         ])

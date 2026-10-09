@@ -69,8 +69,9 @@ public enum ProtocolVersion {
     /// Version 25 adds `batchRejected`, the lock barrier's refusal of a batch at `commit`,
     /// and `checkpoint`, `checkpoints` and `restore` with their replies (B-146).
     /// Version 26 carries an error record as the document its node published, the products
-    /// without a value and the node's facts, where version 25 carried rendered messages
-    /// (the 2026-10-09 error report design, B-145).
+    /// without a value and the node's facts, where earlier versions carried rendered
+    /// messages, and `batchRejected` carries its lock's problem as a typed value (the
+    /// 2026-10-09 error report design, B-145).
     public static let current = 26
 }
 

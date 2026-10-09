@@ -91,10 +91,10 @@ final class SettleTimeErrorCountingTests: XCTestCase {
         guard let block = lines.firstIndex(of: "no node type is registered under the name 'NoSuchNodeType'") else {
             return XCTFail(transcript)
         }
-        XCTAssertEqual(Array(lines[block...].prefix(6)), [
+        XCTAssertEqual(lines[block - 1], "no product:", transcript)
+        XCTAssertEqual(Array(lines[block...].prefix(5)), [
             "no node type is registered under the name 'NoSuchNodeType'",
             "  formula: src/semel.fmla",
-            "  needed by: nothing",
             "  register: NoSuchNodeType",
             "",
             "1 error · every product has a value",
