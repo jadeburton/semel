@@ -72,7 +72,7 @@ final class VendoredPackageSettleTests: XCTestCase {
     /// Xcode project's formula names the packages it references, its config, and the
     /// package under `Dependencies` with the lock `prepare` writes beside it, taken from
     /// the disk as `prepare` takes it.
-    private func writeTree(target: String, packageFiles: [String: String] = [:]) throws {
+    private func writeTree(target: String, packageFiles: [String: String] = [:], hiddenFiles: [String] = []) throws {
         try write("include SwiftFormulaConverter(path: <Dependencies/Sparkle>, root: <.>).formula", to: "Packages/semel.fmla")
         try write("// the project's choices", to: "Packages/semel.config")
         try write("""
@@ -93,8 +93,8 @@ final class VendoredPackageSettleTests: XCTestCase {
             try write(text, to: "Packages/Dependencies/Sparkle/\(relativePath)")
         }
         let packageFolder = externalRoot.appendingPathComponent("Packages/Dependencies/Sparkle")
-        let lock = DependencyLock(contentRoot: try FolderContentRoot.root(ofFolderAt: packageFolder),
-                                  fold: FolderContentRoot.formatTag)
+        let lock = DependencyLock(contentRoot: try FolderContentRoot.root(ofFolderAt: packageFolder, hiddenFiles: hiddenFiles),
+                                  fold: FolderContentRoot.formatTag, hiddenFiles: hiddenFiles)
         try write(lock.text, to: "Packages/Dependencies/Sparkle.\(DependencyLock.fileExtension)")
     }
 
@@ -210,6 +210,33 @@ final class VendoredPackageSettleTests: XCTestCase {
 
         XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
         XCTAssertFalse(transcript.contains("differs from its lock"), transcript)
+        let folder = try XCTUnwrap(try engine.inputFileSystem.childNode(path: Path("Packages/Dependencies/Sparkle")))
+        XCTAssertEqual(try folder.readFromOutputPort(Folder.pushedContentRootOutputPort).expectValue(), recorded, transcript)
+    }
+
+    /// B-143. A dot-named file the package declares as a resource is named by its lock, so
+    /// `build`'s push of the tree sends it with the rest, the push stands at the lock
+    /// barrier, and the engine's pushed root is the lock's, the file folded in: locked, and
+    /// not left for the follow to push by its name.
+    func test_aDeclaredDotNamedResourceIsPushedWithTheTreeAndLocked() throws {
+        let target = "{\"name\": \"Sparkle\", \"type\": \"regular\", \"path\": \"Sources/Sparkle\", \"dependencies\": [], "
+            + "\"resources\": [{\"path\": \".config.json\", \"rule\": {\"copy\": {}}}]}"
+        try writeTree(target: target,
+                      packageFiles: ["Sources/Sparkle/Sparkle.swift": "public struct Sparkle {}\n",
+                                     "Sources/Sparkle/.config.json": "{}\n",
+                                     "Sources/Sparkle/.swiftlint.yml": "rules\n"],
+                      hiddenFiles: ["Sources/Sparkle/.config.json"])
+        let packageFolder = externalRoot.appendingPathComponent("Packages/Dependencies/Sparkle")
+        let recorded = try FolderContentRoot.root(ofFolderAt: packageFolder, hiddenFiles: ["Sources/Sparkle/.config.json"])
+
+        let (ended, transcript) = try buildEnds(within: 30)
+
+        XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
+        let said = transcript.split(separator: "\n").filter { !$0.hasPrefix("Push file:") }
+        XCTAssertFalse(said.contains { $0.contains("lock") }, "neither the lock check nor the barrier spoke:\n\(transcript)")
+        XCTAssertTrue(transcript.contains("Push file: Packages/Dependencies/Sparkle/Sources/Sparkle/.config.json"), transcript)
+        XCTAssertFalse(transcript.contains(".swiftlint.yml"), transcript)
+        XCTAssertFalse(transcript.contains("needs"), "nothing was left for the follow:\n\(transcript)")
         let folder = try XCTUnwrap(try engine.inputFileSystem.childNode(path: Path("Packages/Dependencies/Sparkle")))
         XCTAssertEqual(try folder.readFromOutputPort(Folder.pushedContentRootOutputPort).expectValue(), recorded, transcript)
     }

@@ -55,6 +55,7 @@ extension DependencyLockError {
         case .missingKey(let key):                return .missingKey(key: key)
         case .unknownContentScheme(let value):    return .unknownContentScheme(value: value, scheme: DependencyLock.contentScheme)
         case .malformedArtifact(let item):        return .malformedArtifact(item: item)
+        case .malformedHiddenFile(let path, let line): return .malformedHiddenFile(path: path, line: line)
         }
     }
 }

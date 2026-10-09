@@ -45,15 +45,23 @@ public struct DependencyLock: Equatable {
     /// the zip SwiftPM downloaded and checked before `prepare` copied what it held into
     /// `semel-artifacts`. Recorded, like the version: the copy is what `content` locks.
     public var artifacts: [String: String]
+    /// The dot-named files below the folder that its manifest declares as resources, by
+    /// path relative to the folder, sorted (B-143). A walk of the disk takes no dot-name,
+    /// so `content` would not cover a resource the build reads; each one named here is
+    /// folded into `content` as any file is, and a push of the folder sends it
+    /// (`FolderOnDisk.read`), so it is locked by the root the lock enforces and not by a
+    /// line of its own.
+    public var hiddenFiles: [String]
 
     public init(contentRoot: String, fold: String, version: String? = nil, revision: String? = nil, origin: String? = nil,
-                artifacts: [String: String] = [:]) {
+                artifacts: [String: String] = [:], hiddenFiles: [String] = []) {
         self.contentRoot = contentRoot
         self.fold        = fold
         self.version     = version
         self.revision    = revision
         self.origin      = origin
         self.artifacts   = artifacts
+        self.hiddenFiles = hiddenFiles.sorted()
     }
 
     // MARK: - Where it lives
@@ -117,6 +125,9 @@ public struct DependencyLock: Equatable {
         case revision
         case origin
         case artifacts
+        /// Said once per file, the one key that repeats: a path holds any character a
+        /// separator could be.
+        case hidden
     }
 
     /// `Sparkle=4d5d…,Other=9e1f…`: the artifacts' checksums on one line, sorted by target.
@@ -139,7 +150,7 @@ public struct DependencyLock: Equatable {
                                       .revision:  revision,
                                       .origin:    origin,
                                       .artifacts: Self.artifactsText(artifacts)]
-        let values = stated.compactMapValues { $0 }
+        let values = stated.compactMapValues { $0 }.merging(hiddenFiles.isEmpty ? [:] : [.hidden: ""]) { stated, _ in stated }
         // The column is as wide as the widest key, `artifacts` counted only when the lock
         // has it, so a lock of a package with no binary target reads as every lock did.
         let width = Key.allCases.filter { $0 != .artifacts || values[$0] != nil }.map(\.rawValue.count).max() ?? 0
@@ -150,7 +161,9 @@ public struct DependencyLock: Equatable {
                 continue
             }
             let padding = String(repeating: " ", count: width - key.rawValue.count + 2)
-            lines.append("\(key.rawValue)\(padding)\(value)")
+            for each in key == .hidden ? hiddenFiles : [value] {
+                lines.append("\(key.rawValue)\(padding)\(each)")
+            }
         }
         return lines.joined(separator: "\n") + "\n"
     }
@@ -162,6 +175,7 @@ public struct DependencyLock: Equatable {
     /// was dropped would check nothing. A `#` line and a blank line are free.
     public static func parse(_ text: String) throws -> DependencyLock {
         var values: [Key: String] = [:]
+        var hiddenFiles: [String] = []
         for (index, rawLine) in text.components(separatedBy: "\n").enumerated() {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty, !line.hasPrefix("#") else {
@@ -172,6 +186,13 @@ public struct DependencyLock: Equatable {
             let value   = line.dropFirst(keyText.count).trimmingCharacters(in: .whitespaces)
             guard let key = Key(rawValue: keyText) else {
                 throw DependencyLockError.unknownKey(keyText, line: lineNumber)
+            }
+            if key == .hidden {
+                guard isHiddenFilePath(value), !hiddenFiles.contains(value) else {
+                    throw DependencyLockError.malformedHiddenFile(value, line: lineNumber)
+                }
+                hiddenFiles.append(value)
+                continue
             }
             guard values[key] == nil else {
                 throw DependencyLockError.repeatedKey(keyText, line: lineNumber)
@@ -204,7 +225,33 @@ public struct DependencyLock: Equatable {
                               version:     values[.version],
                               revision:    values[.revision],
                               origin:      values[.origin],
-                              artifacts:   artifacts)
+                              artifacts:   artifacts,
+                              hiddenFiles: hiddenFiles)
+    }
+
+    /// Whether `path` can name a file a `hidden` line covers: relative, below the folder,
+    /// its last component dot-named and no other, since a push takes a dot-named file by
+    /// its name in a folder it walks and never walks into a dot-named folder.
+    public static func isHiddenFilePath(_ path: String) -> Bool {
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard !path.hasPrefix("/"), let last = components.last, last.hasPrefix("."), last != ".", last != ".." else {
+            return false
+        }
+        return components.dropLast().allSatisfy { !$0.isEmpty && !$0.hasPrefix(".") }
+    }
+
+    /// The hidden files as `FolderOnDisk.read` takes them: by the path of their folder,
+    /// relative to the folder `under` names (empty for the locked folder itself).
+    public func hiddenFilesByFolder(under folder: Path = .empty) -> [String: [String]] {
+        var byFolder: [String: [String]] = [:]
+        for file in hiddenFiles {
+            let path = folder / Path(file)
+            guard let name = path.lastComponent else {
+                continue
+            }
+            byFolder[(path.deletingLastComponent ?? .empty).string, default: []].append(name)
+        }
+        return byFolder
     }
 }
 
@@ -217,6 +264,8 @@ public enum DependencyLockError: Error, Equatable, CustomStringConvertible {
     case unknownContentScheme(String)
     /// An `artifacts` item that is not `<target>=<checksum>`, or names a target twice.
     case malformedArtifact(String)
+    /// A `hidden` path that is not a dot-named file below the folder, or is named twice.
+    case malformedHiddenFile(String, line: Int)
 
     public var description: String {
         let keys = DependencyLock.Key.allCases.map(\.rawValue).joined(separator: ", ")
@@ -231,6 +280,9 @@ public enum DependencyLockError: Error, Equatable, CustomStringConvertible {
             return "there is no '\(key)' line"
         case .unknownContentScheme(let value):
             return "'content' is '\(value)', and a content root is written '\(DependencyLock.contentScheme)<hex>'"
+        case .malformedHiddenFile(let path, let line):
+            return "line \(line): 'hidden' holds '\(path)', and each is a relative path, said once, to a dot-named file "
+                 + "in no dot-named folder"
         case .malformedArtifact(let item):
             return "'artifacts' holds '\(item)', and each of its comma-separated items is written '<target>=<checksum>', a target once"
         }

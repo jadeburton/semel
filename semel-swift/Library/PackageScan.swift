@@ -8,6 +8,7 @@
 //  manifest; nothing here parses Swift.
 
 import Foundation
+import SemelSwift
 
 /// One package, as far as `prepare` cares.
 public struct PackageSummary: Equatable {
@@ -31,11 +32,15 @@ public struct PackageSummary: Equatable {
         public let sources: [String]
         /// Relative to `folder`.
         public let exclude: [String]
+        /// The paths its `resources:` rules name, relative to `folder`, as declared: what
+        /// `prepare` looks among for a dot-named file a lock has to name (B-143).
+        public let resources: [String]
 
-        public init(folder: URL, sources: [String] = [], exclude: [String] = []) {
-            self.folder  = PackageSummary.normalized(folder)
-            self.sources = sources
-            self.exclude = exclude
+        public init(folder: URL, sources: [String] = [], exclude: [String] = [], resources: [String] = []) {
+            self.folder    = PackageSummary.normalized(folder)
+            self.sources   = sources
+            self.exclude   = exclude
+            self.resources = resources
         }
     }
 
@@ -185,14 +190,28 @@ public enum PackageScan {
                   ["regular", "executable"].contains(target["type"] as? String ?? "regular") else {
                 continue
             }
-            let path = target["path"] as? String ?? "Sources/\(targetName)"
-            targets.append(PackageSummary.Target(folder:  URL(fileURLWithPath: path, relativeTo: folder),
-                                                 sources: target["sources"] as? [String] ?? [],
-                                                 exclude: target["exclude"] as? [String] ?? []))
+            let path = target["path"] as? String ?? defaultTargetPath(named: targetName, in: folder)
+            let resources = (target["resources"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String }
+            targets.append(PackageSummary.Target(folder:    URL(fileURLWithPath: path, relativeTo: folder),
+                                                 sources:   target["sources"] as? [String] ?? [],
+                                                 exclude:   target["exclude"] as? [String] ?? [],
+                                                 resources: resources))
         }
 
         return PackageSummary(name: name, folder: folder, pathDependencies: pathDependencies,
                               platforms: platforms, targets: targets, binaryTargets: binaryTargets)
+    }
+
+    /// Where SwiftPM finds a target that names no `path:`: under the first of its predefined
+    /// folders that holds a folder named for it, as the converter finds it
+    /// (`DefaultTargetFolders`); `Sources/<name>` when none does.
+    static func defaultTargetPath(named target: String, in folder: URL) -> String {
+        let found = DefaultTargetFolders.predefinedFolders.first { base in
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: folder.appendingPathComponent("\(base)/\(target)").path,
+                                                  isDirectory: &isDirectory) && isDirectory.boolValue
+        }
+        return "\(found ?? DefaultTargetFolders.predefinedFolders[0])/\(target)"
     }
 
     /// The packages nothing else in the set depends on by path: what a formula has to

@@ -583,6 +583,9 @@ struct ConditionLines {
             return "'content' is '\(value)', and a content root is written '\(scheme)<hex>'"
         case .malformedArtifact(let item):
             return "'artifacts' holds '\(item)', and each item is written '<target>=<checksum>', a target once"
+        case .malformedHiddenFile(let path, let line):
+            return "line \(line): 'hidden' holds '\(path)', and each is a relative path, said once, to a dot-named file "
+                 + "in no dot-named folder"
         }
     }
 

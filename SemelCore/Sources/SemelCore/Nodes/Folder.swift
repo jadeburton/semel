@@ -221,19 +221,24 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     static let contentRootOutputPort = "contentRoot"
 
     /// The content root over what a push of this folder sends, and nothing else: the same
-    /// fold less every dot-named child, every child holding no content — a name a node
+    /// fold less every dot-named folder, every child holding no content — a name a node
     /// asked for and nobody pushed, a file taken back out — every product, and every
     /// subfolder left holding nothing by that rule. It is the root `FolderContentRoot
     /// .root(ofFolderAt:)` folds from the disk, by construction, and so the one a
     /// dependency's lock is compared with (B-06, B-143): the lock locks what the push
     /// pushes.
     ///
+    /// A dot-named file holding content stays: a push sends every one the graph holds
+    /// (B-77 item 5), and the ones a vendored package declares as resources are the ones
+    /// its lock names, folded into its root and sent by a push of its folder. One pushed
+    /// into a locked folder by its name and not named by the lock fails the lock, which is
+    /// right: the build would read a file the lock does not describe.
+    ///
     /// Beside `contentRoot` rather than instead of it. That root is the graph's whole
     /// state below the folder — a ghost and a removed file are part of what a consumer, or
     /// a push comparing roots (B-132), has to see — while a lock is taken from a copy on
-    /// disk, which has no ghosts, and whose walk leaves every dot-name out. A dot-named
-    /// file the graph holds because something asked for it by name, or a name a converter
-    /// demanded that the copy lacks, would otherwise fail a lock nobody edited.
+    /// disk, which has no ghosts. A name a converter demanded that the copy lacks would
+    /// otherwise fail a lock nobody edited.
     ///
     /// Folded with `contentRoot`, from the same reads of the same children, so it is
     /// current exactly when that one is: the marks and the flush serve both.
@@ -692,7 +697,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// and the order; this supplies the lines.
     ///
     /// `whole` has a line for every child. `pushed` has one for every child a push of the
-    /// folder sends (`pushedContentRootOutputPort`): no dot-name, nothing without content,
+    /// folder sends (`pushedContentRootOutputPort`): no dot-named folder, nothing without content,
     /// no product, and a subfolder by its own pushed root and only when that holds
     /// something — what `FolderOnDisk`'s fold of the disk keeps, line for line.
     private func buildContentRootDocuments(of children: [NodeChildSummary]) throws -> (whole: String, pushed: String) {
@@ -706,7 +711,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         var pushed = [FolderContentRoot.Line]()
         for child in children {
             let childName = try child.requireName()
-            let isPushed  = !childName.hasPrefix(".")
+            let isPushed  = !childName.hasPrefix(".") || child.kind == StaticFile.kind
             switch child.kind {
             // A child of a kind the fold reads, with no row for the port its content is on,
             // has had nothing produced on it — the same reading `asNodeValue` gives.

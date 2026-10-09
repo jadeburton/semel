@@ -925,16 +925,17 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     }
 
     /// The graph holds below a vendored folder what a copy's fold never sees — a dot-named
-    /// file pushed by its name, a name the build asked for that nobody pushed — and the
-    /// comparison leaves those out. When a lock fails anyway, the message names them, so
-    /// that what it did not compare is not mistaken for what differs (B-143). The document
-    /// carries them, by reason.
+    /// folder, a name the build asked for that nobody pushed — and the comparison leaves
+    /// those out. When a lock fails anyway, the message names them, so that what it did not
+    /// compare is not mistaken for what differs (B-143). The document carries them, by
+    /// reason. A dot-named file holding content is compared, as a push sends it.
     func test_aLockThatDoesNotMatchNamesWhatTheComparisonLeftOut() throws {
         let sources = FolderContentRoot.document(of: [("Lib.swift", .file, .file(hash: "aa", mode: 0o644)),
                                                       (".swiftlint.yml", .file, .file(hash: "bb", mode: 0o644)),
                                                       ("Missing.swift", .file, .notProduced)])
+        let dotFolder = FolderContentRoot.document(of: [("ci.yml", .file, .file(hash: "ee", mode: 0o644))])
         let whole = FolderContentRoot.document(of: [("Package.swift", .file, .file(hash: "cc", mode: 0o644)),
-                                                    (".spi.yml", .file, .file(hash: "dd", mode: 0o644)),
+                                                    (".github", .folder, .hash(try dotFolder.intern())),
                                                     ("Sources", .folder, .hash(try sources.intern()))])
         let output = try convert(packageFolder: "input:/repo/DatabaseModels", json: sourceControlManifest(),
                                  externalManifests: [vendoredGRDB: grdbShapedManifest],
@@ -945,8 +946,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         guard case .lockMismatch(_, _, _, _, let leftOut) = try pendingCondition(output) else {
             return XCTFail("expected a mismatch, got \(try pendingDocument(output))")
         }
-        XCTAssertEqual(Set(leftOut), [LeftOutEntry(path: ".spi.yml", reason: .dotNamed),
-                                      LeftOutEntry(path: "Sources/.swiftlint.yml", reason: .dotNamed),
+        XCTAssertEqual(Set(leftOut), [LeftOutEntry(path: ".github", reason: .dotNamed),
                                       LeftOutEntry(path: "Sources/Missing.swift", reason: .notPushed)])
     }
 

@@ -451,9 +451,25 @@ is version 21 (new demands, a new lock comparison). `Folder` gains an output por
 needs no version, as it never processes.
 
 Not fixed, filed here:
-- (a) A dot-named declared resource is still asked for as declared, so the follow pushes
+- ~~(a) A dot-named declared resource is still asked for as declared, so the follow pushes
   it by name. It is built and not locked. A dot-named declared *folder* cannot be pushed at
-  all (`hiddenFile` takes files only).
+  all (`hiddenFile` takes files only).~~ Done 2026-10-10, under "the lock locks what the
+  push pushes". The client cannot read a manifest, so the lock carries what `prepare`
+  read from it: one `hidden <path>` line per dot-named file a target declares as a
+  resource, a file on disk in no dot-named folder (`Preparation.hiddenResourceFiles`,
+  `DependencyLock.hiddenFiles`). `prepare` folds those files into the root it records;
+  `FolderOnDisk.read` walks the files the lock beside a folder names, whether the walk
+  starts above the lock or inside the folder, so a push of the tree sends them; and the
+  engine's pushed root keeps every dot-named file holding content, as a push sends every
+  one the graph holds (B-77 item 5), and leaves out only a dot-named folder. The three
+  folds agree by construction and the file is locked. The flip side is deliberate: a
+  dot-named file pushed into a locked folder by its name and named by no lock is now
+  compared, and fails the lock and the barrier, since the build would read a file the
+  lock does not describe. A lock whose `hidden` lines are not what the manifest declares
+  is re-vendored (`CopyReason.hiddenFilesDiffer`). A declared dot-named *folder* stays
+  unsupported: no push sends one, so no manifest in the graph ever holds it and the
+  converter cannot tell it from a file not pushed yet; it is asked for by its path, the
+  follow cannot push it, and the build stops naming it as never pushed.
 - ~~(b) A hand-written `SwiftFormulaConverter` with no `root:` over a vendored folder reads
   `semel.config` and `semel.machine.config` from inside it.~~ Done 2026-10-10. A node type
   can declare a property the formula's folder fills when the formula that names it leaves

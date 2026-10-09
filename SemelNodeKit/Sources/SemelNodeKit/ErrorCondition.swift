@@ -407,6 +407,8 @@ public enum LockProblem: Codable, Hashable, Sendable {
     case missingKey(key: String)
     case unknownContentScheme(value: String, scheme: String)
     case malformedArtifact(item: String)
+    /// A `hidden` path that is not a dot-named file in no dot-named folder, or is said twice.
+    case malformedHiddenFile(path: String, line: Int)
 }
 
 /// What a lock in `input:` says about its folder, as far as the lock barrier could read it.

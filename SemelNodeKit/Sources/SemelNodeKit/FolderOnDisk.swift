@@ -13,7 +13,8 @@ import SemelDatabaseModels
 /// A folder below the tree a push reads, walked as `ExternalFileSystemLister` lists it.
 ///
 /// What is here is what a push sends and nothing else: every name starting with a dot is
-/// left out but a file the server already holds under it (`hiddenFiles`), a link inside its
+/// left out but a file the server already holds under it (`hiddenFiles`) or one the lock
+/// beside a locked folder names below it (`DependencyLock.hiddenFiles`), a link inside its
 /// own folder is the link it is, any other link is followed unless it points at a folder
 /// above it, and a subfolder holding nothing a push would push is left out — a push creates
 /// a folder only on the way to a file, or when it is a link.
@@ -143,13 +144,26 @@ extension FolderOnDisk {
     /// `hiddenFiles` names, by the path of their folder relative to `baseDirectory`, the
     /// dot-named files the server holds there (B-77 item 5): each one still on disk is
     /// walked and folded as any file is, since the engine folds it into its folder's root.
-    /// Empty for `prepare`'s fold of a vendored folder, which leaves every dot-name out.
+    ///
+    /// The walk adds the ones a lock names (B-143): a folder `F` beside `F.semel-lock`, at
+    /// or above `relativePath` or anywhere below it, has each dot-named file its lock names
+    /// walked as well. Those are the resources its manifest declares, which `prepare` folded
+    /// into the lock's root; read here, a push of the folder sends them, so the engine's
+    /// root and the lock's agree by construction. `prepare`'s own fold of a vendored folder
+    /// is the folder alone, with no lock above it, and is told the same names.
     public static func read(_ relativePath: Path, under baseDirectory: String, symbolicLinkTarget: String? = nil,
                             hiddenFiles: [String: [String]] = [:],
                             excluding isExcluded: (Path) -> Bool = { _ in false }) -> FolderOnDisk {
         let lister = ExternalFileSystemLister(rootDirectoryPath: baseDirectory)
         let absolutePath = relativePath.isEmpty ? baseDirectory
                                                 : (baseDirectory as NSString).appendingPathComponent(relativePath.string)
+        var hiddenFiles = hiddenFiles
+        var lockedFolder = Path.empty
+        for segment in relativePath.segments {
+            lockedFolder = lockedFolder / segment
+            let lockPath = (baseDirectory as NSString).appendingPathComponent(DependencyLock.lockPath(forDependencyAt: lockedFolder.string))
+            addHiddenFiles(ofLockAt: lockPath, lockedFolder: lockedFolder, to: &hiddenFiles)
+        }
 
         // Listed first, read after, and read on every core: opening and hashing each file
         // is most of what a push of an unchanged tree costs the client, and the files are
@@ -167,9 +181,11 @@ extension FolderOnDisk {
     }
 
     /// The folder at `absolutePath`, as its own root: what `prepare` folds a vendored
-    /// dependency from.
-    public static func read(folderAt absolutePath: String) -> FolderOnDisk {
-        read(.empty, under: absolutePath)
+    /// dependency from, with the dot-named files its lock names (`hiddenFiles`, relative to
+    /// the folder) walked as a push of the folder walks them.
+    public static func read(folderAt absolutePath: String, hiddenFiles: [String] = []) -> FolderOnDisk {
+        let lock = DependencyLock(contentRoot: "", fold: "", hiddenFiles: hiddenFiles)
+        return read(.empty, under: absolutePath, hiddenFiles: lock.hiddenFilesByFolder())
     }
 
     /// A folder as listed, before any file in it has been read: its files by their place
@@ -185,11 +201,29 @@ extension FolderOnDisk {
         case folder(ListedFolder)
     }
 
+    /// Adds the dot-named files the lock at `lockPath` names below `lockedFolder`, when there
+    /// is a lock there that reads; a lock that does not read names none, and the barrier
+    /// refuses what it was to lock.
+    private static func addHiddenFiles(ofLockAt lockPath: String, lockedFolder: Path, to hiddenFiles: inout [String: [String]]) {
+        guard let data = FileManager.default.contents(atPath: lockPath),
+              let lock = try? DependencyLock.parse(String(decoding: data, as: UTF8.self)) else {
+            return
+        }
+        hiddenFiles.merge(lock.hiddenFilesByFolder(under: lockedFolder)) { held, named in held + named.filter { !held.contains($0) } }
+    }
+
     private static func list(absolutePath: String, relativePath: Path, symbolicLinkTarget: String?,
                              lister: ExternalFileSystemLister, hiddenFiles: [String: [String]], isExcluded: (Path) -> Bool,
                              pending: inout [(entry: FileWildcardEntry, absolutePath: String)]) -> ListedFolder {
         var folder = ListedFolder(path: relativePath, symbolicLinkTarget: symbolicLinkTarget, children: [])
         var entries = lister.allFiles(inDirectoryPath: absolutePath)
+        var hiddenFiles = hiddenFiles
+        let names = Set(entries.map(\.path.string))
+        for entry in entries where entry.kind == .folder
+            && names.contains(DependencyLock.lockPath(forDependencyAt: entry.path.string)) {
+            let lockPath = (absolutePath as NSString).appendingPathComponent(DependencyLock.lockPath(forDependencyAt: entry.path.string))
+            addHiddenFiles(ofLockAt: lockPath, lockedFolder: relativePath / entry.path.string, to: &hiddenFiles)
+        }
         let hidden = (hiddenFiles[relativePath.string] ?? []).compactMap {
             lister.hiddenFile(named: $0, inDirectoryPath: absolutePath)
         }

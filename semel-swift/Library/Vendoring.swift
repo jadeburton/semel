@@ -62,16 +62,32 @@ public enum Vendoring {
         /// The checksums the copy's manifest names for its binary targets are not the ones
         /// the lock records.
         case artifactsDiffer(DependencyLock)
+        /// The dot-named files the copy's manifest declares as resources are not the ones
+        /// the lock names (B-143).
+        case hiddenFilesDiffer(DependencyLock)
         /// The copy folds to another root than its lock's: it was changed after it was
         /// vendored, and `prepare` is where a person asks for it to be made right.
         case contentDiffers(DependencyLock)
     }
 
-    /// The `checksum:` of each binary target the manifest in a vendored package's folder
-    /// declares, by target: what a lock's `artifacts` line records. Handed in, because
-    /// reading a manifest is running SwiftPM, which `Preparation` does for every vendored
-    /// package anyway and can do once for both.
-    public typealias ManifestChecksums = (URL) throws -> [String: String]
+    /// What a lock records from the manifest in a vendored package's folder: the `checksum:`
+    /// of each binary target it declares, by target, its `artifacts` line; and the dot-named
+    /// files its targets declare as resources, its `hidden` lines (B-143).
+    public struct ManifestFacts: Equatable {
+        public var artifacts: [String: String]
+        /// Relative to the package's folder, sorted.
+        public var hiddenFiles: [String]
+
+        public init(artifacts: [String: String] = [:], hiddenFiles: [String] = []) {
+            self.artifacts   = artifacts
+            self.hiddenFiles = hiddenFiles.sorted()
+        }
+    }
+
+    /// Reads a vendored package's `ManifestFacts`. Handed in, because reading a manifest is
+    /// running SwiftPM, which `Preparation` does for every vendored package anyway and can
+    /// do once for both.
+    public typealias ReadManifestFacts = (URL) throws -> ManifestFacts
 
     /// One entry of a `Package.resolved`: where a package came from and what was chosen.
     public struct Pin: Equatable {
@@ -101,7 +117,7 @@ public enum Vendoring {
     /// resolves them as separate graphs, so the versions can in principle differ, and the
     /// last copy wins as it would for a rerun.
     public static func vendor(packageRoots: [URL], into dependencies: URL,
-                              manifestChecksums: ManifestChecksums) throws -> [Copied] {
+                              manifestFacts: ReadManifestFacts) throws -> [Copied] {
         var copied: [Copied] = []
         for packageRoot in packageRoots {
             try resolve(packageRoot: packageRoot)
@@ -110,7 +126,7 @@ public enum Vendoring {
                                         into: dependencies,
                                         pins: pins(inResolvedFileAt: packageRoot.appendingPathComponent("Package.resolved")),
                                         artifacts: artifacts,
-                                        manifestChecksums: manifestChecksums)
+                                        manifestFacts: manifestFacts)
             // The root's own binary targets, which SwiftPM downloads beside its dependencies'.
             try copyArtifacts(from: artifacts, identity: packageRoot.lastPathComponent, into: packageRoot)
         }
@@ -122,7 +138,7 @@ public enum Vendoring {
     /// clones every package the project reaches, transitively, into the folder it is
     /// given, under `checkouts/`, the same layout SwiftPM uses — so the copy step is the
     /// same. The clone folder is temporary; the copies are what the build reads.
-    public static func vendor(project: URL, into dependencies: URL, manifestChecksums: ManifestChecksums) throws -> [Copied] {
+    public static func vendor(project: URL, into dependencies: URL, manifestFacts: ReadManifestFacts) throws -> [Copied] {
         let clones = FileManager.default.temporaryDirectory
             .appendingPathComponent("semel-swift-clones-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: clones) }
@@ -142,7 +158,7 @@ public enum Vendoring {
         return try copyCheckouts(from: clones.appendingPathComponent("checkouts", isDirectory: true), into: dependencies,
                                  pins: pins(inResolvedFileAt: resolvedFile),
                                  artifacts: clones.appendingPathComponent("artifacts", isDirectory: true),
-                                 manifestChecksums: manifestChecksums)
+                                 manifestFacts: manifestFacts)
     }
 
     /// The folder in a package a binary target's artifact is vendored into, one per target.
@@ -257,13 +273,15 @@ public enum Vendoring {
     /// checksum of each binary target's download, by target. Replaces a lock already
     /// there, because the copy it described was replaced too. Returns the lock file.
     @discardableResult
-    public static func writeLock(for copied: Copied, artifacts: [String: String] = [:]) throws -> URL {
-        let lock = DependencyLock(contentRoot: try FolderContentRoot.root(ofFolderAt: copied.destination),
+    public static func writeLock(for copied: Copied, facts: ManifestFacts = ManifestFacts()) throws -> URL {
+        let lock = DependencyLock(contentRoot: try FolderContentRoot.root(ofFolderAt: copied.destination,
+                                                                          hiddenFiles: facts.hiddenFiles),
                                   fold:        FolderContentRoot.formatTag,
                                   version:     copied.pin?.version,
                                   revision:    copied.pin?.revision,
                                   origin:      copied.pin?.origin,
-                                  artifacts:   artifacts)
+                                  artifacts:   facts.artifacts,
+                                  hiddenFiles: facts.hiddenFiles)
         let file = DependencyLock.lockFile(forDependencyAt: copied.destination)
         try lock.text.write(to: file, atomically: true, encoding: .utf8)
         return file
@@ -293,7 +311,7 @@ public enum Vendoring {
     /// one and what was done with it.
     public static func copyCheckouts(from checkouts: URL, into dependencies: URL,
                                      pins: [String: Pin] = [:], artifacts: URL? = nil,
-                                     manifestChecksums: ManifestChecksums) throws -> [Copied] {
+                                     manifestFacts: ReadManifestFacts) throws -> [Copied] {
         let fileManager = FileManager.default
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: checkouts.path, isDirectory: &isDirectory), isDirectory.boolValue else {
@@ -315,7 +333,7 @@ public enum Vendoring {
             let source      = checkouts.appendingPathComponent(name, isDirectory: true)
             let destination = dependencies.appendingPathComponent(name, isDirectory: true)
 
-            guard let reason = try reasonToCopy(to: destination, pin: pins[name], manifestChecksums: manifestChecksums) else {
+            guard let reason = try reasonToCopy(to: destination, pin: pins[name], manifestFacts: manifestFacts) else {
                 copied.append(Copied(name: name, source: source, destination: destination, pin: pins[name], change: .unchanged))
                 continue
             }
@@ -348,7 +366,7 @@ public enum Vendoring {
     /// The pin compared is the whole of what the lock records of it: a version that stays
     /// while its revision moves is a retagged release, and an origin that moves is another
     /// repository under the same name, and either is a different checkout.
-    static func reasonToCopy(to destination: URL, pin: Pin?, manifestChecksums: ManifestChecksums) throws -> CopyReason? {
+    static func reasonToCopy(to destination: URL, pin: Pin?, manifestFacts: ReadManifestFacts) throws -> CopyReason? {
         guard FileManager.default.fileExists(atPath: destination.path) else {
             return .absent
         }
@@ -368,10 +386,14 @@ public enum Vendoring {
         guard lock.version == pin?.version, lock.revision == pin?.revision, lock.origin == pin?.origin else {
             return .pinMoved(lock)
         }
-        guard try manifestChecksums(destination) == lock.artifacts else {
+        let facts = try manifestFacts(destination)
+        guard facts.artifacts == lock.artifacts else {
             return .artifactsDiffer(lock)
         }
-        guard try FolderContentRoot.root(ofFolderAt: destination) == lock.contentRoot else {
+        guard facts.hiddenFiles == lock.hiddenFiles else {
+            return .hiddenFilesDiffer(lock)
+        }
+        guard try FolderContentRoot.root(ofFolderAt: destination, hiddenFiles: lock.hiddenFiles) == lock.contentRoot else {
             return .contentDiffers(lock)
         }
         return nil

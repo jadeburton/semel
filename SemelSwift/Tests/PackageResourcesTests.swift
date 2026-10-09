@@ -146,6 +146,22 @@ final class PackageResourcesTests: SemelSwiftTestCase {
                        ["missing.json"])
     }
 
+    /// In a vendored package a declared dot-named file is pushed by the push of the folder,
+    /// as its lock names it, so its folder's manifest holds it: it is the file it is, and
+    /// a resource of the bundle, never named as absent (B-143).
+    func test_aDeclaredDotNamedFileThePushSentIsAFileOfTheBundle() {
+        let manifests = [targetFolder:                manifest(targetFolder, files: ["Kit.swift"], folders: ["Resources"]),
+                         "\(targetFolder)/Resources": manifest("\(targetFolder)/Resources", files: [".config.json"])]
+        let rules = PackageResources.Rules(declared: [.init(path: "Resources/.config.json", isCopy: true)])
+
+        let found = PackageResources.detect(rules: rules, targetFolder: targetFolder, manifests: manifests)
+
+        XCTAssertEqual(found, [PackageResource(kind: .file, path: "Resources/.config.json", bundlePath: ".config.json")])
+        XCTAssertEqual(PackageResources.presence(of: "Resources/.config.json", targetFolder: targetFolder, manifests: manifests),
+                       .file)
+        XCTAssertEqual(PackageResources.absentDeclared(rules: rules, targetFolder: targetFolder, manifests: manifests), [])
+    }
+
     func test_aFolderThatIsAResourceWholeIsNotWalked() {
         XCTAssertFalse(PackageResources.isWalked(folderName: "Assets.xcassets"))
         XCTAssertFalse(PackageResources.isWalked(folderName: "en.lproj"))

@@ -206,7 +206,7 @@ extension FolderContentRoot {
     }
 
     /// What a content root holds below it that a pushed root leaves out
-    /// (`Folder`'s `pushedContentRoot`): every dot-named entry, every name holding no
+    /// (`Folder`'s `pushedContentRoot`): every dot-named folder, every name holding no
     /// content, every product, and every folder holding nothing. Walked from the whole root
     /// through the documents it names, so a lock check that failed can say what it did not
     /// compare. Paths are relative to the folder whose root `root` is, in the documents'
@@ -223,7 +223,9 @@ extension FolderContentRoot {
         }
         for line in lines {
             let path = prefix + line.name
-            if line.name.hasPrefix(".") {
+            // A dot-named file with content is pushed by its name, and the pushed root holds
+            // it; a dot-named folder is never pushed.
+            if line.name.hasPrefix("."), line.kind == .folder {
                 leftOut.append(LeftOutEntry(path: path, reason: .dotNamed))
                 continue
             }
@@ -252,7 +254,7 @@ extension FolderContentRoot {
 /// An entry of the graph's tree that a pushed root does not fold, and why.
 public struct LeftOutEntry: Codable, Hashable, Sendable {
     public enum Reason: String, Codable, Hashable, Sendable {
-        /// A dot-name, which a walk of the disk never takes.
+        /// A dot-named folder, which no push sends.
         case dotNamed
         /// A name something asked for and nobody pushed: a ghost.
         case notPushed
@@ -345,9 +347,12 @@ extension FolderContentRoot {
     ///
     /// It is the folder's *pushed* root (`Folder`'s `pushedContentRoot`) the lock check
     /// compares this with, not its whole one (B-143). The graph can hold below a vendored
-    /// folder what this walk never sees — a dot-named file something asked for by name, a
-    /// name a converter demanded that the copy lacks — and the pushed root leaves out
-    /// exactly what the walk does, so the two agree by construction.
+    /// folder what this walk never sees — a name a converter demanded that the copy lacks,
+    /// a product — and the pushed root leaves out exactly what the walk does, so the two
+    /// agree by construction. A dot-named file is the one name the two take alike only
+    /// when told: the pushed root holds every one the graph holds, as a push sends it, and
+    /// this walk takes the ones its lock names; one pushed into a locked folder by its name
+    /// and not named by the lock is a file the lock does not describe, and fails it.
     ///
     /// Folded by `document(of:)` and hashed by `Sha256`, as the engine folds and interns,
     /// so the two cannot differ in the format. They could still differ in *what* is folded,
@@ -366,8 +371,12 @@ extension FolderContentRoot {
     ///
     /// The walk is `FolderOnDisk`'s, the one `push` compares with (B-132), so the lock and
     /// the push cannot come to disagree about what a folder on disk folds to.
-    public static func root(ofFolderAt folder: URL) throws -> DataObjectHash {
-        let onDisk = FolderOnDisk.read(folderAt: folder.path)
+    ///
+    /// `hiddenFiles` are the dot-named files below the folder its manifest declares as
+    /// resources, relative to it: the ones its lock names (`DependencyLock.hiddenFiles`),
+    /// which a push of the folder sends and so the engine folds (B-143).
+    public static func root(ofFolderAt folder: URL, hiddenFiles: [String] = []) throws -> DataObjectHash {
+        let onDisk = FolderOnDisk.read(folderAt: folder.path, hiddenFiles: hiddenFiles)
         if let unreadable = onDisk.firstUnreadable {
             throw unreadable
         }

@@ -28,7 +28,7 @@ final class VendoringTests: XCTestCase {
     }
 
     /// The manifest reader for copies whose packages declare no binary target.
-    private let noBinaryTargets: Vendoring.ManifestChecksums = { _ in [:] }
+    private let noBinaryTargets: Vendoring.ReadManifestFacts = { _ in Vendoring.ManifestFacts() }
 
     private var checkouts: URL    { root.appendingPathComponent(".build/checkouts", isDirectory: true) }
     private var dependencies: URL { root.appendingPathComponent("Dependencies", isDirectory: true) }
@@ -50,7 +50,7 @@ final class VendoringTests: XCTestCase {
         try write(".build/checkouts/GRDB.swift/GRDB/Database.swift")
         try write(".build/checkouts/Nuke/Package.swift")
 
-        let copied = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, manifestChecksums: noBinaryTargets)
+        let copied = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, manifestFacts: noBinaryTargets)
 
         XCTAssertEqual(copied.map(\.name), ["GRDB.swift", "Nuke"])
         XCTAssertTrue(exists("Dependencies/GRDB.swift/Package.swift"))
@@ -65,7 +65,7 @@ final class VendoringTests: XCTestCase {
         try write(".build/checkouts/Nuke/.git/HEAD")
         try write(".build/checkouts/Nuke/.build/junk")
 
-        _ = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, manifestChecksums: noBinaryTargets)
+        _ = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, manifestFacts: noBinaryTargets)
 
         XCTAssertTrue(exists("Dependencies/Nuke/Package.swift"))
         XCTAssertFalse(exists("Dependencies/Nuke/.git"))
@@ -78,7 +78,7 @@ final class VendoringTests: XCTestCase {
         try write("Dependencies/Nuke/Sources/Old.swift")
         try write(".build/checkouts/Nuke/Sources/New.swift")
 
-        _ = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, manifestChecksums: noBinaryTargets)
+        _ = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, manifestFacts: noBinaryTargets)
 
         XCTAssertTrue(exists("Dependencies/Nuke/Sources/New.swift"))
         XCTAssertFalse(exists("Dependencies/Nuke/Sources/Old.swift"))
@@ -93,8 +93,8 @@ final class VendoringTests: XCTestCase {
         try write("B/.build/checkouts/Bodega/Package.swift")
         let shared = root.appendingPathComponent("Dependencies", isDirectory: true)
 
-        let fromA = try Vendoring.copyCheckouts(from: root.appendingPathComponent("A/.build/checkouts"), into: shared, manifestChecksums: noBinaryTargets)
-        let fromB = try Vendoring.copyCheckouts(from: root.appendingPathComponent("B/.build/checkouts"), into: shared, manifestChecksums: noBinaryTargets)
+        let fromA = try Vendoring.copyCheckouts(from: root.appendingPathComponent("A/.build/checkouts"), into: shared, manifestFacts: noBinaryTargets)
+        let fromB = try Vendoring.copyCheckouts(from: root.appendingPathComponent("B/.build/checkouts"), into: shared, manifestFacts: noBinaryTargets)
 
         XCTAssertEqual(fromA.map(\.name), ["Nuke", "SwiftSoup"])
         XCTAssertEqual(fromB.map(\.name), ["Bodega", "Nuke"])
@@ -145,7 +145,7 @@ final class VendoringTests: XCTestCase {
         try write(".build/checkouts/Unpinned/Package.swift")
         let grdb = Vendoring.Pin(origin: "https://github.com/groue/GRDB.swift.git", version: "7.11.1", revision: "b831")
 
-        let copied = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, pins: ["GRDB.swift": grdb], manifestChecksums: noBinaryTargets)
+        let copied = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, pins: ["GRDB.swift": grdb], manifestFacts: noBinaryTargets)
 
         XCTAssertEqual(copied.map(\.pin), [grdb, nil])
     }
@@ -153,7 +153,7 @@ final class VendoringTests: XCTestCase {
     /// The lock is beside the copy, not in it: in it, it would be a child the root folds.
     func test_theLockIsWrittenBesideTheCopyWithItsRoot() throws {
         try write(".build/checkouts/Nuke/Package.swift", "// nuke\n")
-        let copied = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, manifestChecksums: noBinaryTargets)
+        let copied = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, manifestFacts: noBinaryTargets)
 
         let lockFile = try Vendoring.writeLock(for: try XCTUnwrap(copied.first))
 
@@ -172,7 +172,7 @@ final class VendoringTests: XCTestCase {
     /// Vendors and locks every checkout, as `prepare` does on its first run.
     @discardableResult
     private func vendorAndLock(pins: [String: Vendoring.Pin]) throws -> [Vendoring.Copied] {
-        let copied = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, pins: pins, manifestChecksums: noBinaryTargets)
+        let copied = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, pins: pins, manifestFacts: noBinaryTargets)
         for entry in copied where entry.change != .unchanged {
             try Vendoring.writeLock(for: entry)
         }
@@ -307,13 +307,37 @@ final class VendoringTests: XCTestCase {
         var asked: [URL] = []
 
         let copied = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, pins: ["Sparkle": sparkle],
-                                                 manifestChecksums: { copy in
+                                                 manifestFacts: { copy in
                                                      asked.append(copy)
-                                                     return ["Sparkle": "4d5de3d3"]
+                                                     return Vendoring.ManifestFacts(artifacts: ["Sparkle": "4d5de3d3"])
                                                  })
 
         XCTAssertEqual(copied.map(\.change), [.copied(.artifactsDiffer(try lock("Sparkle")))])
         XCTAssertEqual(asked.map(\.lastPathComponent), ["Sparkle"])
+    }
+
+    /// B-143. A lock names the dot-named resources the copy's manifest declares and folds
+    /// them into its root; a rerun whose manifest names the same leaves the copy, and one
+    /// whose manifest names others copies it again.
+    func test_aLockNamesTheDotNamedResourcesItsManifestDeclares() throws {
+        try write(".build/checkouts/Kit/Package.swift", "// kit\n")
+        try write(".build/checkouts/Kit/Sources/Kit/.config.json", "{}\n")
+        let kit = Vendoring.Pin(origin: "https://example.com/Kit", version: "1.0.0", revision: "aaaaaaa1")
+        let declared: Vendoring.ReadManifestFacts = { _ in Vendoring.ManifestFacts(hiddenFiles: ["Sources/Kit/.config.json"]) }
+        let copied = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, pins: ["Kit": kit], manifestFacts: declared)
+        try Vendoring.writeLock(for: try XCTUnwrap(copied.first), facts: try declared(dependencies))
+
+        let written = try lock("Kit")
+        let copy = dependencies.appendingPathComponent("Kit")
+        XCTAssertEqual(written.hiddenFiles, ["Sources/Kit/.config.json"])
+        XCTAssertEqual(written.contentRoot, try FolderContentRoot.root(ofFolderAt: copy, hiddenFiles: written.hiddenFiles))
+        XCTAssertNotEqual(written.contentRoot, try FolderContentRoot.root(ofFolderAt: copy))
+
+        let again = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, pins: ["Kit": kit], manifestFacts: declared)
+        XCTAssertEqual(again.map(\.change), [.unchanged])
+        let undeclared = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, pins: ["Kit": kit],
+                                                     manifestFacts: noBinaryTargets)
+        XCTAssertEqual(undeclared.map(\.change), [.copied(.hiddenFilesDiffer(written))])
     }
 
     func test_aNewCheckoutIsVendoredAsAbsent() throws {
@@ -323,7 +347,7 @@ final class VendoringTests: XCTestCase {
     }
 
     func test_saysWhenNothingWasResolved() {
-        XCTAssertThrowsError(try Vendoring.copyCheckouts(from: checkouts, into: dependencies, manifestChecksums: noBinaryTargets)) { error in
+        XCTAssertThrowsError(try Vendoring.copyCheckouts(from: checkouts, into: dependencies, manifestFacts: noBinaryTargets)) { error in
             XCTAssertTrue(String(describing: error).contains("swift package resolve"), "got \(error)")
         }
     }

@@ -618,6 +618,8 @@ final class ErrorRenderingTests: XCTestCase {
             (.emptyValue(key: "fold", line: 3), "line 3: 'fold' has no value"),
             (.unknownContentScheme(value: "md5:x", scheme: "sha256:"), "'content' is 'md5:x', and a content root is written 'sha256:<hex>'"),
             (.malformedArtifact(item: "x"), "'artifacts' holds 'x', and each item is written '<target>=<checksum>', a target once"),
+            (.malformedHiddenFile(path: ".git/config", line: 4),
+             "line 4: 'hidden' holds '.git/config', and each is a relative path, said once, to a dot-named file in no dot-named folder"),
         ]
         for (problem, sentence) in problems {
             XCTAssertEqual(block(.lockUnreadable(folder: "input:/f", lockPath: "input:/f.semel-lock", problem: problem)).first,
