@@ -75,10 +75,20 @@ public struct ToolExecuteResult {
     /// dump-package` prints absolute paths — not for building a command line, which never
     /// names the sandbox (see `ToolSandbox`).
     public let resolvedSandboxPath: String
+    /// The expected output files the tool did not write, by name, and the expected output
+    /// folders it did not make. Facts beside the exit status rather than lines in the
+    /// error log: a tool that failed has already said why in its own output, and a line
+    /// about the file it then could not write is noise under that; a tool that exited
+    /// cleanly without its output is the one case worth a sentence, and the node writes it.
+    public let missingOutputFiles: [String]
+    public let missingOutputFolders: [String]
 
-    public init(exitCode: Int32, resolvedSandboxPath: String) {
-        self.exitCode = exitCode
-        self.resolvedSandboxPath = resolvedSandboxPath
+    public init(exitCode: Int32, resolvedSandboxPath: String,
+                missingOutputFiles: [String] = [], missingOutputFolders: [String] = []) {
+        self.exitCode             = exitCode
+        self.resolvedSandboxPath  = resolvedSandboxPath
+        self.missingOutputFiles   = missingOutputFiles
+        self.missingOutputFolders = missingOutputFolders
     }
 }
 
@@ -284,6 +294,23 @@ public struct SimplifiedToolExecuteResult {
     /// Every file and link of each expected output folder, keyed by the folder, each entry's
     /// path below it.
     public let outputTrees: [String: [TreeManifestEntry]]
+    /// The expected output files and folders the tool did not write, as
+    /// `ToolExecuteResult` carries them.
+    public let missingOutputFiles: [String]
+    public let missingOutputFolders: [String]
+
+    public init(exitCode: Int32, resolvedSandboxPath: String, infoOutput: String, errorOutput: String,
+                outputFiles: [String: DataObjectHash], outputTrees: [String: [TreeManifestEntry]],
+                missingOutputFiles: [String] = [], missingOutputFolders: [String] = []) {
+        self.exitCode             = exitCode
+        self.resolvedSandboxPath  = resolvedSandboxPath
+        self.infoOutput           = infoOutput
+        self.errorOutput          = errorOutput
+        self.outputFiles          = outputFiles
+        self.outputTrees          = outputTrees
+        self.missingOutputFiles   = missingOutputFiles
+        self.missingOutputFolders = missingOutputFolders
+    }
 }
 
 extension ToolRunner {
@@ -329,15 +356,18 @@ extension ToolRunner {
                      infoOutput: infoOutput,
                      errorOutput: errorOutput,
                      outputFiles: outputFiles,
-                     outputTrees: outputTrees)
+                     outputTrees: outputTrees,
+                     missingOutputFiles: result.missingOutputFiles,
+                     missingOutputFolders: result.missingOutputFolders)
     }
 }
 
 extension SimplifiedToolExecuteResult {
     /// One expected output folder as a tree value: every file already stored by the
     /// runner, the manifest interned, the manifest's hash on the wire. The tool's error
-    /// output if it failed. A folder the tool left empty is an empty tree, which is a
-    /// value — a catalog with nothing to compile for the platform produces one.
+    /// output if it failed, and a sentence naming the folder if it exited cleanly without
+    /// making it. A folder the tool left empty is an empty tree, which is a value — a
+    /// catalog with nothing to compile for the platform produces one.
     public func asTreeNodeValue(folder: String,
                                 tool: String = "the tool",
                                 settings: [SettingArgument] = []) throws -> NodeValue {
@@ -345,7 +375,16 @@ extension SimplifiedToolExecuteResult {
             let message = failureMessage(tool: tool, settings: settings)
             return .noValue(reason: .error(messageDataObjectHash: try message.intern()))
         }
+        guard !missingOutputFolders.contains(folder) else {
+            return .noValue(reason: .error(messageDataObjectHash: try wroteNothingMessage(tool: tool, at: folder).intern()))
+        }
         return .value(try TreeManifest(entries: outputTrees[folder] ?? []).toJSON().intern())
+    }
+
+    /// What a clean run that wrote none of its output says: the status, so the reader
+    /// knows the tool did not fail, and the path it was expected to write.
+    public func wroteNothingMessage(tool: String = "the tool", at path: String) -> String {
+        "\(tool) exited with status \(exitCode) and wrote nothing at \(path)"
     }
 
     /// What a failed run says: the exit status, then whatever the tool printed on either
@@ -386,7 +425,9 @@ extension SimplifiedToolExecuteResult {
             if let outputFile = outputFiles.values.first {
                 return .value(outputFile)
             } else {
-                return .noValue(reason: .error(messageDataObjectHash: try "No output file emitted by tool".intern()))
+                let missing = missingOutputFiles.sorted().joined(separator: ", ")
+                let message = wroteNothingMessage(tool: tool, at: missing.isEmpty ? "its output" : missing)
+                return .noValue(reason: .error(messageDataObjectHash: try message.intern()))
             }
         } else {
             let message = failureMessage(tool: tool, settings: settings)

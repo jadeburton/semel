@@ -169,12 +169,14 @@ public class LocalFileSystemTool: ToolRunner {
         }
 
         // 6. Store each expected output file straight from the sandbox — hashed mapped,
-        // cloned into the store, never read into memory (B-116) — and forward its hash.
+        // cloned into the store, never read into memory (B-116) — and forward its hash. A
+        // file the tool did not write is a fact on the result, not a line in its log.
+        var missingOutputFiles: [String] = []
         for expectedOutputFileName in expectedOutputFileNames {
             let outputFileURL = Foundation.URL(fileURLWithPath: sandboxPath)
                 .appendingPathComponent(expectedOutputFileName)
             guard fileManager.fileExists(atPath: outputFileURL.path) else {
-                output.logError("Expected output file not found: \(expectedOutputFileName)")
+                missingOutputFiles.append(expectedOutputFileName)
                 continue
             }
             output.write(expectedOutputFileName, try DataObjectStore.shared.store(fileAt: outputFileURL))
@@ -184,13 +186,14 @@ public class LocalFileSystemTool: ToolRunner {
         // tree a node builds from them is the same value however the file system
         // enumerates. The enumerator does not descend through a link, so what a link names
         // is read where it is, and the link is read as the link it is.
+        var missingOutputFolders: [String] = []
         for folder in expectedOutputFolders {
             let folderURL = Foundation.URL(fileURLWithPath: sandboxPath).appendingPathComponent(folder)
             var isDirectory: ObjCBool = false
             let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
             guard fileManager.fileExists(atPath: folderURL.path, isDirectory: &isDirectory), isDirectory.boolValue,
                   let enumerator = fileManager.enumerator(at: folderURL, includingPropertiesForKeys: keys) else {
-                output.logError("Expected output folder not found: \(folder)")
+                missingOutputFolders.append(folder)
                 continue
             }
             let itemURLs = (enumerator.allObjects as? [Foundation.URL] ?? []).sorted { $0.path < $1.path }
@@ -214,7 +217,8 @@ public class LocalFileSystemTool: ToolRunner {
             }
         }
 
-        return .init(exitCode: exitCode, resolvedSandboxPath: canonicalSandboxPath)
+        return .init(exitCode: exitCode, resolvedSandboxPath: canonicalSandboxPath,
+                     missingOutputFiles: missingOutputFiles, missingOutputFolders: missingOutputFolders)
     }
 }
 
