@@ -66,7 +66,9 @@ public struct ClangCompiler: Node {
     /// 3: `sdkPath`, `modules` and `objectiveCARC` reach the command line (B-77).
     /// 4: several wires on a one-wire port are an error naming them, where one was compiled
     /// (B-141).
-    public static let implementationVersion = 4
+    /// 5: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 5
 
     // MARK: Ports
 
@@ -126,6 +128,11 @@ public struct ClangCompiler: Node {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
 
+    /// A compile's failure belongs to the source it compiles, by the wire's key.
+    public func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject? {
+        input?.inputValues[Self.input]?.keys.min().map { .source(path: ClangPreprocessor.sourcePath(ofPreprocessed: $0)) }
+    }
+
     func process(inputs: ClangCompilerInputs) throws -> ClangCompilerOutputs {
 
         let outputFilename = inputs.inputSourceFile.filePath + ".o"
@@ -173,7 +180,9 @@ public struct ClangCompiler: Node {
             inputFiles: [.init(filePath: inputs.inputSourceFile.filePath, hash: inputs.inputSourceFile.hash)],
             expectedOutputFileNames: [outputFilename])
 
-        return .init(output: try result.asOutputNodeValue(tool: "clang", settings: settings),
+        let subject = ErrorDocument.Subject.source(path: ClangPreprocessor.sourcePath(ofPreprocessed: inputs.inputSourceFile.filePath))
+        return .init(output: try result.asOutputNodeValue(tool: "clang", subject: subject,
+                                                          settings: settings),
                      errorLog: .value(try result.errorOutput.intern()),
                      infoLog: .value(try result.infoOutput.intern()))
     }

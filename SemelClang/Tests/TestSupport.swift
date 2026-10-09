@@ -25,7 +25,7 @@ class SemelClangTestCase: XCTestCase {
 
         // FolderManifest is decoded by the compiler node, and TypeRegistry resolves it
         // through the same process-global registry production uses.
-        try TypeRegistry.register(types: [FolderManifest.self, FolderSubtreeManifest.self])
+        try TypeRegistry.register(types: [FolderManifest.self, FolderSubtreeManifest.self, ErrorDocument.self])
         try SemelClang.register()
     }
 
@@ -91,5 +91,15 @@ final class RecordingToolRunner: ToolRunner {
         }
 
         return ToolExecuteResult(exitCode: exitCode, resolvedSandboxPath: "/tmp/recording-tool-sandbox")
+    }
+}
+
+extension NodeValue {
+    /// The document an error value names, read back; nil for a value or another reason.
+    var errorDocument: ErrorDocument? {
+        guard case .noValue(.error(let hash)) = self else {
+            return nil
+        }
+        return ErrorDocument.read(documentHash: hash)
     }
 }

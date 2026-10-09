@@ -26,13 +26,13 @@ extension Node {
         for inputPort in descriptor.staticInputPorts.filter({ !descriptor.optionalStaticInputPorts.contains($0) }) {
 
             guard let values = input.inputValues[inputPort] else {
-                throw NodeError.other(message: "inputValues is missing an entry for input port \(inputPort)")
+                throw NodeError.inputPortMissing(port: inputPort)
             }
 
             guard !values.isEmpty else {
                 // GraphSpecTableApplier.createNode() validates this at creation time (requiredPortUnwired),
                 // so reaching here means a wire was removed after the node was built — a real integrity error.
-                throw NodeError.other(message: "Non-optional input port '\(inputPort)' has no connected wires for \(self)")
+                throw NodeError.requiredInputPortUnwired(port: inputPort)
             }
 
             if values.contains(where: { $0.value.isPending }) {
@@ -73,7 +73,7 @@ extension Node {
             // Filing a full disk as "node 47 failed" hides the real problem, and every
             // node after this one would fail the same way.
             FatalErrors.check(error)
-            return buildErrorOutput(withError: error)
+            return buildErrorOutput(withError: error, input: input)
         }
     }
 
@@ -265,8 +265,9 @@ extension Node {
         } catch {
             Debug.warn("applySpecs failed: \(error)")
 
+            let failure = try ErrorDocument.thrown(error, subject: errorSubject(input: try? buildProcessInput())).published()
             for outputPort in descriptor.outputPorts {
-                try thisNode.writeToOutputPort(outputPort, value: .noValue(reason: .error(messageDataObjectHash: "\(error)".intern())))
+                try thisNode.writeToOutputPort(outputPort, value: failure)
             }
             throw error
         }
@@ -354,16 +355,20 @@ extension Node {
     ///
     /// An error that stopped this node without being its own failure — an input pending, an
     /// input in error, an input that has never been produced — is a state, and each has a
-    /// case of its own so that nothing downstream reads a sentence to tell them apart.
-    /// `NodeError.publishedState` is the table; the error is translated on the way to the
-    /// port and never interned as text.
-    func buildErrorOutput(withError error: Error) -> ProcessOutput {
+    /// case of its own so that nothing downstream reads a document to tell them apart.
+    /// `NodeError.publishedState` is the table. Anything else is the node's own failure,
+    /// published as the document its condition names, under what the node says it belongs
+    /// to.
+    func buildErrorOutput(withError error: Error, input: ProcessInput?) -> ProcessOutput {
         if let state = (error as? NodeError)?.publishedState {
             return buildOutput(reason: state)
         }
 
-        let message = reportedMessage(for: error)
-        return buildOutput(reason: .error(messageDataObjectHash: (try? message.intern()) ?? ""))
+        let document = ErrorDocument.thrown(error, subject: errorSubject(input: input))
+        // Interning writes the store, and a store that cannot be written stops the build
+        // through the fatal handler wherever it is met; the empty hash is what a port holds
+        // for an error with no document, which a report says as one it cannot read.
+        return buildOutput(reason: (try? document.asReason()) ?? .error(documentHash: ""))
     }
 
     /// One reason on every output port, and the dynamic wires the graph already holds left
@@ -377,17 +382,6 @@ extension Node {
             outputValues[outputPort] = .noValue(reason: reason)
         }
         return .init(outputValues: outputValues, inputWireSpecs: [:])
-    }
-
-    /// A thrown error's text for a node's output ports. `SemelNodeKit` cannot name `reset`
-    /// — it does not know the engine has one — so an unregistered kind gets its remedy
-    /// appended here, where the engine renders the error rather than where it is thrown.
-    private func reportedMessage(for error: Error) -> String {
-        guard case TypeRegistryError.unknownKind = error else {
-            return "\(error)"
-        }
-        return "\(error): the type is not linked into this semelserv, or the graph predates " +
-               "its removal. reset discards the derived state that is stuck."
     }
 
     fileprivate func hasInputPorts() -> Bool {

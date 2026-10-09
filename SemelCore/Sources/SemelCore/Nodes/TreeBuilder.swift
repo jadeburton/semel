@@ -18,7 +18,9 @@ struct TreeBuilder: Node {
 
     /// 2: a file pushed as a symbolic link is a link entry where its target is in the tree
     /// (B-77).
-    public static let implementationVersion = 2
+    /// 3: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 3
 
     /// The files, one wire each; the wire's key is the entry's path in the tree.
     static let inputPort = "input"

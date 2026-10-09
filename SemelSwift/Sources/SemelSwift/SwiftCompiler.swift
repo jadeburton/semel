@@ -135,7 +135,7 @@ struct SwiftCompilerConfiguration {
             return []
         }
         guard let flags = try? JSONDecoder().decode([String].self, from: Data(value.utf8)) else {
-            throw NodeError.other(message: "\(settingNamespace).unsafeFlags=\(value) is not a JSON list of strings")
+            throw ErrorCondition.settingNotAList(key: "\(settingNamespace).unsafeFlags", value: value)
         }
         return flags
     }
@@ -228,7 +228,9 @@ struct SwiftCompiler: Node {
     /// `.docc` folder is not walked for sources, and `packageName` is `-package-name`
     /// (B-77). At 5, several wires on a one-wire port are an error naming them, where one
     /// configuration was compiled with (B-141).
-    public static let implementationVersion = 5
+    /// 6: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 6
 
     // MARK: Ports
 
@@ -402,7 +404,7 @@ struct SwiftCompiler: Node {
             // "cannot find type" errors far from the cause.
             let trees = FolderTreeWalk.trees(in: input, port: SwiftCompiler.inputFolderTrees)
             for key in wiredFolderTrees.sorted() where trees[key] == nil {
-                throw NodeError.other(message: "Could not decode FolderSubtreeManifest on port \(SwiftCompiler.inputFolderTrees) for '\(key)'")
+                throw ErrorCondition.valueUnreadable(form: .folderSubtreeManifest, port: SwiftCompiler.inputFolderTrees, wire: key)
             }
             inputFolderTrees = trees
 
@@ -428,7 +430,7 @@ struct SwiftCompiler: Node {
         for (key, value) in (input.inputValues[port] ?? [:]).sorted(by: { $0.key < $1.key }) {
             let object = try? TypeRegistry.decode(encodedJSON: value.expectValue().resolveAsString())
             guard let folderManifest = object as? FolderManifest else {
-                throw NodeError.other(message: "Could not decode FolderManifest on port \(port) for '\(key)'")
+                throw ErrorCondition.valueUnreadable(form: .folderManifest, port: port, wire: key)
             }
             result.append((key, folderManifest))
         }
@@ -457,6 +459,11 @@ struct SwiftCompiler: Node {
 
     // MARK: - Processing
 
+    /// A compile's failure belongs to the module it builds.
+    public func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject? {
+        input?.reportedSetting("moduleName", onPort: Self.configuration).map { .target(name: $0) }
+    }
+
     public func process(input: ProcessInput) throws -> ProcessOutput {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
@@ -480,7 +487,7 @@ struct SwiftCompiler: Node {
                          inputModuleMapFilesSpecs: [String: GraphSpecNode]) throws -> SwiftCompilerOutputs {
 
         guard !inputs.sourceFiles.isEmpty else {
-            let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "SwiftCompiler: no source files".intern()))
+            let error = try ErrorDocument.engine(.noSources, subject: .target(name: inputs.configuration.moduleName)).published()
             return .init(outputObject: error,
                          outputModule: error,
                          infoLog: .value(""),
@@ -503,8 +510,7 @@ struct SwiftCompiler: Node {
         try verifySDKVersion(inputs.configuration.sdkVersion, sdk: sdk)
 
         guard let sdkPath = resolveSDKPath(sdk: sdk) else {
-            throw NodeError.other(message: "no SDK named \(sdk) could be found on this machine "
-                                         + "(swift.compiler.sdk names it as `xcrun --sdk` would)")
+            throw ErrorCondition.sdkNotFound(sdk: sdk, key: "\(namespace).sdk")
         }
         arguments.append("-sdk");                            arguments.append(sdkPath)
         settings.append(.swiftSDK(key: "\(namespace).sdk", value: sdk))
@@ -629,8 +635,7 @@ struct SwiftCompiler: Node {
         let moduleHash = result.outputFiles[moduleOutput] ?? ""
 
         guard result.exitCode == 0 else {
-            let message = result.failureMessage(tool: "swiftc", settings: settings)
-            let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try message.intern()))
+            let error = try result.failureDocument(tool: "swiftc", subject: .target(name: moduleName), settings: settings).published()
             return .init(outputObject: error,
                          outputModule: error,
                          infoLog: .value(try result.infoOutput.intern()),
@@ -699,7 +704,17 @@ struct SwiftCompiler: Node {
                                inputFolderTreesSpecs: inputFolderTreesSpecs,
                                inputModuleMapFilesSpecs: inputModuleMapFilesSpecs)
         } catch {
-            let errorNodeValue = NodeValue.noValue(reason: .error(messageDataObjectHash: try error.localizedDescription.intern()))
+            // A machine that cannot be written stops the build; a state an input stood in is
+            // published as that state, as the engine publishes it for a thrown one.
+            if error is UnrecoverableError {
+                throw error
+            }
+            let errorNodeValue: NodeValue
+            if let state = (error as? NodeError)?.publishedState {
+                errorNodeValue = .noValue(reason: state)
+            } else {
+                errorNodeValue = try ErrorDocument.thrown(error, subject: .target(name: inputs.configuration.moduleName)).published()
+            }
             return .init(outputObject: errorNodeValue,
                          outputModule: errorNodeValue,
                          infoLog: .value(""),   // empty content never reaches the store

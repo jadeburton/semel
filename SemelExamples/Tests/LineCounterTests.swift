@@ -47,7 +47,7 @@ final class LineCounterTests: SemelExamplesTestCase {
         ]))
         XCTAssertThrowsError(try count([
             "hello.c": .value(try "x\n".intern()),
-            "main.c": .noValue(reason: .error(messageDataObjectHash: try "did not compile".intern())),
+            "main.c": .noValue(reason: .error(documentHash: try "did not compile".intern())),
         ]))
     }
 

@@ -499,7 +499,7 @@ struct XcodeFormulaEmitter {
         }
         guard !target.synchronizedFolders.isEmpty || !listedSources.isEmpty
                 || target.borrowedFiles.contains(where: { $0.hasSuffix(".swift") }) else {
-            throw XcodeProjectError.noSuchTarget("\(target.name): no synchronized folder, no listed sources and no borrowed sources")
+            throw XcodeProjectError.targetHasNoSources(target.name)
         }
         let sourceFolders = target.synchronizedFolders.map { ($0, "\(build.projectFolder)/\($0.path)") }
         let folderWires = sourceFolders.enumerated().map { index, folder in

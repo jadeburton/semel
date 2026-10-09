@@ -32,7 +32,9 @@ public struct StringCatalogCompiler: Node {
     public static let kind: UInt = 30
     /// 2: several wires on a one-wire port are an error naming them, where one was taken
     /// (B-141).
-    public static let implementationVersion = 2
+    /// 3: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 3
 
     // MARK: Ports
 
@@ -68,6 +70,11 @@ public struct StringCatalogCompiler: Node {
         try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
     }
 
+    /// A compile's failure belongs to the catalog it compiles.
+    public func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject? {
+        input?.inputValues[Self.catalog]?.keys.min().map { .resource(path: $0) }
+    }
+
     public func process(input: ProcessInput) throws -> ProcessOutput {
         let configurationText = try input.onlyWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
         let configuration = try StringCatalogCompilerConfiguration(properties: [String: String](plainText: configurationText))
@@ -86,7 +93,8 @@ public struct StringCatalogCompiler: Node {
                                       expectedOutputFileNames: [],
                                       expectedOutputFolders: [Self.outputFolder])
 
-        return .init(outputValues: [Self.output:   try result.asTreeNodeValue(folder: Self.outputFolder),
+        return .init(outputValues: [Self.output:   try result.asTreeNodeValue(folder: Self.outputFolder, tool: "xcstringstool",
+                                                                              subject: .resource(path: catalogWire.key)),
                                     Self.infoLog:  .value(try result.infoOutput.intern()),
                                     Self.errorLog: .value(try result.errorOutput.intern())],
                      inputWireSpecs: [:])

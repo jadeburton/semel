@@ -176,19 +176,18 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
         executor.producedFiles["partial.plist"] = Array("<plist/>".utf8)
         executor.producedFiles["GeneratedAssetSymbols.swift"] = Array("extension ColorResource {}\n".utf8)
 
-        guard case .noValue(.error(let notCanonical)) = try XCTUnwrap(try processWholeCatalog(symbols: symbols)
-                .outputValues[AssetCatalogCompiler.swiftAssetSymbols]) else {
-            return XCTFail("a catalog that is not published publishes no symbols")
+        let notCanonical = try XCTUnwrap(try processWholeCatalog(symbols: symbols)
+            .outputValues[AssetCatalogCompiler.swiftAssetSymbols]?.errorDocument,
+                                         "a catalog that is not published publishes no symbols")
+        guard case .engine(.assetCatalogNotCanonical) = notCanonical.diagnostic else {
+            return XCTFail("expected the catalog that is not canonical, got \(notCanonical)")
         }
-        XCTAssertTrue(try notCanonical.resolveAsString().contains("B-89"))
 
         executor.exitCode = 1
         executor.errorOutput = "error: The operation could not be completed."
-        guard case .noValue(.error(let failed)) = try XCTUnwrap(try processWholeCatalog(symbols: symbols)
-                .outputValues[AssetCatalogCompiler.swiftAssetSymbols]) else {
-            return XCTFail("a failed run publishes no symbols")
-        }
-        XCTAssertTrue(try failed.resolveAsString().hasPrefix("actool exited with status 1"))
+        let failed = try XCTUnwrap(try processWholeCatalog(symbols: symbols)
+            .outputValues[AssetCatalogCompiler.swiftAssetSymbols]?.errorDocument, "a failed run publishes no symbols")
+        XCTAssertEqual(failed.diagnostic, .tool(text: "error: The operation could not be completed.", tool: "actool"))
     }
 
     /// The real actool, over a catalog of colors made in two orders, writes the same symbols
@@ -278,11 +277,9 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
         let output = try processWholeCatalog(appIcon: "AppIcon")
 
         for port in [AssetCatalogCompiler.output, AssetCatalogCompiler.partialInfoPlist] {
-            guard case .noValue(.error(let messageHash)) = try XCTUnwrap(output.outputValues[port]) else {
-                return XCTFail("\(port) must carry the error")
-            }
-            let message = try messageHash.resolveAsString()
-            XCTAssertTrue(message.contains("B-89") && message.contains("it does not open with 'BOMStore'"), message)
+            let document = try XCTUnwrap(output.outputValues[port]?.errorDocument, "\(port) must carry the error")
+            XCTAssertEqual(document.diagnostic, .engine(.assetCatalogNotCanonical(problem: .notABOMStore(problem: .notABOMStore))))
+            XCTAssertEqual(document.subject, .resource(path: "input:/app/Assets.xcassets"))
         }
     }
 
@@ -293,16 +290,15 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
         let output = try processWholeCatalog(appIcon: "AppIcon")
 
         for port in [AssetCatalogCompiler.output, AssetCatalogCompiler.partialInfoPlist] {
-            guard case .noValue(.error(let messageHash)) = try XCTUnwrap(output.outputValues[port]) else {
-                return XCTFail("\(port) must carry the error")
-            }
-            XCTAssertTrue(try messageHash.resolveAsString().contains("AppIcon"))
+            let document = try XCTUnwrap(output.outputValues[port]?.errorDocument, "\(port) must carry the error")
+            XCTAssertEqual(document.diagnostic,
+                           .tool(text: "error: None of the input catalogs contained a matching app icon set named \"AppIcon\"",
+                                 tool: "actool"))
         }
     }
 
     /// actool puts its diagnostics on stdout under `--output-format human-readable-text`, so
-    /// a run that fails with nothing on stderr must still say what it said, and the exit
-    /// status is there when it said nothing.
+    /// a run that fails with nothing on stderr must still carry what it said.
     func test_aFailedRunNamesTheStatusAndWhatActoolPrintedOnEitherStream() throws {
         executor.exitCode = 1
         executor.errorOutput = ""
@@ -310,12 +306,11 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
 
         let output = try processWholeCatalog(appIcon: "AppIcon")
 
-        guard case .noValue(.error(let messageHash)) = try XCTUnwrap(output.outputValues[AssetCatalogCompiler.partialInfoPlist]) else {
-            return XCTFail("the partial plist must carry the error")
-        }
-        let message = try messageHash.resolveAsString()
-        XCTAssertTrue(message.hasPrefix("actool exited with status 1"), message)
-        XCTAssertTrue(message.contains("The operation could not be completed."), message)
+        let document = try XCTUnwrap(output.outputValues[AssetCatalogCompiler.partialInfoPlist]?.errorDocument,
+                                     "the partial plist must carry the error")
+        XCTAssertEqual(document.diagnostic,
+                       .tool(text: "/* com.apple.actool.errors */\nAssets.xcassets: error: The operation could not be completed.",
+                             tool: "actool"))
     }
 
     /// The tree is what the platform settings produced, so they are required: a catalog
@@ -332,11 +327,13 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
         XCTAssertThrowsError(try node.process(input: ProcessInput(inputValues: [
             AssetCatalogCompiler.configuration: ["configuration": .value(try bare.intern())],
         ]))) { error in
-            XCTAssertTrue("\(error)".contains("apple.assetCatalogCompiler.platform"), "\(error)")
-            XCTAssertTrue("\(error)".contains("apple.assetCatalogCompiler.targetDevices"), "\(error)")
+            guard case .settingsMissing(let project, let machine, _)? = error as? ErrorCondition else {
+                return XCTFail("expected the missing settings, got \(error)")
+            }
+            XCTAssertTrue(project.contains("apple.assetCatalogCompiler.platform"), "\(project)")
+            XCTAssertTrue(project.contains("apple.assetCatalogCompiler.targetDevices"), "\(project)")
             // The assetutil that guards the canonical car is the machine's, written by prepare.
-            XCTAssertTrue("\(error)".contains("Missing machine settings"), "\(error)")
-            XCTAssertTrue("\(error)".contains("apple.assetCatalogCompiler.assetutilPath"), "\(error)")
+            XCTAssertTrue(machine.contains("apple.assetCatalogCompiler.assetutilPath"), "\(machine)")
         }
     }
 }

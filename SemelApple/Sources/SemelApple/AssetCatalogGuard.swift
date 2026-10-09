@@ -27,21 +27,25 @@ import Foundation
 import SemelNodeKit
 import SemelDatabaseModels
 
-enum AssetCatalogGuardError: Error, CustomStringConvertible, Equatable {
-    /// `which` is `the Assets.car actool wrote` or `the canonical Assets.car`.
-    case unreadable(which: String, reason: String)
+/// Why the canonical `Assets.car` is not shown to read as the one actool wrote, by case.
+enum AssetCatalogGuardError: Error, Equatable, ErrorConditionConvertible {
+    /// `assetutil` failed on one of the two catalogs: what it printed.
+    case unreadable(copy: AssetCatalogProblem.Copy, output: String)
+    /// `assetutil` succeeded on one and printed no catalog: the start of what it printed.
+    case printedNoCatalog(copy: AssetCatalogProblem.Copy, output: String)
     case entryCountDiffers(original: Int, canonical: Int)
     case entriesDiffer([String])
 
-    var description: String {
+    var errorCondition: ErrorCondition {
         switch self {
-        case .unreadable(let which, let reason):
-            return "assetutil cannot read \(which): \(reason)"
+        case .unreadable(let copy, let output):
+            return .assetCatalogNotCanonical(problem: .unreadableByAssetutil(copy: copy, output: output))
+        case .printedNoCatalog(let copy, let output):
+            return .assetCatalogNotCanonical(problem: .printedNoCatalog(copy: copy, output: output))
         case .entryCountDiffers(let original, let canonical):
-            return "assetutil reads \(original) entries in the Assets.car actool wrote and \(canonical) in the canonical one"
+            return .assetCatalogNotCanonical(problem: .entryCountDiffers(actools: original, canonical: canonical))
         case .entriesDiffer(let differences):
-            return "assetutil reads the canonical Assets.car differently from the one actool wrote:\n"
-                 + differences.joined(separator: "\n")
+            return .assetCatalogNotCanonical(problem: .entriesDiffer(differences: differences))
         }
     }
 }
@@ -57,8 +61,8 @@ struct AssetCatalogGuard {
     static let differencesShown = 10
 
     func check(originalHash: DataObjectHash, canonicalHash: DataObjectHash, canonical: CanonicalAssetCatalog) throws {
-        let original  = try report(of: originalHash, which: "the Assets.car actool wrote")
-        let rewritten = try report(of: canonicalHash, which: "the canonical Assets.car")
+        let original  = try report(of: originalHash, copy: .actools)
+        let rewritten = try report(of: canonicalHash, copy: .canonical)
         guard original.count == rewritten.count else {
             throw AssetCatalogGuardError.entryCountDiffers(original: original.count, canonical: rewritten.count)
         }
@@ -110,18 +114,18 @@ struct AssetCatalogGuard {
 
     /// `assetutil --info` over one stored file, in a sandbox of its own: a JSON array, the
     /// catalog first and one entry per rendition after it.
-    private func report(of hash: DataObjectHash, which: String) throws -> [[String: Any]] {
+    private func report(of hash: DataObjectHash, copy: AssetCatalogProblem.Copy) throws -> [[String: Any]] {
         let result = try assetutil.execute(arguments: ["--info", Self.catalogFile],
                                            environment: [:],
                                            inputFiles: [FileNameAndContent(filePath: Self.catalogFile, hash: hash)],
                                            expectedOutputFileNames: [])
         guard result.exitCode == 0 else {
-            throw AssetCatalogGuardError.unreadable(which: which, reason: result.failureMessage(tool: "assetutil"))
+            throw AssetCatalogGuardError.unreadable(copy: copy, output: result.printedOutput)
         }
         guard let parsed = try? JSONSerialization.jsonObject(with: Data(result.infoOutput.utf8)),
               let entries = parsed as? [[String: Any]], !entries.isEmpty else {
             let printed = String(result.infoOutput.prefix(200))
-            throw AssetCatalogGuardError.unreadable(which: which, reason: "it printed no catalog: \(printed)")
+            throw AssetCatalogGuardError.printedNoCatalog(copy: copy, output: printed)
         }
         return entries
     }

@@ -97,12 +97,17 @@ final class UnlinkedKindBuildTests: XCTestCase {
         XCTAssertFalse(transcript.contains("couldn't be completed"), transcript)
         XCTAssertFalse(lines.contains("No errors."), transcript)
 
-        guard let heading = lines.firstIndex(where: { $0.hasPrefix("❌ kind \(unlinkedKind) #") }) else {
+        guard let block = lines.firstIndex(of: "a node of kind \(unlinkedKind) is of a type this server does not link") else {
             return XCTFail("the report names the node by its kind\n\(transcript)")
         }
-        XCTAssertTrue(lines[heading + 1].contains("is a type this server does not link"), transcript)
-        XCTAssertTrue(lines[heading + 1].contains("reset"), transcript)
+        XCTAssertEqual(Array(lines[block...].prefix(3)),
+                       ["a node of kind \(unlinkedKind) is of a type this server does not link",
+                        "  needed by: a.txt",
+                        "  register: kind \(unlinkedKind)"], transcript)
         XCTAssertGreaterThan(interpreter.errorsReported, 0)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path), "a failed build exports nothing")
+        XCTAssertEqual(lines.last, "1 error · 1 product without a value · 1 of 2 products exported", transcript)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.appendingPathComponent("b.txt").path),
+                      "--into gets what has a value")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.appendingPathComponent("a.txt").path))
     }
 }

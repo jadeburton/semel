@@ -3,7 +3,7 @@
 //  SemelNodeKit
 //
 //  What a tool says when it rejects an argument a node built from a setting, and which
-//  setting the message then names.
+//  setting the failure's remedy then names.
 //
 //  Every stderr line quoted here was captured from a real run of the toolchain installed
 //  on a development machine — `clang -target nonsense-triple -c t.c`, `swiftc -sdk
@@ -22,9 +22,8 @@ final class SettingArgumentTests: XCTestCase {
         let target = SettingArgument.clangTarget(key: "clang.preprocessor.target", value: "nonsense-triple")
 
         XCTAssertTrue(target.isMentioned(in: "error: unknown target triple 'nonsense-triple'"))
-        XCTAssertEqual(target.sentence,
-                       "`clang.preprocessor.target` is `nonsense-triple`; `clang -print-target-triple` "
-                     + "prints the triple this toolchain builds for when none is given.")
+        XCTAssertEqual(SettingArgument.keys(for: [target], matching: "error: unknown target triple 'nonsense-triple'"),
+                       ["clang.preprocessor.target"])
     }
 
     func test_clangRejectsAKnownTripleItCannotBuildFor() {
@@ -51,9 +50,6 @@ final class SettingArgumentTests: XCTestCase {
         let sdk = SettingArgument.clangSysroot(key: "clang.preprocessor.sdkPath", value: "/no/such/sdk")
 
         XCTAssertTrue(sdk.isMentioned(in: "clang: warning: no such sysroot directory: '/no/such/sdk' [-Wmissing-sysroot]"))
-        XCTAssertEqual(sdk.sentence,
-                       "`clang.preprocessor.sdkPath` is `/no/such/sdk`; `xcrun --sdk <name> "
-                     + "--show-sdk-path` prints the path of an SDK installed here.")
     }
 
     /// The case the sysroot's phrase list exists to exclude: an ordinary type error quotes
@@ -95,9 +91,6 @@ final class SettingArgumentTests: XCTestCase {
         let target = SettingArgument.swiftTarget(key: "swift.compiler.target", value: "nonsense")
 
         XCTAssertTrue(target.isMentioned(in: "error: unknown target 'nonsense'"))
-        XCTAssertEqual(target.sentence,
-                       "`swift.compiler.target` is `nonsense`; `swiftc -print-target-info -target "
-                     + "nonsense` says whether this toolchain builds for it.")
     }
 
     func test_swiftcRejectsAnArchitectureItHasNoFrontendFor() {
@@ -110,7 +103,7 @@ final class SettingArgumentTests: XCTestCase {
     }
 
     /// The SDK reaches `-sdk` as the path `xcrun` resolved the name to, so the run
-    /// complains about a path the setting never spells. The sentence names the setting.
+    /// complains about a path the setting never spells. The remedy names the setting.
     func test_swiftcNamesTheSDKPathAndTheSettingNamesTheSDK() {
         let sdk = SettingArgument.swiftSDK(key: "swift.compiler.sdk", value: "macosx")
 
@@ -119,9 +112,6 @@ final class SettingArgumentTests: XCTestCase {
             <unknown>:0: warning: no such sysroot directory: '/no/such/sdk'
             <unknown>:0: error: unable to load standard library for target 'arm64-apple-macosx26.0'
             """))
-        XCTAssertEqual(sdk.sentence,
-                       "`swift.compiler.sdk` is `macosx`; `xcrun --sdk macosx --show-sdk-path` "
-                     + "resolves the name this key takes.")
     }
 
     /// The failure that made the target's value no evidence: with a target declared, as
@@ -133,13 +123,12 @@ final class SettingArgumentTests: XCTestCase {
             .swiftTarget(key: "swift.compiler.target", value: "arm64-apple-macos14.0"),
         ]
 
-        XCTAssertEqual(SettingArgument.sentences(for: settings, matching: """
+        XCTAssertEqual(SettingArgument.keys(for: settings, matching: """
             warning: no such SDK: /no/such/sdk
             <unknown>:0: warning: no such sysroot directory: '/no/such/sdk'
             <unknown>:0: error: unable to load standard library for target 'arm64-apple-macos14.0'
             """),
-                       ["`swift.compiler.sdk` is `macosx`; `xcrun --sdk macosx --show-sdk-path` "
-                      + "resolves the name this key takes."])
+                       ["swift.compiler.sdk"])
     }
 
     // MARK: - Source the tool quoted back
@@ -182,7 +171,7 @@ final class SettingArgumentTests: XCTestCase {
             .swiftSDK(key: "swift.compiler.sdk", value: "macosx"),
         ]
 
-        XCTAssertEqual(SettingArgument.sentences(for: settings, matching: """
+        XCTAssertEqual(SettingArgument.keys(for: settings, matching: """
             bad.c:1:1: error: unknown type name 'itn'
                 1 | itn main(void){return 0;}
                   | ^

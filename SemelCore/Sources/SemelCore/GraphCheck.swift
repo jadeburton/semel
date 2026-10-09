@@ -314,7 +314,7 @@ public struct GraphCheck {
     }
 
     /// The Swift type a kind stands for, or the number when this server links no such type.
-    private static func typeName(ofKind kind: UInt) -> String {
+    static func typeName(ofKind kind: UInt) -> String {
         guard let type = try? TypeRegistry.type(kind: kind) else {
             return "kind \(kind)"
         }

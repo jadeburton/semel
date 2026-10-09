@@ -41,7 +41,9 @@ struct SwiftPackageReader: Node {
 
     /// 2: several wires on a one-wire port are an error naming them, where one was read
     /// (B-141).
-    public static let implementationVersion = 2
+    /// 3: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 3
 
     // MARK: Ports
 
@@ -106,6 +108,18 @@ struct SwiftPackageReader: Node {
         try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
     }
 
+    /// A manifest's failure belongs to its package, named by the folder that holds it.
+    public func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject? {
+        input?.inputValues[Self.packageFile]?.keys.min().map(Self.subject(ofPackageFileAt:))
+    }
+
+    /// The package a `Package.swift` at `path` is, by its folder's name: the manifest that
+    /// would say its name is what failed to be read.
+    static func subject(ofPackageFileAt path: String) -> ErrorDocument.Subject {
+        let folder = Path(path).deletingLastComponent ?? Path(path)
+        return .package(name: folder.lastComponent ?? path)
+    }
+
     public func process(input: ProcessInput) throws -> ProcessOutput {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
@@ -128,15 +142,19 @@ struct SwiftPackageReader: Node {
                 logMessage: { message in jsonOutput += message },  // stdout → JSON
                 write:      { _, _ in }))
 
+        let subject = Self.subject(ofPackageFileAt: inputs.packageFile.filePath)
         guard result.exitCode == 0 else {
             return .init(
-                packageJSON: .noValue(reason: .error(messageDataObjectHash: try "swift package dump-package failed:\n\(stderrOutput)".intern())),
+                packageJSON: try ErrorDocument.tool(text: stderrOutput, tool: "swift package dump-package", status: result.exitCode,
+                                                    subject: subject).published(),
                 infoLog: .value(try stderrOutput.intern()))
         }
 
         guard !jsonOutput.isEmpty else {
             return .init(
-                packageJSON: .noValue(reason: .error(messageDataObjectHash: try "SwiftPackageReader: no output from swift package dump-package".intern())),
+                packageJSON: try ErrorDocument.engine(.toolWroteNothing(tool: "swift package dump-package", status: result.exitCode,
+                                                                        paths: []),
+                                                      subject: subject).published(),
                 infoLog: .value(try stderrOutput.intern()))
         }
 

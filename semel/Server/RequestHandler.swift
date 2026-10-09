@@ -305,12 +305,11 @@ public final class RequestHandler {
 
         let reported = ErrorReport.entries(forErrorPorts: try ErrorReport.portsToReport(database: database),
                                            database: database,
-                                           select: { _, messages in messages })
+                                           select: { _, documents in documents })
         var reach = ProductReach(database: database)
         return ErrorReport.namingProducts(of: reported, reach: &reach)
-            .map(\.entry)
             .filter { entry in asked.map { asked in entry.products.contains { $0.isNamed(by: asked) } } ?? true }
-            .map(ErrorRecord.init)
+            .flatMap(ErrorRecord.records(of:))
     }
 
     /// Why the last settle did what it did to the node at `path` (B-91). A path with no node
@@ -359,7 +358,7 @@ public final class RequestHandler {
     /// engine outliving its handler (tests swap handlers) does not keep it alive.
     private func installReporters() {
         engine.errorReporter = { [weak self] entries in
-            self?.eventSink?.deliver(.daemon(.errors(records: entries.map(ErrorRecord.init))))
+            self?.eventSink?.deliver(.daemon(.errors(records: entries.flatMap(ErrorRecord.records(of:)))))
         }
         engine.noticeReporter = { [weak self] line in
             self?.eventSink?.deliver(.daemon(.notice(line: line)))
@@ -433,19 +432,24 @@ enum HandlerFailure: Error {
     }
 }
 
+// MARK: - The error report's records (2026-10-09 design)
+
 extension ErrorRecord {
 
-    /// The wire form of an engine entry. Mirrored rather than shared, because the
-    /// protocol package must not import the engine.
-    init(_ entry: ErrorReport.Entry) {
-        self.init(label:   entry.label,
-                  entries: entry.items.map {
-                      ErrorEntry(ports: $0.ports, message: $0.message, missingSource: $0.missingSource,
-                                 writers: $0.writers.map { SourceWriter(command: $0.command, folder: $0.folder) })
-                  },
-                  downstreamCarrierCount: entry.downstreamCarrierCount,
-                  nodeCount: entry.nodeCount,
-                  products: entry.products.map { StoppedProduct(path: $0.path, treeFolder: $0.treeFolder) })
+    /// The wire form of an engine entry: a record per document its node carries, each with
+    /// the entry's products and the node's facts. The document travels as the value the
+    /// node published; the entry around it is mirrored, because the protocol package must
+    /// not import the engine.
+    static func records(of entry: ErrorReport.Entry) -> [ErrorRecord] {
+        let products = entry.products.map { StoppedProduct(path: $0.path, treeFolder: $0.treeFolder) }
+        return entry.items.map { item in
+            ErrorRecord(document: item.document,
+                        products: products,
+                        facts:    ErrorFacts(nodeType:     entry.typeName,
+                                             nodeIDs:      entry.nodeIDs,
+                                             ports:        item.ports,
+                                             carrierCount: entry.downstreamCarrierCount))
+        }
     }
 }
 

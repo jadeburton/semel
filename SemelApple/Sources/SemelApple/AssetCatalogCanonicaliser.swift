@@ -35,6 +35,7 @@
 
 import CryptoKit
 import Foundation
+import SemelNodeKit
 
 // MARK: - Result
 
@@ -52,7 +53,7 @@ struct CanonicalAssetCatalog {
 
 // MARK: - Errors
 
-enum AssetCatalogCanonicaliserError: Error, CustomStringConvertible {
+enum AssetCatalogCanonicaliserError: Error, CustomStringConvertible, ErrorConditionConvertible {
     case unreadable(BOMStoreError)
     case missingVariable(String)
     case unknownIconFacetPart(facet: String, part: UInt16)
@@ -71,6 +72,21 @@ enum AssetCatalogCanonicaliserError: Error, CustomStringConvertible {
             return "the canonical Assets.car still carries a generated name at byte \(offset): '\(text)'"
         case .roundTripDiffers(let variable):
             return "the canonical Assets.car does not read back as the catalog it was made from: \(variable) differs"
+        }
+    }
+
+    var errorCondition: ErrorCondition {
+        switch self {
+        case .unreadable(let error):
+            return .assetCatalogNotCanonical(problem: .notABOMStore(problem: error.problem))
+        case .missingVariable(let name):
+            return .assetCatalogNotCanonical(problem: .missingVariable(name: name))
+        case .unknownIconFacetPart(let facet, let part):
+            return .assetCatalogNotCanonical(problem: .unknownIconFacetPart(facet: facet, part: part))
+        case .generatedNameRemains(let offset, let text):
+            return .assetCatalogNotCanonical(problem: .generatedNameRemains(offset: offset, text: text))
+        case .roundTripDiffers(let variable):
+            return .assetCatalogNotCanonical(problem: .roundTripDiffers(variable: variable))
         }
     }
 }

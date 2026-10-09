@@ -150,7 +150,9 @@ public struct AssetCatalogCompiler: Node {
     /// on the new `swiftAssetSymbols` (B-77 item 10).
     /// 5: several wires on `configuration` are an error naming them, where one was taken
     /// (B-141).
-    public static let implementationVersion = 5
+    /// 6: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 6
 
     // MARK: Ports
 
@@ -197,6 +199,7 @@ public struct AssetCatalogCompiler: Node {
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
+        let subject = errorSubject(input: input)
         let configurationText = try input.onlyWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
         let configuration = try AssetCatalogCompilerConfiguration(properties: [String: String](plainText: configurationText))
 
@@ -283,15 +286,14 @@ public struct AssetCatalogCompiler: Node {
         if result.exitCode == 0, let plist = result.outputFiles[Self.partialInfoPlistFile] {
             partialPlist = .value(plist)
         } else {
-            partialPlist = .noValue(reason: .error(messageDataObjectHash: try Self.failureMessage(for: result).intern()))
+            partialPlist = try Self.failureDocument(for: result, subject: subject).published()
         }
         if configuration.swiftAssetSymbols != nil {
             let run = symbolsResult ?? result
             if symbolsResult != nil, run.exitCode == 0, let source = run.outputFiles[Self.swiftAssetSymbolsFile] {
                 symbols = .value(source)
             } else {
-                symbols = .noValue(reason: .error(messageDataObjectHash: try Self.failureMessage(for: run,
-                                                                                                   expecting: Self.swiftAssetSymbolsFile).intern()))
+                symbols = try Self.failureDocument(for: run, expecting: Self.swiftAssetSymbolsFile, subject: subject).published()
             }
         }
         if result.exitCode == 0 {
@@ -302,12 +304,12 @@ public struct AssetCatalogCompiler: Node {
                 tree = .value(try Self.canonicalTree(of: result.outputTrees[Self.outputFolder] ?? [],
                                                      guardedBy: AssetCatalogGuard(assetutil: assetutil)))
             } catch let failure where failure is AssetCatalogCanonicaliserError || failure is AssetCatalogGuardError {
-                tree = .noValue(reason: .error(messageDataObjectHash: try Self.notCanonicalMessage(failure).intern()))
+                tree = try ErrorDocument.thrown(failure, subject: subject).published()
                 partialPlist = tree
                 symbols = tree
             }
         } else {
-            tree = try result.asTreeNodeValue(folder: Self.outputFolder)
+            tree = try result.asTreeNodeValue(folder: Self.outputFolder, tool: "actool", subject: subject)
         }
 
         let infoLog  = [result.infoOutput, symbolsResult?.infoOutput ?? ""].filter { !$0.isEmpty }.joined(separator: "\n")
@@ -338,16 +340,19 @@ public struct AssetCatalogCompiler: Node {
         return try TreeManifest(entries: entries).toJSON().intern()
     }
 
-    static func notCanonicalMessage(_ failure: Error) -> String {
-        "actool's Assets.car is not published: it could not be put in a canonical form that reads as the file actool wrote (B-89): \(failure)"
+    /// What a failed run publishes: what actool printed, or, for a run that exits cleanly
+    /// and writes no `file`, that.
+    static func failureDocument(for result: SimplifiedToolExecuteResult, expecting file: String = partialInfoPlistFile,
+                                subject: ErrorDocument.Subject?) -> ErrorDocument {
+        result.exitCode == 0
+            ? result.wroteNothingDocument(tool: "actool", paths: [file], subject: subject)
+            : result.failureDocument(tool: "actool", subject: subject)
     }
 
-    /// What a failed run says: the tool's own failure message, naming actool, or, for a run
-    /// that exits cleanly and writes no partial plist, that.
-    static func failureMessage(for result: SimplifiedToolExecuteResult, expecting file: String = partialInfoPlistFile) -> String {
-        result.exitCode == 0
-            ? "actool exited with status 0 and wrote no '\(file)'"
-            : result.failureMessage(tool: "actool")
+    /// A compile's failure belongs to the catalog it compiles: the first by path, when a
+    /// node compiles several into one `Assets.car`.
+    public func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject? {
+        input?.inputValues[Self.catalogs]?.keys.min().map { .resource(path: $0) }
     }
 
     private static func pending(inputWireSpecs: [String: [String: GraphSpecNode]]) -> ProcessOutput {

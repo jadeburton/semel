@@ -23,6 +23,7 @@
 //
 
 import Foundation
+import SemelNodeKit
 
 // MARK: - Errors
 
@@ -55,6 +56,20 @@ enum BOMStoreError: Error, CustomStringConvertible, Equatable {
             return "the tree of \(variable) reaches its node \(node) twice"
         case .unknownKeyForm(let variable, let form):
             return "the tree of \(variable) declares key form \(form); only 0 (a key block) and 1 (a key in the entry) are known"
+        }
+    }
+
+    /// The problem as a report carries it.
+    var problem: BOMProblem {
+        switch self {
+        case .notABOMStore:                              return .notABOMStore
+        case .unsupportedVersion(let version):           return .unsupportedVersion(version: version)
+        case .truncated(let what):                       return .truncated(what: what)
+        case .blockOutOfRange(let index):                return .blockOutOfRange(index: index)
+        case .emptyBlockReferenced(let index, let referrer): return .emptyBlockReferenced(index: index, referrer: referrer)
+        case .unreachableBlocks(let indices):            return .unreachableBlocks(indices: indices)
+        case .treeCycle(let variable, let node):         return .treeCycle(variable: variable, node: node)
+        case .unknownKeyForm(let variable, let form):    return .unknownKeyForm(variable: variable, form: form)
         }
     }
 }

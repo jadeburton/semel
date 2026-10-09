@@ -67,7 +67,9 @@ public struct XcodeProjectConverter: Node {
     /// source of its own is the conversion's error, naming the target and its plugins, and
     /// every error the emitter names is the formula's, with the pass's demands, as the
     /// project's other errors are (B-77 item 3).
-    public static let implementationVersion = 18
+    /// 19: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 19
 
     // MARK: Ports
 
@@ -150,7 +152,7 @@ public struct XcodeProjectConverter: Node {
     var projectPath: String {
         get throws {
             guard let path = thisNode.properties["path"] else {
-                throw NodeError.other(message: "XcodeProjectConverter needs a project: give it path: <X.xcodeproj>")
+                throw ErrorCondition.propertyMissing(type: "XcodeProjectConverter", property: "path", alternatives: [])
             }
             return path
         }
@@ -180,6 +182,11 @@ public struct XcodeProjectConverter: Node {
 
     // MARK: Processing
 
+    /// A conversion's failure belongs to the project it reads.
+    public func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject? {
+        thisNode.properties["path"].map { .project(path: $0) }
+    }
+
     public func process(input: ProcessInput) throws -> ProcessOutput {
         let projectFilePath = "\(try projectPath)/project.pbxproj"
         var specs: [String: [String: GraphSpecNode]] = [
@@ -202,16 +209,16 @@ public struct XcodeProjectConverter: Node {
             // `StaticFile` with no inputs has nothing to wait for, so this is as far as it
             // goes, and a file that was removed leaves the same hole. The remedy is the one
             // a missing file gets.
-            return failed("\(projectFilePath) is not in the input file system; push the project's folder", specs: specs)
+            return failed(.projectNotPushed(path: projectFilePath), specs: specs)
         case .value(let hash):
             projectHash = hash
         }
         guard let projectBytes = try DataObjectStore.shared.read(hash: projectHash) else {
-            return failed("\(projectFilePath) has no content", specs: specs)
+            return failed(.projectHasNoContent(path: projectFilePath), specs: specs)
         }
         let project = try XcodeProject(pbxproj: Data(projectBytes))
         guard !project.applications.isEmpty else {
-            return failed("the project has no application target", specs: specs)
+            return failed(.noApplicationTarget, specs: specs)
         }
 
         // ── the xcconfig files the project and the targets name, and theirs ──
@@ -256,9 +263,9 @@ public struct XcodeProjectConverter: Node {
             }
             try expand(project.bundleTargets(of: application))
         } catch let failure as XcconfigExpansion.Failure {
-            return failed(failure.description, specs: specs)
+            return failed(failure.errorCondition, specs: specs)
         } catch let failure as XcodeProjectError {
-            return failed(failure.description, specs: specs)
+            return failed(failure.errorCondition, specs: specs)
         }
         let bundleTargets = project.bundleTargets(of: application)
         let embedded = Array(bundleTargets.dropFirst())
@@ -347,10 +354,8 @@ public struct XcodeProjectConverter: Node {
             return name
         }
         guard localProducts.isEmpty || !packageSearch.packagePaths.isEmpty else {
-            let folders = project.synchronizedFolderPaths.isEmpty ? "none" : project.synchronizedFolderPaths.joined(separator: ", ")
-            return failed("\(application.name) links \(Set(localProducts).sorted().joined(separator: ", ")) from local packages, "
-                          + "and the project has none: it declares no package folder, and no folder directly in a synchronized "
-                          + "folder (\(folders)) holds a \(LocalPackageSearch.manifestName)", specs: specs)
+            return failed(.localPackagesNotFound(application: application.name, products: Set(localProducts).sorted(),
+                                                 synchronizedFolders: project.synchronizedFolderPaths), specs: specs)
         }
 
         var listings: [String: XcodeFormulaEmitter.FolderListing] = [:]
@@ -378,7 +383,7 @@ public struct XcodeProjectConverter: Node {
         do {
             formula = try emitter.formula(for: application, settings: evaluatedSettings, listing: { listings[$0] })
         } catch let failure as XcodeProjectError {
-            return failed(failure.description, specs: specs)
+            return failed(failure.errorCondition, specs: specs)
         }
         if let notice = Self.pluginNotice(targets: bundleTargets) {
             NodeNotice.post(notice)
@@ -470,11 +475,8 @@ public struct XcodeProjectConverter: Node {
             return .value(try lines.intern())
         }
 
-        let names = undefinedNames.sorted().joined(separator: ", ")
-        let message = missing
-            .map { "xcconfig \($0) is missing; settings it would define are undefined (\(names))" }
-            .joined(separator: "\n")
-        return .noValue(reason: .error(messageDataObjectHash: try message.intern()))
+        return try ErrorDocument.engine(.xcconfigMissing(paths: missing, undefined: undefinedNames.sorted()),
+                                        subject: errorSubject(input: nil)).published()
     }
 
     /// Folders whose contents are one compiled unit: never walked, so their files are not
@@ -490,8 +492,8 @@ public struct XcodeProjectConverter: Node {
               inputWireSpecs: specs)
     }
 
-    private func failed(_ message: String, specs: [String: [String: GraphSpecNode]]) -> ProcessOutput {
-        let reason = NoValueReason.error(messageDataObjectHash: (try? "XcodeProjectConverter: \(message)".intern()) ?? "")
+    private func failed(_ condition: ErrorCondition, specs: [String: [String: GraphSpecNode]]) -> ProcessOutput {
+        let reason = (try? ErrorDocument.engine(condition, subject: errorSubject(input: nil)).asReason()) ?? .error(documentHash: "")
         return .init(outputValues: [Self.formulaOutput: .noValue(reason: reason),
                                     Self.infoLog: .noValue(reason: reason)],
                      inputWireSpecs: specs)

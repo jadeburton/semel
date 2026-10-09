@@ -1,9 +1,9 @@
 // Renderers.swift
 // semel
 //
-// How structured replies become text. These are the client's twins of renderers the
-// engine keeps for its own terminal: `ErrorRecordRenderer` matches `ErrorReport.lines`
-// line for line, and both sides' tests pin the format so they cannot drift apart.
+// How structured replies become text. The engine renders nothing: every reply and event
+// arrives as values, and the lines are drawn here. The error report has a file of its own,
+// `ErrorReportRenderer.swift`.
 
 import Foundation
 import SemelProtocol
@@ -18,9 +18,10 @@ import SemelProtocol
 /// whether it is a warning. Anything else prints unmarked until there is a reason it
 /// cannot.
 enum Mark {
-    /// Something is wrong: a node that failed, or an invariant of the graph that does not
-    /// hold. `ErrorRecordRenderer` opens every record with it, a settle summary carrying a
-    /// non-zero error count opens with it too, and `check` opens every finding with it.
+    /// Something is wrong: an invariant of the graph that does not hold, or a settle that
+    /// left errors. A settle summary carrying a non-zero error count opens with it, and
+    /// `check` opens every finding with it. The error report itself is unmarked: its first
+    /// line is the diagnostic, as the tool wrote it, so a terminal makes it a link.
     static let failure = "❌"
 
     /// Nothing is wrong: a settle that left the graph with no errors in it, or a `check`
@@ -94,208 +95,6 @@ enum ArtifactChangeRenderer {
             lines.append("   and \(rest) more \(verb)")
         }
         return lines
-    }
-}
-
-enum ErrorRecordRenderer {
-
-    /// A heading, then one line per distinct message naming the ports that carry it, or
-    /// an indented block when a message spans lines. Ends with a blank line.
-    ///
-    /// One entry carrying one port is written without the port's name, the same rule
-    /// `ErrorReport.lines` follows on the engine's side: the names are there to tell one
-    /// entry from another and to say which of a node's ports a message came from, and a
-    /// lone port does neither, so `output:` on a file and `pinned:` on a folder repeat the
-    /// heading and carry nothing. Anywhere the record accounts for more than one thing the
-    /// names stay, which is what keeps these lines agreeing with the count above them —
-    /// that count is a sum of ports.
-    static func lines(for record: ErrorRecord) -> [String] {
-        var result = ["\(Mark.failure) \(record.label)"]
-        let namesPorts = !(record.entries.count == 1 && record.entries[0].ports.count == 1)
-
-        for entry in record.entries {
-            let portNames = entry.ports.joined(separator: ", ")
-            let prefix    = namesPorts ? "\(portNames): " : ""
-
-            let body = entry.message
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .components(separatedBy: "\n")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
-
-            guard !body.isEmpty else {
-                result.append("   · \(prefix)(no details)")
-                continue
-            }
-
-            if body.count == 1 {
-                result.append("   · \(prefix)\(body[0])")
-            } else if namesPorts {
-                result.append("   · \(portNames):")
-                result.append(contentsOf: body.map { "     \($0)" })
-            } else {
-                result.append("   · \(body[0])")
-                result.append(contentsOf: body.dropFirst().map { "     \($0)" })
-            }
-
-            // What writes a machine file nobody has written, once, under the line naming it.
-            if !entry.writers.isEmpty {
-                let commands = entry.writers.map { "\($0.command) \($0.folder)" }.joined(separator: " and ")
-                result.append("   · run \(commands) to write it")
-            }
-        }
-
-        // The cascade under the failure, as a count rather than a line per node carrying it.
-        switch record.downstreamCarrierCount {
-        case ..<1: break
-        case 1:    result.append("   · and 1 node downstream carries it")
-        default:   result.append("   · and \(record.downstreamCarrierCount) nodes downstream carry it")
-        }
-
-        result.append("")
-        return result
-    }
-}
-
-/// The error report grouped by the products the errors stop (B-142): each product in path
-/// order with the errors under it, then the errors that reach no product. What `errors`
-/// prints, what the idle-time report after a settle prints, and so what `build` prints,
-/// which runs `errors`.
-///
-/// **An error under several products is printed once**, in full under the first of them,
-/// and named in one line under each of the others. The common wide failure is a base
-/// package every root reads: printed under each, IceCubes' five roots would print every
-/// paragraph five times, a compiler's paragraph runs to dozens of lines, and the report
-/// would be five times as long for the same one fix. One line under the later products
-/// still says the product is stopped, and by what.
-///
-/// The lines of a record are `ErrorRecordRenderer`'s, unchanged: the grouping adds a line
-/// above each group and never reflows what is under it.
-enum ErrorGroupRenderer {
-
-    /// The heading over the errors that stop no product: a source nothing reads, a formula
-    /// that publishes nothing yet, a settings source the products were built without.
-    static let noProductHeading = "Stopping no product:"
-
-    /// The whole report, grouped.
-    static func lines(for records: [ErrorRecord]) -> [String] {
-        var groups: [String: (entries: [String], records: [Int])] = [:]
-        var reachingNone: [Int] = []
-
-        for (index, record) in records.enumerated() {
-            guard !record.products.isEmpty else {
-                reachingNone.append(index)
-                continue
-            }
-            for product in record.products {
-                let key = groupKey(of: product)
-                var group = groups[key] ?? ([], [])
-                if let entry = entryName(of: product), !group.entries.contains(entry) {
-                    group.entries.append(entry)
-                }
-                if group.records.last != index {
-                    group.records.append(index)
-                }
-                groups[key] = group
-            }
-        }
-
-        var lines: [String] = []
-        var printedUnder: [Int: String] = [:]
-        for key in groups.keys.sorted() {
-            guard let group = groups[key] else {
-                continue
-            }
-            lines.append(heading(forProduct: key, entries: group.entries.sorted()))
-            for index in group.records {
-                guard let first = printedUnder[index] else {
-                    printedUnder[index] = key
-                    lines.append(contentsOf: ErrorRecordRenderer.lines(for: records[index]))
-                    continue
-                }
-                lines.append("\(Mark.failure) \(records[index].label) — see \(first)")
-            }
-            if lines.last != "" {
-                lines.append("")
-            }
-        }
-
-        if !reachingNone.isEmpty {
-            lines.append(noProductHeading)
-            for index in reachingNone {
-                lines.append(contentsOf: ErrorRecordRenderer.lines(for: records[index]))
-            }
-        }
-        return lines
-    }
-
-    /// `errors <product>`: the errors stopping one product, under its name. Each record is
-    /// printed whole, since this is the one group the reader asked for. `product` is the
-    /// full path the server was asked about, `output:/…`.
-    static func lines(for records: [ErrorRecord], stopping product: String) -> [String] {
-        let isTree = records.contains { record in record.products.contains { $0.treeFolder == product } }
-        var lines = ["Stopping \(isTree ? "\(product)/" : product):"]
-        for record in records {
-            lines.append(contentsOf: ErrorRecordRenderer.lines(for: record))
-        }
-        return lines
-    }
-
-    /// What a product with nothing wrong with it reads as, under `errors <product>`. Not
-    /// an error: the answer to the question is "nothing".
-    static func nothingStops(_ product: String) -> String {
-        "No errors stop \(product)."
-    }
-
-    /// The products the records stop, each once, as the report's headings name them, in
-    /// path order: a tree product by its folder.
-    static func stoppedProducts(by records: [ErrorRecord]) -> [String] {
-        Set(records.flatMap { $0.products.map(groupKey(of:)) }).sorted()
-    }
-
-    /// What `build` and `semel-watch` say in place of an export a failure stopped: the
-    /// products by name, so the reader knows which of them the errors above are about.
-    /// Capped as every list of paths at the prompt is, with the count of the rest.
-    static func notExportedLine(into destination: String, records: [ErrorRecord]) -> String {
-        let products = stoppedProducts(by: records)
-        guard !products.isEmpty else {
-            return "Not exported into \(destination): the build has errors, and none of them stops a product."
-        }
-        var named = products.prefix(PathList.namedIndividually).joined(separator: ", ")
-        let rest  = products.count - PathList.namedIndividually
-        if rest > 0 {
-            named += ", and \(rest) more"
-        }
-        return "Not exported into \(destination): errors stop \(named)."
-    }
-
-    /// The heading over one product's errors. A tree product is named by its folder, with
-    /// a separator as a tree is written everywhere else, and the entries the errors reach.
-    private static func heading(forProduct key: String, entries: [String]) -> String {
-        guard !entries.isEmpty else {
-            return "Stopping \(key):"
-        }
-        var named = entries.prefix(PathList.namedIndividually).joined(separator: ", ")
-        let rest  = entries.count - PathList.namedIndividually
-        if rest > 0 {
-            named += ", and \(rest) more"
-        }
-        return "Stopping \(key) (\(named)):"
-    }
-
-    /// The group a product is reported under: its own path, or for an entry of a tree
-    /// product the tree's folder, with a separator.
-    private static func groupKey(of product: StoppedProduct) -> String {
-        product.treeFolder.map { "\($0)/" } ?? product.path
-    }
-
-    /// An entry's path within its tree, or nil for a product named on its own and for a
-    /// tree whose entries are not known.
-    private static func entryName(of product: StoppedProduct) -> String? {
-        guard let folder = product.treeFolder, product.path.hasPrefix("\(folder)/") else {
-            return nil
-        }
-        return String(product.path.dropFirst(folder.count + 1))
     }
 }
 

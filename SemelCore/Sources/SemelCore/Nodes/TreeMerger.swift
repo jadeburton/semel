@@ -22,7 +22,9 @@ struct TreeMerger: Node {
     /// 2: the same entry from two trees merges instead of failing.
     /// 3: a tree's symbolic links merge as entries, and one tree's link where another holds
     /// entries below it is a collision (B-77).
-    public static let implementationVersion = 3
+    /// 4: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 4
 
     /// The trees to merge, one wire each; merged in wire-key order, which only matters
     /// for the error a collision produces.
@@ -69,7 +71,7 @@ struct TreeMerger: Node {
     }
 
     private func failed(_ collision: TreeMerge.Collision) throws -> ProcessOutput {
-        .init(outputValues: [Self.outputPort: .noValue(reason: .error(messageDataObjectHash: try collision.description.intern()))],
+        .init(outputValues: [Self.outputPort: try ErrorDocument.engine(collision.errorCondition, subject: nil).published()],
               inputWireSpecs: [:])
     }
 }

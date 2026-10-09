@@ -51,8 +51,8 @@ struct SwiftLinkerConfiguration {
 
         // Three forms and no default, so a bad spelling is an error, not an executable.
         guard let linkage = SwiftLinkage(rawValue: linkageName) else {
-            let accepted = SwiftLinkage.allCases.map(\.rawValue).joined(separator: ", ")
-            throw NodeError.other(message: "linkage '\(linkageName)' is not one of: \(accepted)")
+            throw ErrorCondition.settingNotAccepted(key: "\(Self.settingNamespace).linkage", value: linkageName,
+                                                    accepted: SwiftLinkage.allCases.map(\.rawValue))
         }
         self.linkage = linkage
 
@@ -91,7 +91,9 @@ struct SwiftLinker: Node {
     /// rather than its deployment target as the SDK it was built with (B-77).
     /// 5: several wires on `configuration` are an error naming them, where one was linked
     /// with (B-141).
-    public static let implementationVersion = 5
+    /// 6: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 6
 
     // MARK: Ports
 
@@ -238,6 +240,11 @@ struct SwiftLinker: Node {
         }
     }
 
+    /// A link's failure belongs to the product it makes, by the name its settings give it.
+    public func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject? {
+        input?.reportedSetting("outputName", onPort: Self.configuration).map { .product(path: $0) }
+    }
+
     public func process(input: ProcessInput) throws -> ProcessOutput {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
@@ -297,8 +304,7 @@ struct SwiftLinker: Node {
         try verifySDKVersion(inputs.configuration.sdkVersion, sdk: sdk)
 
         guard let sdkPath = resolveSDKPath(sdk: sdk) else {
-            throw NodeError.other(message: "no SDK named \(sdk) could be found on this machine "
-                                         + "(swift.linker.sdk names it as `xcrun --sdk` would)")
+            throw ErrorCondition.sdkNotFound(sdk: sdk, key: "\(namespace).sdk")
         }
         arguments.append("-sdk")
         arguments.append(sdkPath)
@@ -372,7 +378,7 @@ struct SwiftLinker: Node {
         let mode: UInt16 = inputs.configuration.linkage == .executable ? FileMetadata.executableMode : FileMetadata.defaultMode
         let metadataJSON = (try? FileMetadata(mode: mode).jsonString()) ?? "{}"
 
-        return .init(output: try result.asOutputNodeValue(tool: "swiftc", settings: settings),
+        return .init(output: try result.asOutputNodeValue(tool: "swiftc", subject: .product(path: outputName), settings: settings),
                      infoLog: .value(try result.infoOutput.intern()),
                      fileMetadata: .value(try metadataJSON.intern()),
                      librariesSpecs: librariesSpecs)

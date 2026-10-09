@@ -3,8 +3,8 @@
 //  SemelCoreTests
 //
 //  The idle-time error report goes through a closure so that a server can carry it to a
-//  client instead of it landing on whichever stdout the engine happens to have. The
-//  default still prints; these tests install a capturing closure instead.
+//  client instead of it landing on whichever stdout the engine happens to have. The engine
+//  renders nothing, so the default is silence; these tests install a capturing closure.
 //
 
 @testable import SemelCore
@@ -34,7 +34,7 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
     private func makeFailingFile(path: String, message: String) throws -> ObjectID {
         let (nodeRecord, _) = try GraphSpecNode.staticFile(at: path).findOrCreateMatchingNode()
         try nodeRecord.writeToOutputPort("output",
-                                         value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+                                         value: .noValue(reason: try .failure(message)))
         return try nodeRecord.requireID()
     }
 
@@ -45,7 +45,7 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
 
         XCTAssertEqual(captured.count, 1)
         XCTAssertEqual(captured[0].map(\.label), ["StaticFile #\(file) 'input:/a.c'"])
-        XCTAssertEqual(captured[0][0].items, [ErrorReport.Item(ports: ["output"], message: "boom")])
+        XCTAssertEqual(captured[0][0].items, [ErrorReport.Item(ports: ["output"], document: .failure("boom"))])
     }
 
     func test_anErrorAlreadyReportedIsNotReportedAgain() throws {
@@ -69,15 +69,17 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
         XCTAssertEqual(captured.count, 1, "and the reader has been told once")
     }
 
-    /// Counted per port, which is what the `errors` command calls an error: one node
-    /// failing on two ports is two.
-    func test_theCountIsPerPortAndNotPerNode() throws {
+    /// Counted per cause, which is what the report calls an error: one node failing on two
+    /// ports with one document is one, and two documents are two.
+    func test_theCountIsPerCauseAndNotPerPort() throws {
         let (nodeRecord, _) = try GraphSpecNode.staticFile(at: "input:/a.c").findOrCreateMatchingNode()
         for port in ["output", "errorLog"] {
             try nodeRecord.writeToOutputPort(port,
-                                             value: .noValue(reason: .error(messageDataObjectHash: try "boom".intern())))
+                                             value: .noValue(reason: try .failure("boom")))
         }
+        XCTAssertEqual(engine.reportIdleTimeErrors(), 1)
 
+        try makeFailingFile(path: "input:/b.c", message: "bang")
         XCTAssertEqual(engine.reportIdleTimeErrors(), 2)
     }
 
@@ -92,7 +94,7 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
     private func makeFailingMerger(tag: String, message: String) throws -> ObjectID {
         let (nodeRecord, _) = try GraphSpecNode(TreeMerger.self, properties: ["tag": tag]).findOrCreateMatchingNode()
         try nodeRecord.writeToOutputPort(TreeMerger.outputPort,
-                                         value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+                                         value: .noValue(reason: try .failure(message)))
         return try nodeRecord.requireID()
     }
 
@@ -108,7 +110,7 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
         let ids = [first, second, third].sorted().map { "#\($0)" }.joined(separator: ", ")
         XCTAssertEqual(captured[0].map(\.label), ["TreeMerger ×3 (\(ids))", "TreeMerger #\(other)"])
         XCTAssertEqual(captured[0][0].nodeCount, 3)
-        XCTAssertEqual(captured[0][0].items, [ErrorReport.Item(ports: ["files"], message: "boom")])
+        XCTAssertEqual(captured[0][0].items, [ErrorReport.Item(ports: ["files"], document: .failure("boom"))])
         XCTAssertEqual(captured[0][1].nodeCount, 1)
     }
 
@@ -124,14 +126,15 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
                        ["StaticFile #\(first) 'input:/a.c'", "StaticFile #\(second) 'input:/b.c'"])
     }
 
-    /// The lines the default reporter prints are the same lines `ErrorReport` has always
-    /// produced, so an engine run without a server reads as before.
-    func test_renderingAnEntryMatchesTheReportFormat() throws {
-        let entry = ErrorReport.Entry(label: "StaticFile #7 'input:/a.c'",
-                                      items: [ErrorReport.Item(ports: ["errorLog", "output"], message: "boom")])
+    /// An entry carries the node's facts for `--verbose`: its type and its id, beside the
+    /// documents.
+    func test_anEntryCarriesTheNodesFacts() throws {
+        let file = try makeFailingFile(path: "input:/a.c", message: "boom")
 
-        XCTAssertEqual(ErrorReport.lines(for: entry),
-                       ["❌ StaticFile #7 'input:/a.c'", "   · errorLog, output: boom", ""])
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured[0][0].typeName, "StaticFile")
+        XCTAssertEqual(captured[0][0].nodeIDs, [file])
     }
 
     func test_aNoticeReachesTheNoticeReporter() {

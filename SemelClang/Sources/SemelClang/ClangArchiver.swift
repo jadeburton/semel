@@ -38,7 +38,9 @@ public struct ClangArchiver: Node {
 
     /// 2: several wires on `configuration` are an error naming them, where one was taken
     /// (B-141).
-    public static let implementationVersion = 2
+    /// 3: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 3
 
     // MARK: Ports
 
@@ -123,7 +125,7 @@ public struct ClangArchiver: Node {
 
         let metadataJSON = (try? FileMetadata(mode: FileMetadata.defaultMode).jsonString()) ?? "{}"
 
-        return .init(output: try result.asOutputNodeValue(tool: "libtool"),
+        return .init(output: try result.asOutputNodeValue(tool: "libtool", subject: nil),
                      infoLog: .value(try result.infoOutput.intern()),
                      fileMetadata: .value(try metadataJSON.intern()))
     }

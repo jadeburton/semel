@@ -39,6 +39,6 @@ public struct SettingsLiteral: Node {
 
     /// Never reached in a working graph: a node declaring no input ports is not scheduled.
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        throw NodeError.other(message: "\(Self.self) declares no input ports and cannot process")
+        throw NodeError.sourceCannotProcess(type: "\(Self.self)")
     }
 }

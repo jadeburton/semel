@@ -112,7 +112,9 @@ public struct ClangPreprocessor: Node {
     /// begin`/`end` that mark it (B-77).
     /// 8: several wires on a one-wire port are an error naming them, where one was taken
     /// (B-141).
-    public static let implementationVersion = 8
+    /// 9: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 9
 
     /// `preprocessed` with the `#pragma clang module begin`/`end` lines around the target's
     /// own module taken out, and everything between them kept.
@@ -294,6 +296,11 @@ public struct ClangPreprocessor: Node {
         try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
     }
 
+    /// A preprocess's failure belongs to the source it reads, by the wire's key.
+    public func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject? {
+        input?.inputValues[Self.sourceFileInput]?.keys.min().map { .source(path: $0) }
+    }
+
     public func process(input: ProcessInput) throws -> ProcessOutput {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
@@ -306,6 +313,12 @@ public struct ClangPreprocessor: Node {
     /// it as it is, and a formula does not preprocess it.
     static let assembly = "assembler"
     static let assemblyLanguages: Set<String> = [assemblyWithPreprocessor, assembly]
+
+    /// The source a preprocessed file was made from: its name without the `.p` this stage
+    /// writes, which is what a compile's failure belongs to.
+    static func sourcePath(ofPreprocessed filePath: String) -> String {
+        filePath.hasSuffix(".p") ? String(filePath.dropLast(2)) : filePath
+    }
 
     /// Returns the clang `-x` language for `filePath`, handling raw source files (`.cpp`),
     /// preprocessed files (`.cpp.p`) and object files (`.cpp.p.o`): the source suffix is
@@ -398,7 +411,8 @@ public struct ClangPreprocessor: Node {
                                       inputFiles: inputFiles,
                                       expectedOutputFileNames: [outputFilename])
 
-        var output = try result.asOutputNodeValue(tool: "clang", settings: settings)
+        var output = try result.asOutputNodeValue(tool: "clang", subject: .source(path: inputs.inputSourceFile.filePath),
+                                                  settings: settings)
         if let moduleName = inputs.configuration.features.moduleName,
            inputs.configuration.features.loadsModules(forLanguage: language),
            case .value(let preprocessed) = output {
@@ -444,7 +458,10 @@ public struct ClangPreprocessor: Node {
 
             let treesArrived = treeSpecs.keys.allSatisfy { inputs.headerFolderTrees[$0] != nil }
             guard treesArrived, inputs.wiredHeaderPaths == Set(folderFileSpecs.keys) else {
-                let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "Still collecting header folders".intern()))
+                let awaited = treeSpecs.keys.sorted().filter { inputs.headerFolderTrees[$0] == nil }
+                    + Set(folderFileSpecs.keys).subtracting(inputs.wiredHeaderPaths)
+                let error = try ErrorDocument.engine(.inputsWithoutValue(kind: .headerFolders, paths: Array(Set(awaited)).sorted()),
+                                                     subject: .source(path: inputs.inputSourceFile.filePath)).published()
                 return .init(output: error,
                              errorLog: error,
                              infoLog: error,
@@ -480,7 +497,8 @@ public struct ClangPreprocessor: Node {
         // There must be one ClangIncludeFinder attached to the .c file.
 
         if inputs.includePathLists[inputs.inputSourceFile.filePath] == nil {
-            let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "Still resolving include files".intern()))
+            let error = try ErrorDocument.engine(.inputsWithoutValue(kind: .includeFiles, paths: [inputs.inputSourceFile.filePath]),
+                                                 subject: .source(path: inputs.inputSourceFile.filePath)).published()
             return .init(output: error,
                          errorLog: error,
                          infoLog: error,
@@ -494,7 +512,8 @@ public struct ClangPreprocessor: Node {
         //          nodes' outputs to go to Pending, including us.
         //    yes -> proceed to running the preprocessor
         guard inputs.wiredHeaderCount == aggregatedIncludePathList.count else {
-            let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "Still resolving include files".intern()))
+            let error = try ErrorDocument.engine(.inputsWithoutValue(kind: .includeFiles, paths: aggregatedIncludePathList.sorted()),
+                                                 subject: .source(path: inputs.inputSourceFile.filePath)).published()
             return .init(output: error,
                          errorLog: error,
                          infoLog: error,

@@ -10,6 +10,7 @@
 // only its own object.
 
 import Foundation
+import SemelNodeKit
 
 // MARK: - Shared records
 
@@ -63,67 +64,43 @@ public struct ListEntry: Codable, Equatable, Sendable {
     }
 }
 
-/// One distinct message a node is carrying, and the ports carrying it. Grouped by message
-/// rather than by port because a node that fails usually fails on all of its ports at once
-/// with the same reason.
-public struct ErrorEntry: Codable, Equatable, Sendable {
-    public let ports:   [String]
-    public let message: String
-    /// When the message says a source has not been pushed: that source, as `push` takes
-    /// it — relative to the input file system, a folder ending in `/`. What lets a client
-    /// act on the path instead of recognising the sentence (B-110).
-    public let missingSource: String?
-    /// When that source is a machine file: the commands outside Semel that write it, each
-    /// with the folder it goes in (B-109). `build` pushes what is on disk and nothing else,
-    /// so this is what a client says about a file nobody has written yet.
-    public let writers: [SourceWriter]
+// MARK: - The error report (2026-10-09 design)
 
-    public init(ports: [String], message: String, missingSource: String? = nil, writers: [SourceWriter] = []) {
-        self.ports         = ports
-        self.message       = message
-        self.missingSource = missingSource
-        self.writers       = writers
-    }
-}
-
-/// A command outside Semel that writes a source — `semel-clang` — and the folder to run it
-/// on, relative to the input file system as `missingSource` is: `.` for its root.
-public struct SourceWriter: Codable, Equatable, Hashable, Sendable {
-    public let command: String
-    public let folder:  String
-
-    public init(command: String, folder: String) {
-        self.command = command
-        self.folder  = folder
-    }
-}
-
+/// One cause the graph holds: the document its node published, the products that have no
+/// value because of it, and the node's facts. The document is the value the node interned,
+/// decoded; the client renders every line from it and reads no text the engine composed.
 public struct ErrorRecord: Codable, Equatable, Sendable {
-    /// What to call the node in a report: a path if it has one, the project file if it is a
-    /// builder, the type name otherwise. Decided server-side, where the graph is.
-    public let label:   String
-    public let entries: [ErrorEntry]
-    /// How many nodes downstream of this one fail only because this one did. A cascade is
-    /// sent as its cause plus this count, not as a record per node that carries it: one
-    /// deleted header stops every node that reads it, and the header is what can be fixed.
-    public let downstreamCarrierCount: Int
-    /// How many nodes the record stands for: one, or the several of one type that carry
-    /// one report and are named together in the label (B-110).
-    public let nodeCount: Int
-    /// The products downstream of the failing node, in path order: what the failure keeps
-    /// from being built (B-142). Empty for a node nothing under `output:` reads, or whose
-    /// products were built all the same — a settings source read as nothing to add — which a
-    /// client reports as such. Not optional, so a peer that does not send it is refused at
-    /// decoding rather than read as a node that stops nothing.
+    public let document: ErrorDocument
+    /// The products downstream of the failing node that hold no value, in path order: the
+    /// report's `needed by:` (B-142). Empty for a node nothing under `output:` reads, or
+    /// whose products were built all the same — a settings source read as nothing to add.
     public let products: [StoppedProduct]
+    /// What `--verbose` adds under the block: facts about the machinery, never the report.
+    public let facts:    ErrorFacts
 
-    public init(label: String, entries: [ErrorEntry], downstreamCarrierCount: Int = 0, nodeCount: Int = 1,
-                products: [StoppedProduct] = []) {
-        self.label                  = label
-        self.entries                = entries
-        self.downstreamCarrierCount = downstreamCarrierCount
-        self.nodeCount              = nodeCount
-        self.products               = products
+    public init(document: ErrorDocument, products: [StoppedProduct], facts: ErrorFacts) {
+        self.document = document
+        self.products = products
+        self.facts    = facts
+    }
+}
+
+/// The engine's facts about the node behind a record, for `--verbose`.
+public struct ErrorFacts: Codable, Equatable, Sendable {
+    /// The node's type, `SwiftCompiler`, or `kind 43` for a kind the server does not link.
+    public let nodeType:     String
+    /// The node, or the several of one type that carry one document (B-110), by id.
+    public let nodeIDs:      [Int64]
+    /// The output ports that carry the document.
+    public let ports:        [String]
+    /// How many nodes downstream fail only because this one did.
+    public let carrierCount: Int
+
+    public init(nodeType: String, nodeIDs: [Int64], ports: [String], carrierCount: Int) {
+        self.nodeType     = nodeType
+        self.nodeIDs      = nodeIDs
+        self.ports        = ports
+        self.carrierCount = carrierCount
     }
 }
 
@@ -246,8 +223,8 @@ public struct ExplainedNode: Codable, Equatable, Sendable {
         case untouched
     }
 
-    /// What a report calls the node — its type, id and path — decided server-side, as
-    /// `ErrorRecord.label` is.
+    /// What a report calls the node — its type, id and path — decided server-side, as a
+    /// `check` finding's subject is.
     public let label:   String
     public let outcome: Outcome
     /// Whether the settle created it.

@@ -98,7 +98,7 @@ final class AssetCatalogCanonicaliserTests: SemelAppleTestCase {
             inputFiles: inputs,
             expectedOutputFileNames: ["partial.plist"],
             expectedOutputFolders: ["out"])
-        XCTAssertEqual(result.exitCode, 0, result.failureMessage(tool: "actool"))
+        XCTAssertEqual(result.exitCode, 0, result.printedOutput)
         let catalog = try XCTUnwrap(result.outputTrees["out"]?.first { $0.path == "Assets.car" })
         return try XCTUnwrap(catalog.hash).resolve()
     }
@@ -182,10 +182,10 @@ final class AssetCatalogCanonicaliserTests: SemelAppleTestCase {
         XCTAssertThrowsError(try catalogGuard().check(originalHash: try original.intern(),
                                                       canonicalHash: try Array(canonical.bytes.prefix(4096)).intern(),
                                                       canonical: canonical)) { error in
-            guard case AssetCatalogGuardError.unreadable(let which, _) = error else {
+            guard case AssetCatalogGuardError.unreadable(let copy, _) = error else {
                 return XCTFail("expected an unreadable catalog, got \(error)")
             }
-            XCTAssertEqual(which, "the canonical Assets.car")
+            XCTAssertEqual(copy, .canonical)
         }
     }
 

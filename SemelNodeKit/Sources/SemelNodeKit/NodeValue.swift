@@ -35,8 +35,10 @@ public enum NoValueReason: Codable {
     /// report names the source and folds what it stopped underneath. A consumer meeting it
     /// is stopped the way a failure stops one.
     case deleted
-    /// This node failed, and the message is its own.
-    case error(messageDataObjectHash: DataObjectHash)
+    /// This node failed. The hash names its `ErrorDocument`: what failed, what it belongs
+    /// to and what to change, as values a client renders. An empty hash is an error with no
+    /// document, which a report says as one it cannot read.
+    case error(documentHash: DataObjectHash)
 }
 
 extension NoValueReason: CustomStringConvertible {
@@ -47,8 +49,9 @@ extension NoValueReason: CustomStringConvertible {
         case .inputNotProduced: return "\(NodeError.inputValueNotProduced)"
         case .inputInError:     return "\(NodeError.inputValueInError)"
         case .deleted:          return "the source was deleted"
-        case .error(let messageDataObjectHash):
-            return (try? messageDataObjectHash.resolveAsString()) ?? "an error with no message"
+        // A document is rendered by a client, never here: this is a state's name in a log.
+        case .error(let documentHash):
+            return "in error (document \(documentHash.isEmpty ? "none" : documentHash))"
         }
     }
 }
@@ -142,7 +145,7 @@ extension NodeValue {
             self = .noValue(reason: .deleted)
 
         case .error:
-            self = try .noValue(reason: .error(messageDataObjectHash: port.dataObjectHash ?? "<unknown>".intern()))
+            self = .noValue(reason: .error(documentHash: port.dataObjectHash ?? ""))
 
         case .value:
 
@@ -191,11 +194,11 @@ extension NodeValue {
                              valueKind: .deleted,
                              dataObjectHash: nil)
 
-            case .error(let messageDataObjectHash):
+            case .error(let documentHash):
                 return .init(nodeID: nodeID,
                              nameSymbolID: outputSymbolID,
                              valueKind: .error,
-                             dataObjectHash: messageDataObjectHash)
+                             dataObjectHash: documentHash)
 
             }
 

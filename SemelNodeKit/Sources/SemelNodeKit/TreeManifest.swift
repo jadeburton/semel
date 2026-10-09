@@ -153,11 +153,11 @@ public struct TreeManifest: PolySerializable, Equatable {
         for (key, value) in (input.inputValues[port] ?? [:]).sorted(by: { $0.key < $1.key }) {
             let manifest: TreeManifest = try TypeRegistry.decodeAndCast(encodedJSON: try value.expectValue().resolveAsString())
             if let collision = merged.add(manifest.entries, from: key) {
-                throw NodeError.other(message: collision.description)
+                throw collision
             }
         }
         if let collision = merged.collisionBelowALink {
-            throw NodeError.other(message: collision.description)
+            throw collision
         }
         return merged.manifest.entries.map { $0.placed(under: Path(folder)).asInputFile }
     }

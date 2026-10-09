@@ -33,7 +33,9 @@ public struct ConfigFilter: Node {
 
     /// Two wires on `input` are an error where they were merged in key order (B-120), so
     /// an entry the older code wrote for such a node holds a merge this one refuses.
-    public static let implementationVersion = 2
+    /// 3: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 3
 
     public var thisNode: NodeRecord
 

@@ -206,14 +206,14 @@ final class ProductReachTests: SemelCoreTestCase {
         let shared = step("shared", reading: ["a": .staticFile(at: "input:/a.c"), "b": .staticFile(at: "input:/b.c")])
         _ = try make(product(at: "output:/app/bin", reading: shared))
 
-        let reported: [(nodeIDs: [ObjectID], entry: ErrorReport.Entry)] = [
-            ([first], ErrorReport.Entry(label: "a", items: [])),
-            ([second], ErrorReport.Entry(label: "b", items: [])),
+        let reported = [
+            ErrorReport.Entry(label: "a", typeName: "StaticFile", nodeIDs: [first], items: []),
+            ErrorReport.Entry(label: "b", typeName: "StaticFile", nodeIDs: [second], items: []),
         ]
         var reach = ProductReach(database: database)
         let named = ErrorReport.namingProducts(of: reported, reach: &reach)
 
-        XCTAssertEqual(named.map { paths($0.entry.products) }, [["output:/app/bin"], ["output:/app/bin"]])
+        XCTAssertEqual(named.map { paths($0.products) }, [["output:/app/bin"], ["output:/app/bin"]])
         XCTAssertEqual(reach.nodeVisits, 4, "two sources, the shared step and the product")
     }
 

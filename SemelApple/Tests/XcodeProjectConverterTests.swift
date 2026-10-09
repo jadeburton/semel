@@ -85,7 +85,7 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     /// folders and the synchronized folders, never a folder below one.
     func test_asksForEachFolderAsOneTree() throws {
         let output = try process(projectFile: try fixtureProject,
-                                 xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(messageDataObjectHash: try "absent".intern()))],
+                                 xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(documentHash: try "absent".intern()))],
                                  folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp",
                                                                                          files: ["App.swift"],
                                                                                          folders: ["Views", "Assets.xcassets"]),
@@ -191,12 +191,14 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
             folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp", files: ["App.swift"]),
                       try extensionFolder.0: try extensionFolder.1])
 
-        guard case .noValue(.error(let messageHash)) = try XCTUnwrap(output.outputValues[XcodeProjectConverter.infoLog]) else {
-            XCTFail("expected the missing include on infoLog as an error")
-            return
+        let document = try XCTUnwrap(try XCTUnwrap(output.outputValues[XcodeProjectConverter.infoLog]).errorDocument,
+                                     "expected the missing include on infoLog as an error")
+        guard case .engine(.xcconfigMissing(let paths, let undefined)) = document.diagnostic else {
+            return XCTFail("expected the missing xcconfig, got \(document)")
         }
-        let message = try messageHash.resolveAsString()
-        XCTAssertTrue(message.contains("input:/repo/Base.xcconfig is missing") && message.contains("BUNDLE_ID_PREFIX"), message)
+        XCTAssertEqual(paths, ["input:/repo/Base.xcconfig"])
+        XCTAssertTrue(undefined.contains("BUNDLE_ID_PREFIX"), "\(undefined)")
+        XCTAssertEqual(document.subject, .project(path: "input:/repo/IceCubesApp.xcodeproj"))
     }
 
     /// The xcconfig a fresh clone lacks is an empty layer, not a stall: the formula is
@@ -204,7 +206,7 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     func test_aMissingXcconfigDoesNotStallTheConversion() throws {
         let output = try process(
             projectFile: try fixtureProject,
-            xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(messageDataObjectHash: try "absent".intern()))],
+            xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(documentHash: try "absent".intern()))],
             folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp", files: ["App.swift"]),
                       try extensionFolder.0: try extensionFolder.1])
 
@@ -218,7 +220,7 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     func test_reportsTheMissingXcconfigAsTheCauseOfTheUndefinedSettings() throws {
         let output = try process(
             projectFile: try fixtureProject,
-            xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(messageDataObjectHash: try "absent".intern()))],
+            xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(documentHash: try "absent".intern()))],
             folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp", files: ["App.swift"]),
                       try extensionFolder.0: try extensionFolder.1])
 
@@ -226,13 +228,11 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         XCTAssertNoThrow(try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue())
 
         let infoLog = try XCTUnwrap(output.outputValues[XcodeProjectConverter.infoLog])
-        guard case .noValue(.error(let messageHash)) = infoLog else {
-            XCTFail("expected infoLog to carry the cause as an error, got \(infoLog)")
-            return
+        guard case .engine(.xcconfigMissing(let paths, let undefined))? = infoLog.errorDocument?.diagnostic else {
+            return XCTFail("expected infoLog to carry the cause as an error, got \(infoLog)")
         }
-        let message = try messageHash.resolveAsString()
-        XCTAssertTrue(message.contains("input:/repo/App.xcconfig is missing"), message)
-        XCTAssertTrue(message.contains("BUNDLE_ID_PREFIX"), message)
+        XCTAssertEqual(paths, ["input:/repo/App.xcconfig"])
+        XCTAssertTrue(undefined.contains("BUNDLE_ID_PREFIX"), "\(undefined)")
     }
 
     /// Nothing to say about a cause that is not there: an xcconfig that is present leaves
@@ -423,12 +423,12 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     func test_aLocalProductWithNoLocalPackageIsNamed() throws {
         let (output, _, _) = try convertNetNewsWire(modules: [])
 
-        guard case .noValue(.error(let messageHash)) = try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]) else {
-            XCTFail("expected the missing packages as the formula's error")
-            return
+        guard case .engine(.localPackagesNotFound(_, let products, let folders))? =
+                try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).errorDocument?.diagnostic else {
+            return XCTFail("expected the missing packages as the formula's error")
         }
-        let message = try messageHash.resolveAsString()
-        XCTAssertTrue(message.contains("links Account, ActivityLog,") && message.contains("Modules"), message)
+        XCTAssertEqual(Array(products.prefix(2)), ["Account", "ActivityLog"])
+        XCTAssertFalse(folders.isEmpty)
     }
 
     /// A missing xcconfig that nothing referenced is not a cause of anything: the build is
@@ -437,7 +437,7 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     func test_doesNotErrorWhenTheMissingXcconfigDefinesNothingReferenced() throws {
         let output = try process(
             projectFile: try fixtureProjectWithNothingReferenced,
-            xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(messageDataObjectHash: try "absent".intern()))],
+            xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(documentHash: try "absent".intern()))],
             folders: ["input:/repo/App": try manifestValue("input:/repo/App", files: ["App.swift"])])
 
         XCTAssertNoThrow(try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue())
@@ -498,13 +498,11 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         let folders = ["input:/repo/App": try manifestValue("input:/repo/App", files: ["Legacy.swift", "schema.graphql"])]
 
         let failed = try process(projectFile: try pluginProject(excludingLegacy: true), folders: folders)
-        guard case .noValue(.error(let messageHash)) = try XCTUnwrap(failed.outputValues[XcodeProjectConverter.formulaOutput]) else {
-            XCTFail("expected the target and its plugins as the formula's error")
-            return
-        }
-        XCTAssertEqual(try messageHash.resolveAsString(),
-                       "XcodeProjectConverter: App has no source of its own, only what its build-tool plugins would generate — "
-                     + "GraphQLGenerator, Stamp — and build-tool plugins are not run (B-77), so it cannot be compiled")
+        let document = try XCTUnwrap(try XCTUnwrap(failed.outputValues[XcodeProjectConverter.formulaOutput]).errorDocument,
+                                     "expected the target and its plugins as the formula's error")
+        XCTAssertEqual(document.diagnostic,
+                       .engine(.sourcesOnlyFromPlugins(package: nil, target: "App", plugins: ["GraphQLGenerator", "Stamp"])))
+        XCTAssertEqual(document.subject, .project(path: "input:/repo/IceCubesApp.xcodeproj"))
         XCTAssertEqual(failed.inputWireSpecs[XcodeProjectConverter.folders]?.keys.sorted(), ["input:/repo/App"],
                        "the wires are kept, so a source pushed into the folder wakes the conversion")
 

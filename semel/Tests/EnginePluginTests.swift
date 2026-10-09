@@ -127,163 +127,156 @@ final class EnginePluginTests: XCTestCase {
         XCTAssertEqual(context.messages, ["No errors."])
     }
 
-    func test_errorsRendersRecordsUnderACount() throws {
-        connection.reply(.errors(records: [
-            ErrorRecord(label: "StaticFile #12 'input:/a.c'", entries: [ErrorEntry(ports: ["errorLog", "output"], message: "boom")]),
-        ]))
-
-        try run("errors")
-
-        // The count goes through `countErrorRecords`, not `outputError`, so the same
-        // settle report the idle-time event already counted is not counted twice. It is a
-        // sum of ports, which is why the line keeps their names: two errors, two ports. The
-        // record names no product, so it sits under the heading for those (B-142); the
-        // record's own lines are as they were.
-        XCTAssertEqual(context.messages, [
-            "2 errors across 1 node:\n",
-            ErrorGroupRenderer.noProductHeading,
-            "❌ StaticFile #12 'input:/a.c'",
-            "   · errorLog, output: boom",
-            "",
-        ])
-        XCTAssertEqual(context.countedErrorRecords, [[
-            ErrorRecord(label: "StaticFile #12 'input:/a.c'", entries: [ErrorEntry(ports: ["errorLog", "output"], message: "boom")]),
-        ]])
+    /// A record's facts: the node behind it, for `--verbose`.
+    private static func facts(_ type: String, _ id: Int64, ports: [String] = ["output"], carried: Int = 0) -> ErrorFacts {
+        ErrorFacts(nodeType: type, nodeIDs: [id], ports: ports, carrierCount: carried)
     }
 
-    /// A missing-configuration message spans lines and carries the config lines the reader
-    /// has to paste, so it prints as an indented block rather than folded onto one line.
-    /// This is the path a node's error takes once it arrives as the words
-    /// the node wrote instead of as the debug form of the case carrying them.
-    func test_errorsPrintsAMultiLineMessageAsAnIndentedBlock() throws {
-        let message = """
-            Missing configuration. Add these to a semel.config in the input file system:
-
-            clang.linker.target=…
-            """
-        connection.reply(.errors(records: [
-            ErrorRecord(label: "ClangLinker #12 'input:/semel.fmla'",
-                        entries: [ErrorEntry(ports: ["output"], message: message)]),
-        ]))
+    /// Each cause as its block — the diagnostic, what it belongs to, what needs it — and the
+    /// summary under them. The count goes through `countErrorRecords`, not `outputError`, so
+    /// the settle report the idle-time event already counted is not counted twice.
+    func test_errorsRendersEachCauseAndTheSummary() throws {
+        let record = ErrorRecord(document: .tool(text: "input:/a.c:1:1: error: boom", tool: "clang", status: 1,
+                                                 subject: .source(path: "input:/a.c")),
+                                 products: [], facts: Self.facts("ClangCompiler", 12, ports: ["errorLog", "output"]))
+        connection.reply(.errors(records: [record]))
 
         try run("errors")
 
         XCTAssertEqual(context.messages, [
-            "1 error across 1 node:\n",
-            ErrorGroupRenderer.noProductHeading,
-            "❌ ClangLinker #12 'input:/semel.fmla'",
-            "   · Missing configuration. Add these to a semel.config in the input file system:",
-            "     clang.linker.target=…",
+            "a.c:1:1: error: boom",
+            "  source: a.c",
+            "  needed by: nothing",
             "",
+            "1 error · every product has a value",
         ])
+        XCTAssertEqual(context.countedErrorRecords, [[record]])
     }
 
-    /// B-74. A cascade arrives as its cause and a count of what carries it, and prints as
-    /// one line under the failure — twenty nodes saying "an input is in error" name no fix
-    /// the file above them does not. `ErrorReport.lines` is the twin of this on the engine's
-    /// side, and prints the same line.
-    func test_errorsPrintsTheCascadeUnderACauseAsOneLine() throws {
+    /// A tool's text that spans lines keeps them, indented under the first: the quoted
+    /// source and the caret line are where they were relative to each other.
+    func test_errorsPrintsAMultiLineDiagnosticIndentedUnderItsFirstLine() throws {
         connection.reply(.errors(records: [
-            ErrorRecord(label: "StaticFile #12 'input:/shared.h'",
-                        entries: [ErrorEntry(ports: ["output"], message: "the file is gone")],
-                        downstreamCarrierCount: 20),
+            ErrorRecord(document: .tool(text: """
+                            input:/hello/src/hello.c:12:9: error: incompatible pointer to integer conversion
+                               12 |     int count = "one";
+                                  |         ^
+                            1 error generated.
+                            """, tool: "clang", status: 1, subject: .source(path: "input:/hello/src/hello.c")),
+                        products: [StoppedProduct(path: "output:/hello/hello")], facts: Self.facts("ClangCompiler", 24)),
         ]))
 
         try run("errors")
 
         XCTAssertEqual(context.messages, [
-            "1 error across 1 node:\n",
-            ErrorGroupRenderer.noProductHeading,
-            "❌ StaticFile #12 'input:/shared.h'",
-            "   · the file is gone",
-            "   · and 20 nodes downstream carry it",
+            "hello/src/hello.c:12:9: error: incompatible pointer to integer conversion",
+            "     12 |     int count = \"one\";",
+            "        |         ^",
+            "  1 error generated.",
+            "  source: hello/src/hello.c",
+            "  needed by: hello",
             "",
+            "1 error · 1 product without a value",
         ])
     }
 
-    func test_oneNodeDownstreamPrintsAsOne() throws {
-        connection.reply(.errors(records: [
-            ErrorRecord(label: "StaticFile #12 'input:/shared.h'",
-                        entries: [ErrorEntry(ports: ["output"], message: "the file is gone")],
-                        downstreamCarrierCount: 1),
-        ]))
+    /// B-74. What carries a failure downstream is not an error of its own and is never
+    /// listed; `--verbose` says how many nodes carry it, with the node's other facts.
+    func test_errorsVerboseAddsTheEnginesFactsAndNeverListsCarriers() throws {
+        let record = ErrorRecord(document: .engine(.notPushed(path: "input:/shared.h", isFolder: false), subject: nil),
+                                 products: [], facts: Self.facts("StaticFile", 12, carried: 20))
+        connection.reply(.errors(records: [record]))
+        connection.reply(.errors(records: [record]))
 
         try run("errors")
+        try run("errors", ["--verbose"])
 
-        XCTAssertEqual(context.messages.last(where: { $0.contains("·") }),
-                       "   · and 1 node downstream carries it")
+        XCTAssertEqual(context.messages, [
+            "shared.h has not been pushed",
+            "  needed by: nothing",
+            "",
+            "1 error · every product has a value",
+            "shared.h has not been pushed",
+            "  needed by: nothing",
+            "  node: StaticFile #12",
+            "  ports: output",
+            "  carried by: 20 nodes",
+            "",
+            "1 error · every product has a value",
+        ])
+        XCTAssertEqual(connection.daemonRequests, [.errors(product: nil), .errors(product: nil)])
     }
 
-    // MARK: - errors, grouped by product (B-142)
+    // MARK: - errors, and what needs each cause (B-142)
 
-    private static let compile = ErrorRecord(label: "SwiftCompiler #20 'input:/Packages/Models/A.swift'",
-                                             entries: [ErrorEntry(ports: ["output"], message: "cannot find 'x' in scope")],
-                                             downstreamCarrierCount: 40,
-                                             products: [StoppedProduct(path: "output:/Packages/libApp.a"),
-                                                        StoppedProduct(path: "output:/Packages/libModels.a")])
-    private static let catalog = ErrorRecord(label: "AssetCatalogCompiler #31",
-                                             entries: [ErrorEntry(ports: ["output"], message: "actool failed")],
-                                             products: [StoppedProduct(path: "output:/App/Res/Assets.car",
-                                                                       treeFolder: "output:/App/Res"),
-                                                        StoppedProduct(path: "output:/App/Res/AppIcon.png",
-                                                                       treeFolder: "output:/App/Res")])
-    private static let unread = ErrorRecord(label: "StaticFile #3 'input:/notes.txt'",
-                                            entries: [ErrorEntry(ports: ["output"], message: "notes.txt was deleted")])
+    private static let compile = ErrorRecord(
+        document: .tool(text: "input:/Packages/Models/A.swift:3:5: error: cannot find 'x' in scope", tool: "swiftc", status: 1,
+                        subject: .target(name: "Models")),
+        products: [StoppedProduct(path: "output:/Packages/libApp.a"), StoppedProduct(path: "output:/Packages/libModels.a")],
+        facts: facts("SwiftCompiler", 20, ports: ["object", "swiftmodule"], carried: 40))
+    private static let catalog = ErrorRecord(
+        document: .tool(text: "input:/App/Res/Assets.xcassets: error: actool failed", tool: "actool", status: 1,
+                        subject: .resource(path: "input:/App/Res/Assets.xcassets")),
+        products: [StoppedProduct(path: "output:/App/Res/Assets.car", treeFolder: "output:/App/Res"),
+                   StoppedProduct(path: "output:/App/Res/AppIcon.png", treeFolder: "output:/App/Res")],
+        facts: facts("AssetCatalogCompiler", 31))
+    private static let unread = ErrorRecord(
+        document: .engine(.removed(path: "input:/notes.txt", isFolder: false), subject: nil),
+        products: [], facts: facts("StaticFile", 3))
 
-    /// Products first, in path order, each with its errors; a tree product by its folder
-    /// with the entries the errors reach; an error under two products printed in full under
-    /// the first and named under the second; then what reaches no product.
-    func test_errorsGroupsTheReportByTheProductsItStops() throws {
-        connection.reply(.errors(records: [Self.catalog, Self.unread, Self.compile]))
+    /// Each cause once, in the order of its first line, with the products that have no value
+    /// because of it on one line: a tree product by its folder, once for all its entries,
+    /// and a cause no product reaches as needed by nothing.
+    func test_errorsNamesWhatNeedsEachCauseInTheOrderOfTheirFirstLines() throws {
+        connection.reply(.errors(records: [Self.unread, Self.compile, Self.catalog]))
 
         try run("errors")
 
         XCTAssertEqual(context.messages, [
-            "3 errors across 3 nodes:\n",
-            "Stopping output:/App/Res/ (AppIcon.png, Assets.car):",
-            "❌ AssetCatalogCompiler #31",
-            "   · actool failed",
+            "App/Res/Assets.xcassets: error: actool failed",
+            "  resource: Assets.xcassets",
+            "  needed by: Res/",
             "",
-            "Stopping output:/Packages/libApp.a:",
-            "❌ SwiftCompiler #20 'input:/Packages/Models/A.swift'",
-            "   · cannot find 'x' in scope",
-            "   · and 40 nodes downstream carry it",
+            "Packages/Models/A.swift:3:5: error: cannot find 'x' in scope",
+            "  target: Models",
+            "  needed by: libApp.a, libModels.a",
             "",
-            "Stopping output:/Packages/libModels.a:",
-            "❌ SwiftCompiler #20 'input:/Packages/Models/A.swift' — see output:/Packages/libApp.a",
+            "notes.txt has been removed",
+            "  needed by: nothing",
             "",
-            "Stopping no product:",
-            "❌ StaticFile #3 'input:/notes.txt'",
-            "   · notes.txt was deleted",
-            "",
+            "3 errors · 3 products without a value",
         ])
     }
 
-    /// The idle-time report after a settle is grouped the same way, by the same renderer.
-    func test_theIdleTimeReportIsGroupedByProduct() {
-        XCTAssertEqual(ErrorGroupRenderer.lines(for: [Self.unread, Self.compile]).first,
-                       "Stopping output:/Packages/libApp.a:")
+    /// The idle-time report after a settle is drawn by the same renderer, with the same
+    /// summary.
+    func test_theIdleTimeReportIsTheSameReport() {
+        XCTAssertEqual(ErrorReportRenderer.lines(for: [Self.unread, Self.compile], style: ErrorReportStyle()).last,
+                       "2 errors · 2 products without a value")
     }
 
-    /// The product as `cp` reads a path: with its file system, here from its root.
-    func test_errorsForAProductAsksTheServerForItsErrors() throws {
+    /// The product as `cp` reads a path: with its file system, here from its root. The view
+    /// is the blocks of the causes reaching it, under one heading naming it.
+    func test_errorsForAProductIsTheProductView() throws {
         connection.reply(.errors(records: [Self.compile]))
 
         try run("errors", ["output:/Packages/libModels.a"])
 
         XCTAssertEqual(connection.daemonRequests, [.errors(product: "Packages/libModels.a")])
         XCTAssertEqual(context.messages, [
-            "1 error across 1 node:\n",
-            "Stopping output:/Packages/libModels.a:",
-            "❌ SwiftCompiler #20 'input:/Packages/Models/A.swift'",
-            "   · cannot find 'x' in scope",
-            "   · and 40 nodes downstream carry it",
+            "libModels.a has no value because:",
             "",
+            "Packages/Models/A.swift:3:5: error: cannot find 'x' in scope",
+            "  target: Models",
+            "  needed by: libApp.a, libModels.a",
+            "",
+            "1 error · 2 products without a value",
         ])
+        XCTAssertEqual(context.countedErrorRecords, [[Self.compile]])
     }
 
-    /// Relative to the session's current directory, and a tree product's folder heads its
-    /// report with the separator a tree is written with.
+    /// Relative to the session's current directory, and a tree product's folder is named in
+    /// the heading as a tree is everywhere else: with its separator.
     func test_errorsForATreeProductsFolderReadsRelativeToTheCurrentDirectory() throws {
         context.currentFileSystem    = .output
         context.currentDirectoryPath = Path("App/sub")
@@ -292,16 +285,16 @@ final class EnginePluginTests: XCTestCase {
         try run("errors", ["../Res"])
 
         XCTAssertEqual(connection.daemonRequests, [.errors(product: "App/Res")])
-        XCTAssertEqual(context.messages.dropFirst().first, "Stopping output:/App/Res/:")
+        XCTAssertEqual(context.messages.first, "Res/ has no value because:")
     }
 
-    /// A product nothing is wrong with says so, and is not an error.
-    func test_errorsForAProductWithNoErrorsSaysSo() throws {
+    /// A product nothing is wrong with has a value, and says so; it is not an error.
+    func test_errorsForAProductWithNoErrorsSaysItHasAValue() throws {
         connection.reply(.errors(records: []))
 
         try run("errors", ["-o", "Packages/libModels.a"])
 
-        XCTAssertEqual(context.messages, ["No errors stop output:/Packages/libModels.a."])
+        XCTAssertEqual(context.messages, ["libModels.a has a value."])
         XCTAssertEqual(context.errors, [])
     }
 
@@ -321,16 +314,6 @@ final class EnginePluginTests: XCTestCase {
             "errors: input:/Packages/Models/A.swift: no product is published there; name a product under "
           + "output:, or a tree product's folder",
         ])
-    }
-
-    /// The line `build` and `semel-watch` print in place of a refused export: the products
-    /// the errors stop, by name, in the report's order.
-    func test_theExportRefusalNamesTheProductsTheErrorsStop() {
-        XCTAssertEqual(ErrorGroupRenderer.notExportedLine(into: "/tmp/out", records: [Self.compile, Self.catalog]),
-                       "Not exported into /tmp/out: errors stop output:/App/Res/, output:/Packages/libApp.a, "
-                     + "output:/Packages/libModels.a.")
-        XCTAssertEqual(ErrorGroupRenderer.notExportedLine(into: "/tmp/out", records: [Self.unread]),
-                       "Not exported into /tmp/out: the build has errors, and none of them stops a product.")
     }
 
     func test_waitSendsWaitAndReportsSettled() throws {

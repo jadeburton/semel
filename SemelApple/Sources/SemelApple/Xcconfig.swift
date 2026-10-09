@@ -10,6 +10,7 @@
 //  `StaticFile`; `prepare` reads the disk), and `XcconfigExpansion` splices them in.
 
 import Foundation
+import SemelNodeKit
 
 // MARK: - Assignments
 
@@ -242,7 +243,7 @@ struct XcconfigExpansion: Equatable {
     /// converter names them as the cause of whatever that leaves undefined.
     private(set) var missing: [String] = []
 
-    enum Failure: Error, Equatable, CustomStringConvertible {
+    enum Failure: Error, Equatable, CustomStringConvertible, ErrorConditionConvertible {
         /// An include that leads back to a file it is inside of; Xcode refuses it too.
         case includeCycle([String])
 
@@ -250,6 +251,12 @@ struct XcconfigExpansion: Equatable {
             switch self {
             case .includeCycle(let chain):
                 return "xcconfig files include each other in a cycle: \(chain.joined(separator: " → "))"
+            }
+        }
+
+        var errorCondition: ErrorCondition {
+            switch self {
+            case .includeCycle(let chain): return .xcconfigIncludeCycle(chain: chain)
             }
         }
     }

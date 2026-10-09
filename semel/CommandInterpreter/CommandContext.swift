@@ -64,6 +64,10 @@ protocol CommandContext: AnyObject {
     /// The watcher `watch <folder>` started, until `unwatch`, `quit` or the next `watch
     /// <folder>` stops it. One per session.
     var runningWatcher: RunningWatcher? { get set }
+
+    /// Whether error reports are drawn in colour: the terminal's to decide, at launch
+    /// (`ColourPolicy`).
+    var reportsInColour: Bool { get }
 }
 
 /// A failure the server reported. Thrown by `request` so the interpreter prints it the way

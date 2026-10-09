@@ -973,6 +973,22 @@ final class FilePlugin: CommandPlugin {
             throw CommandParserError.missingArgument(command: "export", expected: "<folder> --into <dir>")
         }
 
+        guard let exported = try Self.exportFiles(folderToken: folderToken, destination: destination,
+                                                  skippingWithoutValue: false, context: context) else {
+            return
+        }
+        let externalDest = ExternalPathSanitizer.expandPartialPath(destination)
+        context.outputMessage("Exported \(exported) file\(exported == 1 ? "" : "s") into \(externalDest)")
+    }
+
+    /// Writes every file under `<folderToken>` of the output file system into
+    /// `destination`, keeping the tree below the folder, and answers how many it wrote —
+    /// nil when there was nothing to export, which it reports. With
+    /// `skippingWithoutValue`, a product that has no value is passed over rather than
+    /// reported: what a build with errors exports into a folder the reader named, whose
+    /// report already says which products have none.
+    static func exportFiles(folderToken: String, destination: String, skippingWithoutValue: Bool,
+                            context: any CommandContext) throws -> Int? {
         // The folder is a path in the output file system, from its root — the same folder
         // `build` took, which named the input tree the products mirror.
         // `.` is the root itself, which is always there and which a listing cannot name:
@@ -981,23 +997,29 @@ final class FilePlugin: CommandPlugin {
         if !folderPath.isEmpty {
             guard case .list(let folderMatches) = try context.request(.list(fileSystem: .output,
                                                                             pattern: folderPath.string)).0 else {
-                return
+                return nil
             }
             guard folderMatches.count == 1, folderMatches[0].kind == .folder else {
                 context.outputError("export: \(folderToken): no such folder in the output file system")
-                return
+                return nil
             }
         }
 
         let treePattern = (folderPath / Path("**/*")).string
         guard case .list(let matches) = try context.request(.list(fileSystem: .output,
                                                                   pattern: treePattern)).0 else {
-            return
+            return nil
         }
-        let files = matches.filter { $0.kind == .file }
+        // A product with a value is listed as there, or as one nothing reads: products are
+        // read by nothing in the graph.
+        let files = matches.filter { entry in
+            entry.kind == .file && (!skippingWithoutValue || entry.status == .none || entry.status == .unreferenced)
+        }
         guard !files.isEmpty else {
-            context.outputError("export: \(folderToken): nothing to export")
-            return
+            if !skippingWithoutValue {
+                context.outputError("export: \(folderToken): nothing to export")
+            }
+            return skippingWithoutValue ? 0 : nil
         }
 
         let externalDest = ExternalPathSanitizer.expandPartialPath(destination)
@@ -1013,14 +1035,14 @@ final class FilePlugin: CommandPlugin {
                 context.outputError("export: \(entry.path): \(error)")
             }
         }
-        context.outputMessage("Exported \(exported) file\(exported == 1 ? "" : "s") into \(externalDest)")
+        return exported
     }
 
     /// Writes one exported file or link below `destinationPath`, at the place it holds
     /// below `folderPath`, creating the directories on the way. Returns whether it was
     /// written.
-    private func exportOneFile(_ entry: ListEntry, below folderPath: Path,
-                               destinationPath: String, context: any CommandContext) throws -> Bool {
+    private static func exportOneFile(_ entry: ListEntry, below folderPath: Path,
+                                      destinationPath: String, context: any CommandContext) throws -> Bool {
         let (response, body) = try context.request(.fetch(fileSystem: .output, path: entry.path))
 
         let relative  = Path(entry.path).relative(to: folderPath)?.string ?? entry.path

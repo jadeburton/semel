@@ -56,8 +56,8 @@ public struct FormulaPrelude: Node {
         switch FormulaIncludeProviders.resolve(includeNamed: name) {
         case .prelude(let namespace, let text):
             return .value(try Self.publishedText(namespace: namespace, text: text).intern())
-        case .failed(let message):
-            return .noValue(reason: .error(messageDataObjectHash: try message.intern()))
+        case .failed(let condition):
+            return try ErrorDocument.engine(condition, subject: nil).published()
         }
     }
 
@@ -74,6 +74,6 @@ public struct FormulaPrelude: Node {
 
     /// Never reached in a working graph: a node declaring no input ports is not scheduled.
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        throw NodeError.other(message: "\(Self.self) declares no input ports and cannot process")
+        throw NodeError.sourceCannotProcess(type: "\(Self.self)")
     }
 }

@@ -228,16 +228,14 @@ final class DeclaredSDKTests: SemelSwiftTestCase {
                         "expected `<version> (<build>)`, got \(actual)")
     }
 
-    /// The old form is not quietly accepted as a partial match: it fails, and the message
-    /// hands over the exact string to declare instead.
+    /// The old form is not quietly accepted as a partial match: it fails, and the condition
+    /// carries the exact string to declare instead.
     func test_aVersionWithoutABuildNumberIsRejectedAndToldTheFullForm() throws {
         let actual  = try XCTUnwrap(resolveSDKVersion())
         let version = String(actual.prefix { $0 != " " })
 
         XCTAssertThrowsError(try verifySDKVersion(version)) { error in
-            let message = String(describing: error)
-            XCTAssertTrue(message.contains(actual), "should give the full form to paste, got \(message)")
-            XCTAssertTrue(message.lowercased().contains("build"), "should say the build number is part of it, got \(message)")
+            XCTAssertEqual(error as? ErrorCondition, .sdkVersionDiffers(sdk: defaultSDKName, declared: version, found: actual))
         }
     }
 }

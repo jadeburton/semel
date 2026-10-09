@@ -20,7 +20,8 @@ class SemelAppleTestCase: XCTestCase {
         ToolRunnerRegistry.instance = ToolRunnerRegistry()
         // The manifests the nodes decode resolve through the same process-global registry
         // production uses.
-        try TypeRegistry.register(types: [FolderManifest.self, FolderSubtreeManifest.self, TreeManifest.self])
+        try TypeRegistry.register(types: [FolderManifest.self, FolderSubtreeManifest.self, TreeManifest.self,
+                                          ErrorDocument.self])
         try SemelApple.register()
     }
 
@@ -223,5 +224,15 @@ extension Xcconfig {
             }
             return assignment
         }
+    }
+}
+
+extension NodeValue {
+    /// The document an error value names, read back; nil for a value or another reason.
+    var errorDocument: ErrorDocument? {
+        guard case .noValue(.error(let hash)) = self else {
+            return nil
+        }
+        return ErrorDocument.read(documentHash: hash)
     }
 }

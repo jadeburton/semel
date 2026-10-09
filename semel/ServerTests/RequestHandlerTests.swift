@@ -224,10 +224,8 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         let (response, _) = try daemon(.errors(product: nil))
 
         XCTAssertEqual(response, .errors(records: [
-            ErrorRecord(label: "StaticFile #\(first) 'input:/a.c'",
-                        entries: [ErrorEntry(ports: ["output"], message: "first")]),
-            ErrorRecord(label: "StaticFile #\(second) 'input:/b.c'",
-                        entries: [ErrorEntry(ports: ["output"], message: "second")]),
+            fileRecord(first, message: "first"),
+            fileRecord(second, message: "second"),
         ]))
     }
 
@@ -247,13 +245,13 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         guard case .errors(let records) = response else {
             return XCTFail("expected errors, got \(response)")
         }
-        XCTAssertEqual(records.map { $0.entries.first?.message }, messages,
+        XCTAssertEqual(records.map(\.document), messages.map(ErrorDocument.failure),
                        "the nodes were created in message order, so node order is message order")
         XCTAssertEqual(sink.events, [.daemon(.errors(records: records))])
     }
 
-    /// B-110. Three nodes of one type carrying one message are one record naming all
-    /// three, in the reply and in the event alike, and the record says how many it is.
+    /// B-110. Three nodes of one type carrying one document are one record naming all
+    /// three, in the reply and in the event alike, and the record's facts say which.
     func test_nodesOfOneTypeWithOneMessageAreOneRecordInBothTheReplyAndTheEvent() throws {
         for tag in ["a", "b", "c"] {
             try makeFailingMerger(message: "boom", tag: tag)
@@ -266,8 +264,8 @@ final class RequestHandlerTests: RequestHandlerTestCase {
             return XCTFail("expected errors, got \(response)")
         }
         XCTAssertEqual(records.count, 1)
-        XCTAssertEqual(records[0].nodeCount, 3)
-        XCTAssertTrue(records[0].label.hasPrefix("TreeMerger ×3 (#"), records[0].label)
+        XCTAssertEqual(records[0].facts.nodeIDs.count, 3)
+        XCTAssertEqual(records[0].facts.nodeType, "TreeMerger")
         XCTAssertEqual(sink.events, [.daemon(.errors(records: records))])
     }
 
@@ -286,7 +284,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
             carriers.append(carrier)
         }
         try source.writeToOutputPort("output", value: .noValue(
-            reason: .error(messageDataObjectHash: try "the file is gone".intern())))
+            reason: try .failure("the file is gone")))
         for carrier in carriers {
             // The state a node publishes when it did not run because its input failed: no
             // message of its own, which is what makes it foldable.
@@ -297,9 +295,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(response, .errors(records: [
-            ErrorRecord(label: "StaticFile #\(try source.requireID()) 'input:/shared.h'",
-                        entries: [ErrorEntry(ports: ["output"], message: "the file is gone")],
-                        downstreamCarrierCount: 20),
+            fileRecord(try source.requireID(), message: "the file is gone", carried: 20),
         ]))
         guard case .errors(let records) = response else {
             return XCTFail("expected errors, got \(response)")
@@ -329,12 +325,9 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         let (feeding, orphan) = try makeFailuresUnderTwoProducts()
 
         XCTAssertEqual(try daemon(.errors(product: nil)).0, .errors(records: [
-            ErrorRecord(label: "StaticFile #\(feeding) 'input:/a.c'",
-                        entries: [ErrorEntry(ports: ["output"], message: "first")],
-                        products: [StoppedProduct(path: "output:/app/bin"), StoppedProduct(path: "output:/app/lib")]),
-            ErrorRecord(label: "StaticFile #\(orphan) 'input:/b.c'",
-                        entries: [ErrorEntry(ports: ["output"], message: "second")],
-                        products: []),
+            fileRecord(feeding, message: "first",
+                       products: [StoppedProduct(path: "output:/app/bin"), StoppedProduct(path: "output:/app/lib")]),
+            fileRecord(orphan, message: "second"),
         ]))
     }
 
@@ -357,7 +350,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         guard case .errors(let records) = try daemon(.errors(product: "app/bin")).0 else {
             return XCTFail("expected errors")
         }
-        XCTAssertEqual(records.map(\.label), ["StaticFile #\(feeding) 'input:/a.c'"])
+        XCTAssertEqual(records.map(\.facts.nodeIDs), [[feeding]])
     }
 
     /// A folder holding products is no product, nor is a path nothing stands at; either is
@@ -377,8 +370,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(sink.events, [
-            .daemon(.errors(records: [ErrorRecord(label: "StaticFile #\(file) 'input:/a.c'",
-                                                  entries: [ErrorEntry(ports: ["output"], message: "boom")])])),
+            .daemon(.errors(records: [fileRecord(file, message: "boom")])),
         ])
     }
 
@@ -395,8 +387,8 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     }
 
     /// The summary's error count is the graph's whole current error state, counted per
-    /// port as the `errors` command counts it, so a line and the reply to `errors` sent
-    /// moments later say the same number.
+    /// cause as the `errors` report counts its blocks, so a line and the report drawn from
+    /// the reply to `errors` moments later say the same number.
     func test_theSettleTimeErrorCountMatchesWhatTheErrorsVerbWouldAnswer() throws {
         try makeFailingFile(path: "input:/a.c", message: "boom")
         try makeFailingFile(path: "input:/b.c", message: "bang")
@@ -404,7 +396,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         guard case .errors(let records) = try daemon(.errors(product: nil)).0 else {
             return XCTFail("expected errors")
         }
-        let verbCount = records.reduce(0) { $0 + $1.entries.reduce(0) { $0 + $1.ports.count } }
+        let verbCount = Set(records.flatMap { $0.document.causes.map(\.mergeKey) }).count
 
         XCTAssertEqual(engine.reportIdleTimeErrors(), verbCount)
         XCTAssertEqual(verbCount, 2)
@@ -412,11 +404,17 @@ final class RequestHandlerTests: RequestHandlerTestCase {
 
     // MARK: - Helpers
 
+    /// The record a failing file's node is answered as.
+    private func fileRecord(_ nodeID: ObjectID, message: String, products: [StoppedProduct] = [], carried: Int = 0) -> ErrorRecord {
+        ErrorRecord(document: .failure(message), products: products,
+                    facts: ErrorFacts(nodeType: "StaticFile", nodeIDs: [nodeID], ports: ["output"], carrierCount: carried))
+    }
+
     @discardableResult
     private func makeFailingFile(path: String, message: String) throws -> ObjectID {
         let (nodeRecord, _) = try GraphSpecNode.staticFile(at: path).findOrCreateMatchingNode()
         try nodeRecord.writeToOutputPort("output",
-                                         value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+                                         value: .noValue(reason: try .failure(message)))
         return try nodeRecord.requireID()
     }
 
@@ -432,6 +430,6 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         let (nodeRecord, _) = try GraphSpecNode(TreeMerger.self, properties: ["tag": tag ?? message])
             .findOrCreateMatchingNode()
         try nodeRecord.writeToOutputPort(TreeMerger.outputPort,
-                                         value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+                                         value: .noValue(reason: try .failure(message)))
     }
 }

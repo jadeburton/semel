@@ -89,13 +89,13 @@ final class CascadeReportScaleTests: SemelCoreTestCase {
 
         let ports   = try ErrorReport.portsToReport(database: database)
         let byNode  = Dictionary(grouping: ports, by: \.nodeID)
-        let sourced = ErrorReport.sourceMessages(amongPorts: ports, database: database)
+        let sourced = ErrorReport.sourceDocuments(amongPorts: ports, database: database)
 
         let queriesBefore = WireDataAccess.selectCount.value
         let start  = Date.now
         let counts = ErrorReport.causes(amongErrorPorts: byNode,
                                         database: database,
-                                        sourceMessages: sourced)
+                                        sourceDocuments: sourced)
         let seconds = Date.now.timeIntervalSince(start)
         let queries = WireDataAccess.selectCount.value - queriesBefore
 
@@ -103,7 +103,7 @@ final class CascadeReportScaleTests: SemelCoreTestCase {
         // which is what the reader is handed.
         let records = ErrorReport.entries(forErrorPorts: ports,
                                           database: database,
-                                          sourceMessages: sourced) { _, messages in messages }
+                                          sourceDocuments: sourced) { _, messages in messages }
 
         XCTAssertEqual(counts.count, records.count, "every cause reaches the report")
 
@@ -135,8 +135,7 @@ final class CascadeReportScaleTests: SemelCoreTestCase {
 
         try database.node.select(nodeID: source)
             .writeToOutputPort("output",
-                               value: .noValue(reason: .error(messageDataObjectHash:
-                                                              try "the file is gone".intern())))
+                               value: .noValue(reason: try .failure("the file is gone")))
         for carrier in carriers {
             try database.node.select(nodeID: carrier)
                 .writeToOutputPort("output", value: .noValue(reason: .inputInError))

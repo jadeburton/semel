@@ -53,7 +53,7 @@ final class TreeBuilderTests: SemelCoreTestCase {
         let node = try TreeBuilder(thisNode: NodeRecord(id: 1, kind: TreeBuilder.kind))
         let output = node.processWithCatch(input: ProcessInput(inputValues: [TreeBuilder.inputPort: [
             "Models.o": .value(try "models".intern()),
-            "Timeline.o": .noValue(reason: .error(messageDataObjectHash: try "compile failed".intern())),
+            "Timeline.o": .noValue(reason: try .failure("compile failed")),
         ]]))
 
         guard case .noValue(.inputInError) = try XCTUnwrap(output.outputValues[TreeBuilder.outputPort]) else {

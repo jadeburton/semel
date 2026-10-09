@@ -4,7 +4,7 @@
 // What one `semel-watch` was asked to do, read from its arguments (B-126):
 //
 //     semel-watch <base> [<folder> ...] [--only <pattern>]... [--except <pattern>]...
-//                 [--into <dir>] [--settle-after <ms>] [--no-initial] [--no-reports]
+//                 [--into <dir>] [--settle-after <ms>] [--no-initial] [--no-reports] [--verbose]
 
 import Foundation
 import SemelNodeKit
@@ -23,7 +23,8 @@ public struct WatchConfiguration: Equatable {
     public var folders: [Path]
     public var only: [String]
     public var except: [String]
-    /// Where each settle without errors is exported, absolute; nil exports nothing.
+    /// Where each settle's products are exported, absolute; nil exports nothing. A settle
+    /// with errors exports what has a value, as `build --into` does.
     public var exportDestination: String?
     public var quietInterval: Duration
     /// Whether the initial batch mirrors every watched folder before the first change:
@@ -33,10 +34,13 @@ public struct WatchConfiguration: Equatable {
     /// report. Off when the prompt started it: the prompt prints them from its own
     /// subscription, and two clients printing one settle into one terminal print it twice.
     public var printsReports: Bool
+    /// Whether the error report shows the engine's facts under each block, as `errors
+    /// --verbose` does.
+    public var verbose: Bool
 
     public init(base: String, folders: [Path] = [.empty], only: [String] = [], except: [String] = [],
                 exportDestination: String? = nil, quietInterval: Duration = defaultQuietInterval,
-                pushesInitially: Bool = true, printsReports: Bool = true) {
+                pushesInitially: Bool = true, printsReports: Bool = true, verbose: Bool = false) {
         self.base              = base
         self.folders           = folders
         self.only              = only
@@ -45,6 +49,7 @@ public struct WatchConfiguration: Equatable {
         self.quietInterval     = quietInterval
         self.pushesInitially   = pushesInitially
         self.printsReports     = printsReports
+        self.verbose           = verbose
     }
 
     /// The filter these arguments describe.
@@ -59,7 +64,7 @@ public struct WatchConfiguration: Equatable {
 
     public static let usage = """
         usage: semel-watch <base> [<folder> ...] [--only <pattern>]... [--except <pattern>]...
-                           [--into <dir>] [--settle-after <ms>] [--no-initial] [--no-reports]
+                           [--into <dir>] [--settle-after <ms>] [--no-initial] [--no-reports] [--verbose]
         """
 
     /// Reads the arguments after the program's name. Relative paths are read from
@@ -73,6 +78,7 @@ public struct WatchConfiguration: Equatable {
         var quietInterval = defaultQuietInterval
         var pushesInitially = true
         var printsReports = true
+        var verbose = false
 
         var index = 0
         func value(of flag: String) throws -> String {
@@ -97,6 +103,7 @@ public struct WatchConfiguration: Equatable {
                 quietInterval = .milliseconds(milliseconds)
             case "--no-initial":   pushesInitially = false
             case "--no-reports":   printsReports = false
+            case "--verbose":      verbose = true
             default:
                 guard !argument.hasPrefix("--") else {
                     throw WatchArgumentError.unknownOption(argument)
@@ -133,7 +140,8 @@ public struct WatchConfiguration: Equatable {
                                   exportDestination: destination.map { absolute($0, from: currentDirectory) },
                                   quietInterval:     quietInterval,
                                   pushesInitially:   pushesInitially,
-                                  printsReports:     printsReports)
+                                  printsReports:     printsReports,
+                                  verbose:           verbose)
     }
 
     /// `path` made absolute against `directory`, `~` expanded, `.` and `..` folded and

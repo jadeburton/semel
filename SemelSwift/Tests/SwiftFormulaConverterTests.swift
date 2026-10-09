@@ -798,39 +798,43 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
     // MARK: - Explaining a stall
 
-    /// The reason text on a pending output, which is what the user actually sees.
-    private func pendingReason(_ output: ProcessOutput) throws -> String {
+    /// The document on a pending output, which is what the user is shown.
+    private func pendingDocument(_ output: ProcessOutput) throws -> ErrorDocument {
         let value = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput])
-        guard case .noValue(let reason) = value, case .error(let hash) = reason else {
-            XCTFail("expected a pending output, got \(value)")
-            return ""
-        }
-        return try hash.resolveAsString()
+        return try XCTUnwrap(value.errorDocument, "expected a document on the formula, got \(value)")
     }
 
-    /// A vendored package that is not there stalls the whole conversion, and the old
-    /// message named only the path it was waiting on — which says nothing about why that
-    /// path is expected, or that this build system never fetches anything.
+    /// The one condition of a pending output.
+    private func pendingCondition(_ output: ProcessOutput) throws -> ErrorCondition {
+        guard case .engine(let condition) = try pendingDocument(output).diagnostic else {
+            throw XCTSkip("expected one engine condition, got \(try pendingDocument(output))")
+        }
+        return condition
+    }
+
+    /// A vendored package that is not there stalls the whole conversion, and the document
+    /// names the path it waits on and the repository that path stands for.
     func test_explainsWhichRepositoryAVendoredPathIsWaitingFor() throws {
         let output = try convert(packageFolder: "input:/repo/DatabaseModels", json: sourceControlManifest())
 
-        let reason = try pendingReason(output)
-        XCTAssertTrue(reason.contains("input:/repo/DatabaseModels/Dependencies/GRDB.swift"), "got:\n\(reason)")
-        XCTAssertTrue(reason.contains("https://github.com/groue/GRDB.swift.git"),
-                      "should name the repository the path stands for, got:\n\(reason)")
+        XCTAssertEqual(try pendingDocument(output),
+                       .engine(.packageNotPresent(path: "input:/repo/DatabaseModels/Dependencies/GRDB.swift",
+                                                  origin: .repository(location: "https://github.com/groue/GRDB.swift.git")),
+                               subject: .package(name: "GRDB.swift")))
     }
 
-    func test_saysThatAVendoredPackageIsNeverFetched() throws {
-        let reason = try pendingReason(
+    /// Nothing is fetched: what puts a vendored package there is `prepare`, the remedy.
+    func test_aVendoredPackageNotThereIsVendoredByPrepare() throws {
+        let document = try pendingDocument(
             try convert(packageFolder: "input:/repo/DatabaseModels", json: sourceControlManifest()))
 
-        XCTAssertTrue(reason.lowercased().contains("never fetch"),
-                      "should say why nothing is downloading it, got:\n\(reason)")
+        XCTAssertEqual(document.remedy, .vendor)
     }
 
-    /// A local path dependency has no repository behind it, so it must not claim one.
+    /// A local path dependency has no repository behind it, so it must not claim one, and
+    /// nothing vendors it.
     func test_describesAMissingLocalPathDependencyDifferently() throws {
-        let reason = try pendingReason(try convert(packageFolder: "input:/repo/App", json: """
+        let document = try pendingDocument(try convert(packageFolder: "input:/repo/App", json: """
             {
               "name": "App",
               "dependencies": [{"fileSystem": [{"identity": "helper", "path": "../Helper"}]}],
@@ -840,8 +844,8 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             }
             """))
 
-        XCTAssertTrue(reason.contains("input:/repo/Helper"), "got:\n\(reason)")
-        XCTAssertFalse(reason.contains("http"), "a path dependency has no repository, got:\n\(reason)")
+        XCTAssertEqual(document.diagnostic, .engine(.packageNotPresent(path: "input:/repo/Helper", origin: nil)))
+        XCTAssertNil(document.remedy)
     }
 
     /// The stall names what it waits for as a demand, not only as a sentence: the folder of
@@ -923,7 +927,8 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     /// The graph holds below a vendored folder what a copy's fold never sees — a dot-named
     /// file pushed by its name, a name the build asked for that nobody pushed — and the
     /// comparison leaves those out. When a lock fails anyway, the message names them, so
-    /// that what it did not compare is not mistaken for what differs (B-143).
+    /// that what it did not compare is not mistaken for what differs (B-143). The document
+    /// carries them, by reason.
     func test_aLockThatDoesNotMatchNamesWhatTheComparisonLeftOut() throws {
         let sources = FolderContentRoot.document(of: [("Lib.swift", .file, .file(hash: "aa", mode: 0o644)),
                                                       (".swiftlint.yml", .file, .file(hash: "bb", mode: 0o644)),
@@ -937,9 +942,12 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                                  contentRoots: [vendoredGRDB: "def456"],
                                  wholeContentRoots: [vendoredGRDB: try whole.intern()])
 
-        let reason = try pendingReason(output)
-        XCTAssertTrue(reason.contains("2 dot-named: .spi.yml, Sources/.swiftlint.yml"), "got:\n\(reason)")
-        XCTAssertTrue(reason.contains("1 asked for and never pushed: Sources/Missing.swift"), "got:\n\(reason)")
+        guard case .lockMismatch(_, _, _, _, let leftOut) = try pendingCondition(output) else {
+            return XCTFail("expected a mismatch, got \(try pendingDocument(output))")
+        }
+        XCTAssertEqual(Set(leftOut), [LeftOutEntry(path: ".spi.yml", reason: .dotNamed),
+                                      LeftOutEntry(path: "Sources/.swiftlint.yml", reason: .dotNamed),
+                                      LeftOutEntry(path: "Sources/Missing.swift", reason: .notPushed)])
     }
 
     // MARK: - A target that names no folder (B-143)
@@ -981,25 +989,25 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         ]
         let output = try convert(json: unplacedManifest, folderContents: contents)
 
-        let reason = try pendingReason(output)
-        XCTAssertTrue(reason.contains("target Kit of package Kit declares no path"), "got:\n\(reason)")
-        XCTAssertTrue(reason.contains("input:/pkg/Sources/Kit, input:/pkg/Source/Kit, input:/pkg/src/Kit, input:/pkg/srcs/Kit"),
-                      "got:\n\(reason)")
+        XCTAssertEqual(try pendingDocument(output),
+                       .engine(.targetFolderMissing(package: "Kit", packageFolder: "input:/pkg", target: "Kit"),
+                               subject: .target(name: "Kit"),
+                               remedy: .missingFolder(tried: ["Sources/Kit", "Source/Kit", "src/Kit", "srcs/Kit"])))
         XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]?.isEmpty ?? true, true)
     }
 
-    /// The whole point: a dependency that moved stops the build, and the message names the
-    /// package, both roots, what it was vendored as and what to do.
+    /// The whole point: a dependency that moved stops the build, and the document names the
+    /// package, both roots, what it was vendored as, and the re-lock as the remedy.
     func test_aLockThatDoesNotMatchStopsTheConversionNamingBothRoots() throws {
         let output = try convertWithVendoredGRDB(lock: grdbLock(root: "abc123"), root: "def456")
 
-        let reason = try pendingReason(output)
-        XCTAssertTrue(reason.contains("\(vendoredGRDB) is not the tree its lock records"), "got:\n\(reason)")
-        XCTAssertTrue(reason.contains("expected: sha256:abc123"), "got:\n\(reason)")
-        XCTAssertTrue(reason.contains("found:    sha256:def456"), "got:\n\(reason)")
-        XCTAssertTrue(reason.contains(grdbLockPath), "got:\n\(reason)")
-        XCTAssertTrue(reason.contains("version 7.11.1, from https://github.com/groue/GRDB.swift.git"), "got:\n\(reason)")
-        XCTAssertTrue(reason.contains("semel-swift prepare"), "should say how to accept the change, got:\n\(reason)")
+        XCTAssertEqual(try pendingDocument(output),
+                       .engine(.lockMismatch(folder: vendoredGRDB,
+                                             lock: LockFacts(lockPath: grdbLockPath, version: "7.11.1",
+                                                             origin: "https://github.com/groue/GRDB.swift.git"),
+                                             expected: "sha256:abc123", found: "sha256:def456", leftOut: []),
+                               subject: .package(name: "GRDB.swift")))
+        XCTAssertEqual(try pendingDocument(output).remedy, .relock(package: "GRDB.swift"))
     }
 
     /// A root taken under another fold cannot be compared with this one, and saying the
@@ -1008,18 +1016,18 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let output = try convertWithVendoredGRDB(lock: grdbLock(root: "abc123", fold: "semel-folder-content-root 1"),
                                                  root: "def456")
 
-        let reason = try pendingReason(output)
-        XCTAssertTrue(reason.contains("cannot be compared with its lock"), "got:\n\(reason)")
-        XCTAssertTrue(reason.contains("'semel-folder-content-root 1'"), "got:\n\(reason)")
-        XCTAssertTrue(reason.contains("'\(FolderContentRoot.formatTag)'"), "got:\n\(reason)")
-        XCTAssertFalse(reason.contains("found:"), "got:\n\(reason)")
+        XCTAssertEqual(try pendingCondition(output),
+                       .lockFoldChanged(folder: vendoredGRDB,
+                                        lock: LockFacts(lockPath: grdbLockPath, version: "7.11.1",
+                                                        origin: "https://github.com/groue/GRDB.swift.git"),
+                                        lockFold: "semel-folder-content-root 1", currentFold: FolderContentRoot.formatTag))
     }
 
     func test_aLockThatCannotBeReadStopsTheConversionNamingTheFile() throws {
         let output = try convertWithVendoredGRDB(lock: "content sha256:abc123\n")
 
-        let reason = try pendingReason(output)
-        XCTAssertTrue(reason.contains("\(grdbLockPath) is not a lock: there is no 'fold' line"), "got:\n\(reason)")
+        XCTAssertEqual(try pendingCondition(output),
+                       .lockUnreadable(folder: vendoredGRDB, lockPath: grdbLockPath, problem: .missingKey(key: "fold")))
     }
 
     /// Every tree vendored before locks existed, and every one vendored by hand, has none:
@@ -1079,7 +1087,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let passing = try convertWithVendoredGRDB(lock: grdbLock(root: "abc123"), root: "abc123")
         let failing = try convertWithVendoredGRDB(lock: grdbLock(root: "abc123"), root: "def456")
 
-        XCTAssertFalse(try pendingReason(failing).isEmpty)
+        XCTAssertNoThrow(try pendingDocument(failing))
         XCTAssertEqual(failing.inputWireSpecs.mapValues(\.rendered), passing.inputWireSpecs.mapValues(\.rendered))
         XCTAssertEqual(failing.inputWireSpecs[SwiftFormulaConverter.targetFolders]?.keys.sorted(),
                        ["\(vendoredGRDB)/GRDB", "input:/repo/DatabaseModels/Sources/DatabaseModels"])
@@ -1112,7 +1120,8 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         """
     }
 
-    /// What a pass published on the formula port, as text: the formula, or the error.
+    /// What a pass published on the formula port, as text: the formula, or the error's
+    /// document as it is encoded.
     private func outcome(_ output: ProcessOutput) throws -> String {
         let value = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput])
         switch value {
@@ -1123,6 +1132,14 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         case .noValue(let reason):
             return "no value: \(reason)"
         }
+    }
+
+    /// The binary target a pass names as not built.
+    private func unbuiltBinaryTarget(_ output: ProcessOutput) throws -> SemelNodeKit.UnbuiltBinaryTarget {
+        guard case .binaryTargetNotBuilt(let target) = try pendingCondition(output) else {
+            throw XCTSkip("expected a binary target not built, got \(try pendingDocument(output))")
+        }
+        return target
     }
 
     /// The conversion from the converter's side of the engine: each pass is given what the
@@ -1164,12 +1181,15 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     func test_aRemoteBinaryTargetNotVendoredNamesWhereItIsExpectedOnEveryPass() throws {
         let output = try assertSettles(json: sparkle(targets: [remoteBinaryTarget]))
 
-        XCTAssertEqual(try pendingReason(output),
-                       "SwiftFormulaConverter: binary target Sparkle of package Sparkle: the artifact downloaded from "
-                     + "https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/Sparkle-for-Swift-Package-Manager.zip "
-                     + "is not vendored: nothing is at input:/pkg/semel-artifacts/Sparkle. This build system never fetches "
-                     + "anything; `semel-swift prepare` copies what SwiftPM downloaded and checked there; so what reaches it "
-                     + "cannot be built either — product(s) Sparkle")
+        XCTAssertEqual(try pendingDocument(output),
+                       .engine(.binaryTargetNotBuilt(target: .init(
+                                    package: "Sparkle", packageFolder: "input:/pkg", target: "Sparkle",
+                                    artifact: .remote(url: "https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/"
+                                                         + "Sparkle-for-Swift-Package-Manager.zip"),
+                                    location: .missing(folder: "input:/pkg/semel-artifacts/Sparkle"),
+                                    products: ["Sparkle"])),
+                               subject: .target(name: "Sparkle")))
+        XCTAssertEqual(try pendingDocument(output).remedy, .vendor)
         XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]?.isEmpty, true,
                        "a binary target has no source folder")
         XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.binaryArtifactFolders]).rendered,
@@ -1195,7 +1215,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                                  externalManifests: [vendored: sparkle(targets: [remoteBinaryTarget])])
 
         XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.binaryArtifactFolders]?.keys.sorted(), [vendored])
-        XCTAssertTrue(try pendingReason(output).contains("nothing is at \(vendored)/semel-artifacts/Sparkle"))
+        XCTAssertEqual(try unbuiltBinaryTarget(output).location, .missing(folder: "\(vendored)/semel-artifacts/Sparkle"))
     }
 
     /// Sparkle's own package once `prepare` has vendored its download: its one product
@@ -1243,18 +1263,18 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
     /// A `path:` xcframework whose folder holds nothing is named as missing.
     func test_aLocalXCFrameworkThatIsNotThereIsNamed() throws {
-        let reason = try pendingReason(try assertSettles(json: sparkle(targets: [localBinaryTarget])))
+        let target = try unbuiltBinaryTarget(try assertSettles(json: sparkle(targets: [localBinaryTarget])))
 
-        XCTAssertTrue(reason.hasPrefix("SwiftFormulaConverter: binary target Sparkle of package Sparkle: nothing is at "
-                                     + "input:/pkg/Sparkle.xcframework, the path its manifest names"), reason)
+        XCTAssertEqual(target.artifact, .local(path: "Sparkle.xcframework"))
+        XCTAssertEqual(target.location, .missing(folder: "input:/pkg/Sparkle.xcframework"))
     }
 
     /// A `path:` zip is where `prepare` unzips it, and named as not unzipped when it is not.
     func test_aLocalZipIsReadFromSemelArtifacts() throws {
         let zipped = #"{"name": "Sparkle", "type": "binary", "dependencies": [], "path": "Sparkle.xcframework.zip"}"#
-        let reason = try pendingReason(try assertSettles(json: sparkle(targets: [zipped])))
-        XCTAssertTrue(reason.contains("input:/pkg/Sparkle.xcframework.zip is not unzipped: nothing is at "
-                                    + "input:/pkg/semel-artifacts/Sparkle. `semel-swift prepare` unzips it there"), reason)
+        let target = try unbuiltBinaryTarget(try assertSettles(json: sparkle(targets: [zipped])))
+        XCTAssertEqual(target.artifact, .zip(path: "Sparkle.xcframework.zip"))
+        XCTAssertEqual(target.location, .missing(folder: "input:/pkg/semel-artifacts/Sparkle"))
 
         let formula = try formula(json: sparkle(targets: [zipped]), folderContents: [
             "input:/pkg": [FolderManifestEntry(name: "semel-artifacts", isFolder: true, isPinned: true)],
@@ -1270,11 +1290,10 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let bundle = #"{"name": "Lint", "type": "binary", "dependencies": [], "path": "Lint.artifactbundle"}"#
         let json = sparkle(targets: [bundle], products: #"{"name": "Lint", "targets": ["Lint"], "type": {"library": ["automatic"]}}"#)
 
-        let reason = try pendingReason(try assertSettles(json: json))
+        let target = try unbuiltBinaryTarget(try assertSettles(json: json))
 
-        XCTAssertEqual(reason, "SwiftFormulaConverter: binary target Lint of package Sparkle is not built (B-133): its artifact "
-                             + "input:/pkg/Lint.artifactbundle is not an .xcframework, and an .xcframework is the only binary "
-                             + "artifact linked here; so what reaches it cannot be built either — product(s) Lint")
+        XCTAssertEqual(target.location, .notAnXCFramework(path: "input:/pkg/Lint.artifactbundle", contents: []))
+        XCTAssertEqual(target.products, ["Lint"])
     }
 
     /// A Swift target depending on a binary one compiles against its framework slice, and a
@@ -1464,12 +1483,10 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     }
 
     func test_explainsWhichRegistryPackageAVendoredPathIsWaitingFor() throws {
-        let reason = try pendingReason(try convert(packageFolder: "input:/repo/App", json: registryManifest))
+        let condition = try pendingCondition(try convert(packageFolder: "input:/repo/App", json: registryManifest))
 
-        XCTAssertTrue(reason.contains("input:/repo/App/Dependencies/mona.LinkedList"), "got:\n\(reason)")
-        XCTAssertTrue(reason.contains("registry package mona.LinkedList"),
-                      "should say the path stands for a registry package, got:\n\(reason)")
-        XCTAssertFalse(reason.contains("local path"), "a registry package is not a path dependency, got:\n\(reason)")
+        XCTAssertEqual(condition, .packageNotPresent(path: "input:/repo/App/Dependencies/mona.LinkedList",
+                                                     origin: .registry(identity: "mona.LinkedList")))
     }
 
     func test_wiresTheModuleOfAVendoredRegistryDependency() throws {
@@ -1592,7 +1609,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let waiting = try convert(json: swiftSettingsManifest)
         XCTAssertNotNil(waiting.inputWireSpecs[SwiftFormulaConverter.linkerConfiguration]?[SwiftLinkerConfiguration.settingNamespace],
                         "a platform-conditional Swift setting asks for the platform")
-        XCTAssertNotNil(try pendingReason(waiting).range(of: "swift.linker"))
+        XCTAssertEqual(try pendingCondition(waiting), .inputsWithoutValue(kind: .platformSettings, paths: ["swift.linker"]))
 
         let forMac = try funcDefinition("compilerModels", in: try formula(json: swiftSettingsManifest,
                                                                           linkerSettings: "target=arm64-apple-macosx15.0"))
@@ -1700,10 +1717,10 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             "input:/pkg/Sources/Schema/Old": [FolderManifestEntry(name: "Legacy.swift", isFolder: false, isPinned: true)],
         ]
 
-        let failed = try outcome(try convert(json: manifest(exclude: ["Old"]), folderContents: schemaFolder))
-        XCTAssertEqual(failed, "error: SwiftFormulaConverter: target Schema of package Gen has no Swift source of its own, "
-                             + "only what its build-tool plugins would generate — Generate (GenPlugin), Stamp — and "
-                             + "build-tool plugins are not run (B-77), so it cannot be compiled")
+        let failed = try convert(json: manifest(exclude: ["Old"]), folderContents: schemaFolder)
+        XCTAssertEqual(try pendingDocument(failed),
+                       .engine(.sourcesOnlyFromPlugins(package: "Gen", target: "Schema", plugins: ["Generate (GenPlugin)", "Stamp"]),
+                               subject: .target(name: "Schema")))
 
         let built = try outcome(try convert(json: manifest(exclude: []), folderContents: schemaFolder))
         XCTAssertTrue(built.hasPrefix("formula: ") && built.contains("func compilerSchema()"),
@@ -1987,7 +2004,9 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                        ["input:/pkg/Sources/App": "Folder(path: 'input:/pkg/Sources/App').subtreeManifest",
                         "input:/pkg/src":         "Folder(path: 'input:/pkg/src').subtreeManifest",
                         "input:/pkg/extensions":  "Folder(path: 'input:/pkg/extensions').subtreeManifest"])
-        XCTAssertNotNil(try pendingReason(output).range(of: "target folder"))
+        XCTAssertEqual(try pendingCondition(output),
+                       .inputsWithoutValue(kind: .targetFolders,
+                                           paths: ["input:/pkg/Sources/App", "input:/pkg/extensions", "input:/pkg/src"]))
     }
 
     /// The passes a conversion takes, from a converter with nothing wired, answering each
@@ -2677,7 +2696,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             + "base: [\"machine\": StaticFile(path: 'input:/pkg/semel.machine.config').output], "
             + "override: [\"project\": StaticFile(path: 'input:/pkg/semel.config').output]).output]).output",
         ])
-        XCTAssertNotNil(try pendingReason(waiting).range(of: "swift.linker"))
+        XCTAssertEqual(try pendingCondition(waiting), .inputsWithoutValue(kind: .platformSettings, paths: ["swift.linker"]))
 
         let forIOS = try formula(json: platformConditionalManifest, folderContents: cFolders,
                                  linkerSettings: "sdk=iphonesimulator\ntarget=arm64-apple-ios18.0-simulator")

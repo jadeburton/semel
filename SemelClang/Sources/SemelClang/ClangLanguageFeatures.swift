@@ -85,7 +85,7 @@ struct ClangLanguageFeatures {
         case "true":
             return true
         case let value?:
-            throw NodeError.other(message: "\(namespace).\(key) is '\(value)'; it takes true or false")
+            throw ErrorCondition.settingNotAccepted(key: "\(namespace).\(key)", value: value, accepted: ["true", "false"])
         }
     }
 }

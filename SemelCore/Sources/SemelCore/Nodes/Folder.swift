@@ -281,7 +281,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// the right place to enforce the engine's invariants, and a third-party one should not
     /// be able to bring the process down.
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        throw NodeError.other(message: "\(Self.self) declares no input ports and cannot process")
+        throw NodeError.sourceCannotProcess(type: "\(Self.self)")
     }
 
     // MARK: - Manifest freshness (B-25)
@@ -773,7 +773,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         Self.subtreeManifestRebuildCount.increment()
         guard case .value(let manifestHash) = try thisNode.readFromOutputPort(Self.folderManifestOutputPort),
               let manifest: FolderManifest = try? TypeRegistry.decodeAndCast(encodedJSON: try manifestHash.resolveAsString()) else {
-            throw NodeError.other(message: "the manifest of \(try path) cannot be read to fold its subtree manifest")
+            throw ErrorCondition.valueUnreadable(form: .folderManifest, port: nil, wire: try path.string)
         }
         // Only a subfolder carries a subtree manifest, so a folder of files asks for none.
         var subtrees: [String: OutputPort] = [:]
@@ -948,7 +948,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
             if let userDeletableChild = try child.makeNode() as? UserDeletable {
                 try userDeletableChild.deleteInInputFileSystem()
             } else {
-                throw NodeError.other(message: "Cannot delete Folder because one or more children are not deletable")
+                throw NodeError.folderNotDeletable(path: (try? path)?.string)
             }
         }
 

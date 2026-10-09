@@ -61,8 +61,10 @@ final class AutostartTests: XCTestCase {
         // Nothing to follow yet: the file the formula names is not on disk, so the report
         // names it as unpushed and every tool below it says what it lacks and what writes it.
         let failed = try semelExpectingFailure("base \(tree.path)", "build c --into \(out)", step: "build without the machine file")
-        XCTAssertTrue(failed.contains("semel.machine.config has not been pushed\n   · run semel-clang . to write it"), failed)
-        XCTAssertTrue(failed.contains("Run 'semel-clang <folder>'"), failed)
+        XCTAssertTrue(failed.contains("semel.machine.config has not been pushed\n"
+                                      + "  needed by: config.txt, hello, hello.dylib\n"
+                                      + "  write with: semel-clang ."), failed)
+        XCTAssertTrue(failed.contains("  write with: semel-clang <folder>"), failed)
 
         let wrote = try EndToEndRun.run("semel-clang", arguments: [tree.path], timeout: 60, step: "semel-clang").output
         XCTAssertTrue(wrote.contains("Wrote \(machineFile): clang.compiler, clang.linker, clang.preprocessor\n"

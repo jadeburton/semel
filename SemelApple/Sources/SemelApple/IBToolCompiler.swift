@@ -50,7 +50,9 @@ public struct IBToolCompiler: Node {
     public static let kind: UInt = 41
     /// 2: several wires on a one-wire port are an error naming them, where one was taken
     /// (B-141).
-    public static let implementationVersion = 2
+    /// 3: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 3
 
     // MARK: Ports
 
@@ -100,6 +102,11 @@ public struct IBToolCompiler: Node {
         try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
     }
 
+    /// A compile's failure belongs to the document it compiles.
+    public func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject? {
+        input?.inputValues[Self.document]?.keys.min().map { .resource(path: $0) }
+    }
+
     public func process(input: ProcessInput) throws -> ProcessOutput {
         let configurationText = try input.onlyWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
         let configuration = try IBToolCompilerConfiguration(properties: [String: String](plainText: configurationText))
@@ -107,8 +114,8 @@ public struct IBToolCompiler: Node {
         let documentWire = try input.onlyWire(onRequiredPort: Self.document)
         let documentPath = documentWire.key
         guard let compiledPath = Self.compiledPath(of: documentPath) else {
-            throw NodeError.other(message: "IBToolCompiler: \(documentPath) is not an Interface Builder document; "
-                                         + "it compiles \(Self.compiledExtensions.keys.sorted().map { ".\($0)" }.joined(separator: " and "))")
+            throw ErrorCondition.notAnInterfaceBuilderDocument(path: documentPath,
+                                                               compiles: Self.compiledExtensions.keys.sorted().map { ".\($0)" })
         }
         let documentFile = FileNameAndContent(filePath: documentPath, hash: try documentWire.value.expectValue())
 
@@ -139,10 +146,10 @@ public struct IBToolCompiler: Node {
         // would fail far from here, loading a nib that is not there.
         let tree: NodeValue
         if result.exitCode == 0, (result.outputTrees[Self.outputFolder] ?? []).isEmpty {
-            let message = "ibtool exited with status 0 and wrote nothing at \(compiledPath)"
-            tree = .noValue(reason: .error(messageDataObjectHash: try message.intern()))
+            tree = try result.wroteNothingDocument(tool: "ibtool", paths: [compiledPath], subject: .resource(path: documentPath))
+                .published()
         } else {
-            tree = try result.asTreeNodeValue(folder: Self.outputFolder, tool: "ibtool")
+            tree = try result.asTreeNodeValue(folder: Self.outputFolder, tool: "ibtool", subject: .resource(path: documentPath))
         }
 
         return .init(outputValues: [Self.output:   tree,

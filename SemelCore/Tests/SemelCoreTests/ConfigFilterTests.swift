@@ -107,7 +107,7 @@ final class ConfigFilterTests: SemelCoreTestCase {
     /// than failing every node downstream of it.
     func test_aWireWithNoValueYieldsAnEmptyConfiguration() throws {
         let result = try subset(prefix: "swift.compiler", wires: [
-            "config": .noValue(reason: .error(messageDataObjectHash: try "absent".intern())),
+            "config": .noValue(reason: try .failure("absent")),
         ])
 
         XCTAssertEqual(result, "")
@@ -137,7 +137,7 @@ final class ConfigFilterTests: SemelCoreTestCase {
     /// Two wires with nothing on either are still two wires: what the formula wired is the
     /// error, whatever has arrived on it so far.
     func test_twoWiresAreAnErrorEvenWithNoValueOnEither() throws {
-        let absent = NodeValue.noValue(reason: .error(messageDataObjectHash: try "absent".intern()))
+        let absent = NodeValue.noValue(reason: try .failure("absent"))
 
         XCTAssertThrowsError(try subset(prefix: "swift.compiler", wires: ["a": absent, "b": absent]))
     }

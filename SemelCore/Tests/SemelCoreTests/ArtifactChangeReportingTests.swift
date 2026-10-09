@@ -167,7 +167,7 @@ final class ArtifactChangeReportingTests: SemelCoreTestCase {
         captured = []
 
         try published.source.writeToOutputPort(
-            StaticFile.outputPort, value: .noValue(reason: .error(messageDataObjectHash: try "boom".intern())))
+            StaticFile.outputPort, value: .noValue(reason: try .failure("boom")))
         engine.reportArtifactChanges()
         XCTAssertTrue(captured.isEmpty, "a failure is the error report's, got \(captured)")
 

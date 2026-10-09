@@ -132,7 +132,9 @@ struct SwiftFormulaConverter: Node {
     /// name what that leaves out; a target that names no folder is found under SwiftPM's
     /// predefined folders from their manifests, and a declared resource its folder lacks is
     /// named rather than asked for (B-143).
-    public static let implementationVersion = 21
+    /// 22: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 22
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -212,6 +214,12 @@ struct SwiftFormulaConverter: Node {
 
     // MARK: - Processing
 
+    /// A conversion's failure belongs to the package it converts, named by its folder.
+    public func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject? {
+        let folder = thisNode.properties["path"] ?? input?.inputValues[Self.packageFolder]?.keys.min()
+        return folder.map { .package(name: Path($0).lastComponent ?? $0) }
+    }
+
     public func process(input: ProcessInput) throws -> ProcessOutput {
 
         // ── which package ─────────────────────────────────────────────────────
@@ -220,17 +228,19 @@ struct SwiftFormulaConverter: Node {
         guard let folderValue = input.inputValues[Self.packageFolder]?.values.first,
               let jsonValue   = input.inputValues[Self.packageJSON]?.values.first else {
             guard !selfWiringSpecs.isEmpty else {
-                throw NodeError.other(message: "SwiftFormulaConverter needs a package: give it path: <folder>, "
-                                             + "or wire packageFolder and packageJSON")
+                throw ErrorCondition.propertyMissing(type: "SwiftFormulaConverter", property: "path",
+                                                     alternatives: [Self.packageFolder, Self.packageJSON])
             }
-            return try pendingOutput(reason: "SwiftFormulaConverter: waiting for the package folder and manifest")
+            return try pendingOutput(.inputsWithoutValue(kind: .packageFolderAndManifest,
+                                                         paths: thisNode.properties["path"].map { [$0] } ?? []))
         }
 
         // ── packageFolder ─────────────────────────────────────────────────────
         let manifestJSON = try folderValue.expectValue().resolveAsString()
 
         guard let folderManifest = try? TypeRegistry.decode(encodedJSON: manifestJSON) as? FolderManifest else {
-            return try pendingOutput(reason: "SwiftFormulaConverter: could not decode FolderManifest")
+            return try pendingOutput(.valueUnreadable(form: .folderManifest, port: Self.packageFolder,
+                                                      wire: input.inputValues[Self.packageFolder]?.keys.min() ?? ""))
         }
 
         let rootPackageFolder = folderManifest.baseFolderPath
@@ -243,7 +253,7 @@ struct SwiftFormulaConverter: Node {
         do {
             rootManifest = try SPMManifest.decode(try jsonEntry.resolveAsString())
         } catch {
-            return try pendingOutput(reason: "SwiftFormulaConverter: \(error)")
+            return try pendingOutput(.manifestUnreadable(path: "\(rootPackageFolder)/Package.swift", reason: "\(error)"))
         }
 
         // ── already-received external manifests ───────────────────────────────
@@ -268,7 +278,7 @@ struct SwiftFormulaConverter: Node {
         var specs: [String: GraphSpecNode] = [:]
         // Path -> the repository URL or registry package it stands for, nil when the
         // manifest named the path itself. Only ever read to explain a stall.
-        var originOfExpectedPath: [String: String?] = [:]
+        var originOfExpectedPath: [String: PackageOrigin?] = [:]
         var bfsIndex = 0
 
         while bfsIndex < bfsQueue.count {
@@ -337,21 +347,26 @@ struct SwiftFormulaConverter: Node {
 
         guard missing.isEmpty else {
             demands.awaitedPackageFolders = Dictionary(uniqueKeysWithValues: missing.map { ($0, .folderManifest(at: $0)) })
-            return try pendingOutput(reason: describeStall(missingPaths: missing.sorted(), origins: originOfExpectedPath),
+            return try pendingOutput(several: missing.sorted().map { path in
+                                         .engine(.packageNotPresent(path: path, origin: originOfExpectedPath[path] ?? nil),
+                                                 subject: .package(name: Path(path).lastComponent ?? path))
+                                     },
                                      demands: demands)
         }
 
         guard defaultFolders.awaited.isEmpty else {
-            return try pendingOutput(
-                reason: "SwiftFormulaConverter: waiting for \(defaultFolders.awaited.count) folder(s) a target's sources may be in:\n"
-                      + defaultFolders.awaited.map { "  \($0)" }.joined(separator: "\n"),
-                demands: demands)
+            return try pendingOutput(.inputsWithoutValue(kind: .targetFolderCandidates, paths: defaultFolders.awaited),
+                                     demands: demands)
         }
         // Before anything below asks for a target's folder: a folder that is not there is
         // said, not demanded.
         guard defaultFolders.missing.isEmpty else {
-            return try pendingOutput(reason: "SwiftFormulaConverter: "
-                                           + defaultFolders.missing.map(\.description).joined(separator: "\n"),
+            return try pendingOutput(several: defaultFolders.missing.map { missing in
+                                         .engine(.targetFolderMissing(package: missing.package, packageFolder: missing.packageFolder,
+                                                                      target: missing.target),
+                                                 subject: .target(name: missing.target),
+                                                 remedy: .missingFolder(tried: missing.tried))
+                                     },
                                      demands: demands)
         }
         rootManifest = rootManifest.placingTargets(in: defaultFolders.found[rootPackageFolder] ?? [:])
@@ -397,16 +412,11 @@ struct SwiftFormulaConverter: Node {
         let targetTrees = FolderTreeWalk.trees(in: input, port: Self.targetFolders)
         let missingFolders = targetFolderSpecs.keys.filter { targetTrees[$0] == nil }.sorted()
         guard missingFolders.isEmpty else {
-            return try pendingOutput(
-                reason: "SwiftFormulaConverter: waiting for \(missingFolders.count) target folder(s):\n"
-                      + missingFolders.map { "  \($0)" }.joined(separator: "\n"),
-                demands: demands)
+            return try pendingOutput(.inputsWithoutValue(kind: .targetFolders, paths: missingFolders), demands: demands)
         }
         guard binaryWalk.waiting.isEmpty else {
-            return try pendingOutput(
-                reason: "SwiftFormulaConverter: waiting for \(binaryWalk.waiting.count) folder(s) holding binary targets' artifacts:\n"
-                      + binaryWalk.waiting.map { "  \($0)" }.joined(separator: "\n"),
-                demands: demands)
+            return try pendingOutput(.inputsWithoutValue(kind: .binaryArtifactFolders, paths: binaryWalk.waiting),
+                                     demands: demands)
         }
 
         // ── every target folder's subfolders, for the resources a target carries (B-77) ──
@@ -428,10 +438,9 @@ struct SwiftFormulaConverter: Node {
         if asksForPlatform {
             guard let settingsValue = input.inputValues[Self.linkerConfiguration]?.values.first,
                   let settingsText = try? settingsValue.expectValue().resolveAsString() else {
-                return try pendingOutput(
-                    reason: "SwiftFormulaConverter: waiting for the \(SwiftLinkerConfiguration.settingNamespace) settings, "
-                          + "whose sdk is the platform a setting's .when(platforms:) is decided for",
-                    demands: demands)
+                return try pendingOutput(.inputsWithoutValue(kind: .platformSettings,
+                                                             paths: [SwiftLinkerConfiguration.settingNamespace]),
+                                         demands: demands)
             }
             let settings = [String: String](plainText: settingsText)
             platform = Self.swiftPMPlatformName(forSDK: settings["sdk"] ?? defaultSDKName)
@@ -449,14 +458,9 @@ struct SwiftFormulaConverter: Node {
                                      contentRoots: input.inputValues[Self.dependencyContentRoots] ?? [:],
                                      wholeContentRoots: input.inputValues[Self.dependencyWholeContentRoots] ?? [:]) {
         case .waiting(let folders):
-            return try pendingOutput(
-                reason: "SwiftFormulaConverter: waiting for the lock of \(folders.count) vendored package(s):\n"
-                      + folders.map { "  \($0)" }.joined(separator: "\n"),
-                demands: demands)
+            return try pendingOutput(.inputsWithoutValue(kind: .locks, paths: folders), demands: demands)
         case .failed(let problems):
-            return try pendingOutput(
-                reason: "SwiftFormulaConverter: " + problems.map(\.description).joined(separator: "\n\n"),
-                demands: demands)
+            return try pendingOutput(several: problems.map(\.document), demands: demands)
         case .passed(let unlocked):
             unlockedFolders = unlocked
         }
@@ -482,7 +486,7 @@ struct SwiftFormulaConverter: Node {
                                                                       manifests: folderManifests)
                                           })
         } catch let error as SwiftPackageConversionError {
-            return try pendingOutput(reason: "SwiftFormulaConverter: \(error)", demands: demands)
+            return try pendingOutput(several: error.documents, demands: demands)
         }
         // Said once the formula is made, not on the passes that wait for it, so a
         // conversion says it once.
@@ -534,10 +538,18 @@ struct SwiftFormulaConverter: Node {
     // Returns a noValue output that still carries the current specs — the node's own
     // package wires included, since a spec left out of any output is unwired — so
     // applySpecs keeps (or creates) the needed wires.
-    private func pendingOutput(reason: String, demands: Demands = Demands()) throws -> ProcessOutput {
-        .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(messageDataObjectHash: try reason.intern())),
-                             Self.infoLog: .value("")],
-              inputWireSpecs: demands.wireSpecs(selfWiring: selfWiringSpecs))
+    private func pendingOutput(_ condition: ErrorCondition, demands: Demands = Demands()) throws -> ProcessOutput {
+        try pendingOutput(several: [.engine(condition, subject: errorSubject(input: nil))], demands: demands)
+    }
+
+    /// The same for several causes at once — three packages not vendored, two locks that
+    /// moved — each its own block of the report. Never called with none.
+    private func pendingOutput(several documents: [ErrorDocument], demands: Demands = Demands()) throws -> ProcessOutput {
+        let document = ErrorDocument.several(documents)
+            ?? .engine(.inputsWithoutValue(kind: .packageFolderAndManifest, paths: []), subject: errorSubject(input: nil))
+        return .init(outputValues: [Self.formulaOutput: try document.published(),
+                                    Self.infoLog: .value("")],
+                     inputWireSpecs: demands.wireSpecs(selfWiring: selfWiringSpecs))
     }
 
     // MARK: - Resources a target lacks
@@ -601,22 +613,6 @@ struct SwiftFormulaConverter: Node {
     /// git dependency that path is a *convention this build system invented*, so a user
     /// seeing `input:/repo/GRDB.swift` has no way to connect it to the `.package(url:)` line
     /// in their manifest, and no hint that nothing is ever going to arrive on its own.
-    private func describeStall(missingPaths: [String], origins: [String: String?]) -> String {
-        let lines = missingPaths.map { path -> String in
-            guard let origin = origins[path] ?? nil else {
-                return "  \(path) — declared as a local path dependency, but nothing is there"
-            }
-            return "  \(path) — where \(origin) is expected to be vendored"
-        }
-
-        return "SwiftFormulaConverter: waiting for \(missingPaths.count) package(s):\n"
-             + lines.joined(separator: "\n")
-             + "\nThis build system never fetches anything: a dependency must be present in "
-             + "the input file system at the path above, pushed like any other source. "
-             + "`semel-swift prepare <folder>` resolves and copies every git dependency into "
-             + "the root's Dependencies folder."
-    }
-
     // MARK: - Binary targets (B-77, B-133)
 
     /// A binary target's artifact, as its manifest declares it.
@@ -726,6 +722,25 @@ struct SwiftFormulaConverter: Node {
         let location:      BinaryArtifactLocation
         /// The products of the converted package that reach it, sorted.
         let products:      [String]
+
+        /// The target as a report carries it; nil for one whose artifact is there, which
+        /// stops nothing.
+        var reported: SemelNodeKit.UnbuiltBinaryTarget? {
+            let artifact: SemelNodeKit.UnbuiltBinaryTarget.Artifact
+            switch self.artifact {
+            case .remote(let url, _):                          artifact = .remote(url: url)
+            case .local(let path) where path.hasSuffix(".zip"): artifact = .zip(path: path)
+            case .local(let path):                             artifact = .local(path: path)
+            }
+            let location: SemelNodeKit.UnbuiltBinaryTarget.Location
+            switch self.location {
+            case .missing(let folder):                       location = .missing(folder: folder)
+            case .notAnXCFramework(let path, let contents):  location = .notAnXCFramework(path: path, contents: contents)
+            case .xcframework:                               return nil
+            }
+            return SemelNodeKit.UnbuiltBinaryTarget(package: package, packageFolder: packageFolder, target: target,
+                                                    artifact: artifact, location: location, products: products)
+        }
     }
 
     /// A Swift target whose sources only its build-tool plugins would make.
@@ -737,7 +752,7 @@ struct SwiftFormulaConverter: Node {
     }
 
     /// Why a conversion that has every input still makes no formula, by case.
-    enum SwiftPackageConversionError: Error, Equatable, CustomStringConvertible {
+    enum SwiftPackageConversionError: Error, Equatable {
         /// A product reaches a binary target whose artifact is not an `.xcframework` that is
         /// there. The formula could leave it out, but what links the product would then fail
         /// naming a symbol, which explains nothing; so the conversion stops and names the
@@ -753,42 +768,18 @@ struct SwiftFormulaConverter: Node {
         /// and fail naming no cause; so the conversion names the target and its plugins.
         case sourcesOnlyFromPlugins([PluginOnlyTarget])
 
-        var description: String {
+        /// A document per target, each under the target it names.
+        var documents: [ErrorDocument] {
             switch self {
             case .sourcesOnlyFromPlugins(let targets):
                 return targets.map { target in
-                    "target \(target.target) of package \(target.package) has no Swift source of its own, only what its "
-                  + "build-tool plugins would generate — \(target.plugins.joined(separator: ", ")) — and build-tool plugins "
-                  + "are not run (B-77), so it cannot be compiled"
-                }.joined(separator: "\n")
+                    .engine(.sourcesOnlyFromPlugins(package: target.package, target: target.target, plugins: target.plugins),
+                            subject: .target(name: target.target))
+                }
             case .binaryTargetsNotBuilt(let targets):
-                return targets.map { target in
-                    let products = target.products.joined(separator: ", ")
-                    let named = "binary target \(target.target) of package \(target.package)"
-                    let reaching = "so what reaches it cannot be built either — product(s) \(products)"
-                    switch target.location {
-                    case .missing(let folder):
-                        let origin: String
-                        switch target.artifact {
-                        case .remote(let url, _):
-                            origin = "the artifact downloaded from \(url) is not vendored: nothing is at \(folder). "
-                                   + "This build system never fetches anything; `semel-swift prepare` copies what "
-                                   + "SwiftPM downloaded and checked there"
-                        case .local(let path) where path.hasSuffix(".zip"):
-                            origin = "\(target.packageFolder)/\(path) is not unzipped: nothing is at \(folder). "
-                                   + "`semel-swift prepare` unzips it there"
-                        case .local:
-                            origin = "nothing is at \(folder), the path its manifest names"
-                        }
-                        return "\(named): \(origin); \(reaching)"
-                    case .notAnXCFramework(let path, let contents):
-                        let held = contents.isEmpty ? "" : ", which holds \(contents.joined(separator: ", "))"
-                        return "\(named) is not built (B-133): its artifact \(path)\(held) is not an .xcframework, "
-                             + "and an .xcframework is the only binary artifact linked here; \(reaching)"
-                    case .xcframework:
-                        return "\(named)"
-                    }
-                }.joined(separator: "\n")
+                return targets.compactMap { target in
+                    target.reported.map { .engine(.binaryTargetNotBuilt(target: $0), subject: .target(name: target.target)) }
+                }
             }
         }
     }
@@ -1041,12 +1032,12 @@ struct SwiftFormulaConverter: Node {
                 sourceControl.compactMap { control in
                     control.repositoryName.map {
                         SPMPackageDependency.vendored(identity: control.identity ?? $0, name: $0,
-                                                      origin: control.repositoryURL ?? $0)
+                                                      origin: .repository(location: control.repositoryURL ?? $0))
                     }
                 } +
                 registry.map {
                     SPMPackageDependency.vendored(identity: $0.identity, name: $0.identity,
-                                                  origin: "registry package \($0.identity)")
+                                                  origin: .registry(identity: $0.identity))
                 }
         }
     }
@@ -1059,7 +1050,7 @@ struct SwiftFormulaConverter: Node {
     /// target's `.product(name:package:)` names it by.
     private enum SPMPackageDependency {
         case local(identity: String, path: String)
-        case vendored(identity: String, name: String, origin: String)
+        case vendored(identity: String, name: String, origin: PackageOrigin)
 
         /// The dependency's folder in the input file system.
         func resolvedPath(declaringPackage: String, root: String, resolve: (String, String) -> String) -> String {
@@ -1078,7 +1069,7 @@ struct SwiftFormulaConverter: Node {
             }
         }
 
-        var origin: String? {
+        var origin: PackageOrigin? {
             if case .vendored(_, _, let origin) = self { return origin }
             return nil
         }

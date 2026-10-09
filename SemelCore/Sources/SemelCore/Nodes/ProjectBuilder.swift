@@ -16,7 +16,9 @@ public struct ProjectBuilder: Node {
     /// it on the pass it arrives (B-135).
     /// 6: several wires on `projectFile` are an error naming them, where one was read
     /// (B-141).
-    public static let implementationVersion = 6
+    /// 7: a failure is published as an `ErrorDocument`, the typed value a client renders,
+    /// where it was a sentence (B-145).
+    public static let implementationVersion = 7
 
     static let outputFolderProperty   = "outputFolder"
     static let projectFileInputPort   = "projectFile"
@@ -63,6 +65,23 @@ public struct ProjectBuilder: Node {
 
     public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
+    }
+
+    /// What a builder's failure belongs to: the formula it reads, by the wire's key.
+    public func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject? {
+        guard let path = input?.inputValues[Self.projectFileInputPort]?.keys.min() else {
+            return nil
+        }
+        return .formula(path: path)
+    }
+
+    /// A formula's error with the formula's path on it, so its first line is the
+    /// `path:line:column:` a terminal makes a link of.
+    static func located(_ condition: ErrorCondition, in path: String) -> ErrorCondition {
+        guard case .formulaInvalid(_, let problem, let line, let column, let lineText) = condition else {
+            return condition
+        }
+        return .formulaInvalid(path: path, problem: problem, line: line, column: column, lineText: lineText)
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
@@ -150,6 +169,10 @@ public struct ProjectBuilder: Node {
                                              includeReader: includeReader)
         } catch FormulaParseError.forEachExceptLeavesNothing where !record.folderPaths.isSubset(of: Set(folderTrees.keys)) {
             products = [:]
+        } catch let error as FormulaLexerError {
+            throw Self.located(error.errorCondition, in: projectFileName)
+        } catch let error as FormulaParseError {
+            throw Self.located(error.errorCondition, in: projectFileName)
         }
 
         // There are two kinds of Formula files: those without wildcardExpander wildcards, and
@@ -187,7 +210,7 @@ public struct ProjectBuilder: Node {
         /// formula is wrong, and saying which path is the whole help there is.
         func publish(_ fullPath: Path, _ spec: GraphSpecNode) throws {
             guard productSpecs[fullPath.string] == nil else {
-                throw NodeError.other(message: "two products at \(fullPath)")
+                throw ErrorCondition.twoProductsAtOnePath(path: fullPath.string)
             }
             productSpecs[fullPath.string] = spec
         }
