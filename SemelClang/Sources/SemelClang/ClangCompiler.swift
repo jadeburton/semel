@@ -64,7 +64,9 @@ public struct ClangCompiler: Node {
     /// 2: assembly — a preprocessed `.S`, a `.s` — is assembled as such with no standard,
     /// where it was compiled as C (B-55).
     /// 3: `sdkPath`, `modules` and `objectiveCARC` reach the command line (B-77).
-    public static let implementationVersion = 3
+    /// 4: several wires on a one-wire port are an error naming them, where one was compiled
+    /// (B-141).
+    public static let implementationVersion = 4
 
     // MARK: Ports
 
@@ -92,10 +94,10 @@ public struct ClangCompiler: Node {
         let inputSourceFile: FileNameAndContent
 
         init(input: ProcessInput) throws {
-            let configurationString = try input.firstWire(onRequiredPort: ClangCompiler.configuration).value.expectValue().resolveAsString()
+            let configurationString = try input.onlyWire(onRequiredPort: ClangCompiler.configuration).value.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
-            let input = try input.firstWire(onRequiredPort: ClangCompiler.input)
+            let input = try input.onlyWire(onRequiredPort: ClangCompiler.input)
             inputSourceFile = .init(filePath: input.key, hash: try input.value.expectValue())
         }
     }

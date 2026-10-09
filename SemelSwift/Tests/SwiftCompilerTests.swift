@@ -57,8 +57,9 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
             "moduleName=GRDB",
         ] + extraConfiguration).joined(separator: "\n")
         var inputValues: [String: [String: NodeValue]] = [
-            SwiftCompiler.configuration: ["config": .value(try configuration.intern())],
-            SwiftCompiler.inputFolder:   ["folder0": rootFolder],
+            SwiftCompiler.configuration:  ["config": .value(try configuration.intern())],
+            SwiftCompiler.inputFolder:    ["folder0": rootFolder],
+            SwiftCompiler.bridgingHeader: [:],
         ]
         if treeArrived {
             var listings: [String: [FolderManifestEntry]] = [:]
@@ -307,6 +308,7 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         let input = ProcessInput(inputValues: [
             SwiftCompiler.configuration: ["config": .value(try configuration.intern())],
             SwiftCompiler.inputExtraSourceFiles: ["NotificationService.swift": .value(try "// service".intern())],
+            SwiftCompiler.bridgingHeader:        [:],
         ])
 
         _ = try makeTool().process(input: input)

@@ -107,8 +107,7 @@ public func toolBinaryFingerprint(ofFileAt path: String) -> String? {
 /// configuration type, which requires every other setting to be present: the key has to be
 /// computable before that is known.
 public func toolBinaryCacheKeyMaterial(input: ProcessInput, configurationPort: String) throws -> String? {
-    guard let value = input.inputValues[configurationPort]?.values.first,
-          case .value(let hash) = value else {
+    guard case .value(let hash)? = try input.onlyWire(onOptionalPort: configurationPort)?.value else {
         return nil
     }
     return toolBinaryCacheKeyMaterial(configuration: [String: String](plainText: try hash.resolveAsString()))

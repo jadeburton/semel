@@ -29,10 +29,11 @@ public enum NodeError: Error, CustomStringConvertible {
     /// of a file-system node. Nothing makes such a node, so its row has been damaged.
     case propertyMissing(kind: UInt, nodeID: ObjectID?, property: String)
     /// More than one wire on an input port that takes one, by the port and the wires'
-    /// names. The settings nodes' ports are the ones that say so: two sets of settings meet
-    /// only in a `ConfigMerger`, whose `base` and `override` state which wins, and a port
-    /// that folded its wires together in key order would be a second merge with no stated
-    /// precedence (B-120).
+    /// names, sorted (B-141). Thrown by `ProcessInput.onlyWire` for every node, so a port
+    /// declared to hold one wire never picks one of several by dictionary order. For the
+    /// settings nodes it is also the rule that two sets of settings meet only in a
+    /// `ConfigMerger`, whose `base` and `override` state which wins: a port that folded its
+    /// wires together in key order would be a second merge with no stated precedence (B-120).
     case severalWiresOnOneWirePort(port: String, wires: [String])
     /// Thrown by `expectValue()` when the value asked for is not there to be had. These
     /// three are control flow rather than messages: the engine turns each into the
@@ -98,7 +99,7 @@ public enum NodeError: Error, CustomStringConvertible {
         case .severalWiresOnOneWirePort(let port, let wires):
             let names = wires.map { "'\($0)'" }.joined(separator: ", ")
             return "input port '\(port)' takes one wire, and \(wires.count) are wired to it: \(names). "
-                 + "Settings from two places meet in a ConfigMerger, whose base and override say which wins"
+                 + "Wire it once; settings from two places meet in a ConfigMerger, whose base and override say which wins"
         case .inputValueInError:
             return "an input is in error"
         case .inputValuePending:

@@ -16,7 +16,8 @@ public struct InfoPlistBuilder: Node {
 
     /// 2: the engine's `projectRoot` stamp is no longer an entry of the plist.
     /// 3: the `pkgInfo` port (B-77).
-    public static let implementationVersion = 3
+    /// 4: several wires on `base` are an error naming them, where one was taken (B-141).
+    public static let implementationVersion = 4
 
     // MARK: Ports
 
@@ -50,7 +51,7 @@ public struct InfoPlistBuilder: Node {
     }
 
     public static let descriptor = NodeDescriptor(
-        inputPorts: [.optional(base), .optional(partials)],
+        inputPorts: [.optional(base), .optional(partials, .many)],
         outputPorts: [output, pkgInfo]
     )
 
@@ -65,7 +66,7 @@ public struct InfoPlistBuilder: Node {
     public func process(input: ProcessInput) throws -> ProcessOutput {
         var merged: [String: Any] = [:]
 
-        if let baseWire = input.inputValues[Self.base]?.first {
+        if let baseWire = try input.onlyWire(onOptionalPort: Self.base) {
             merged = try Self.dictionary(fromPlist: baseWire.value, named: baseWire.key)
         }
         for (key, value) in (input.inputValues[Self.partials] ?? [:]).sorted(by: { $0.key < $1.key }) {

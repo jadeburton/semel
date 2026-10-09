@@ -129,8 +129,8 @@ final class ConfigFilterTests: SemelCoreTestCase {
             XCTAssertEqual(port, ConfigFilter.inputPort)
             XCTAssertEqual(wires, ["input:/a/semel.config", "input:/semel.config"])
             XCTAssertEqual("\(error)", "input port 'input' takes one wire, and 2 are wired to it: "
-                                    + "'input:/a/semel.config', 'input:/semel.config'. Settings from two places "
-                                    + "meet in a ConfigMerger, whose base and override say which wins")
+                                    + "'input:/a/semel.config', 'input:/semel.config'. Wire it once; settings from "
+                                    + "two places meet in a ConfigMerger, whose base and override say which wins")
         }
     }
 

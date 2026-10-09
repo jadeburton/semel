@@ -14,7 +14,9 @@ public struct ProjectBuilder: Node {
     /// 4: an include that cannot be read yet still asks for the includes after it (B-125).
     /// 5: a pattern's folder is asked for as a tree, one wire, and a `**` expands against
     /// it on the pass it arrives (B-135).
-    public static let implementationVersion = 5
+    /// 6: several wires on `projectFile` are an error naming them, where one was read
+    /// (B-141).
+    public static let implementationVersion = 6
 
     static let outputFolderProperty   = "outputFolder"
     static let projectFileInputPort   = "projectFile"
@@ -64,7 +66,7 @@ public struct ProjectBuilder: Node {
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        let inputValue = try input.firstWire(onRequiredPort: Self.projectFileInputPort)
+        let inputValue = try input.onlyWire(onRequiredPort: Self.projectFileInputPort)
         let projectFileName    = inputValue.key
         let projectFileContent = try inputValue.value.expectValue().resolveAsString()
 

@@ -25,6 +25,12 @@ enum GraphSpecApplierError: Error, CustomStringConvertible {
     case unknownTypeName(String)
     /// A required static input port has no wire connected after node creation.
     case requiredPortUnwired(typeName: String, portName: String)
+    /// A spec — a formula's expression, or a node's demand — wiring several sources to a
+    /// port its type declares to hold one, by the type, the port and the wires' names,
+    /// sorted (B-141). Refused before the node is made, so the error lands on whatever
+    /// applied the spec — the builder of the formula that wrote it — rather than on a node
+    /// nobody asked for.
+    case severalWiresOnOneWirePort(typeName: String, portName: String, wires: [String])
     /// A row whose source names no output port to wire from.
     case missingOutputPortInChildShape(typeName: String)
     /// A row filed under an identity that its own kind, properties and wires do not give
@@ -39,6 +45,11 @@ enum GraphSpecApplierError: Error, CustomStringConvertible {
             return "no node type is registered under the name '\(typeName)'"
         case .requiredPortUnwired(let typeName, let portName):
             return "\(typeName)'s required input '\(portName)' has nothing connected to it"
+        case .severalWiresOnOneWirePort(let typeName, let portName, let wires):
+            let names = wires.map { "'\($0)'" }.joined(separator: ", ")
+            return "\(typeName)'s input '\(portName)' takes one wire, and \(wires.count) are wired to it: \(names). "
+                 + "Wire it once; settings from two places meet in a ConfigMerger, whose base and override say "
+                 + "which wins"
         case .missingOutputPortInChildShape(let typeName):
             return "the \(typeName) feeding this node names no output port to take a value from"
         case .identityMismatch(let typeName, let filedUnder, let computed):
@@ -186,6 +197,7 @@ struct GraphSpecTableApplier {
         guard computed == identity else {
             throw GraphSpecApplierError.identityMismatch(typeName: row.typeName, filedUnder: identity, computed: computed)
         }
+        try Self.refuseSeveralWiresOnOneWirePorts(row: row, kind: kind)
 
         let nodeProperties = row.properties.isEmpty ? [:] : Dictionary(uniqueKeysWithValues: row.properties.map { ($0.key, $0.value) })
         let newNode = try NodeRecord.createNode(database: database,
@@ -242,6 +254,23 @@ struct GraphSpecTableApplier {
         }
 
         return newNode
+    }
+
+    /// Throws when the row wires more than one source to a port its type declares to hold
+    /// one (B-141). Asked of the type before the node is made, so a refused row leaves no
+    /// node behind, not even one the transaction would roll back after its creation was
+    /// noted. The node checks again when it reads the port (`ProcessInput.onlyWire`); this
+    /// is the check that can name the formula's node, since the node itself is never made.
+    private static func refuseSeveralWiresOnOneWirePorts(row: GraphSpecTable.Row, kind: UInt) throws {
+        guard let nodeType = (try? TypeRegistry.type(kind: kind)) as? any Node.Type else {
+            return
+        }
+        let oneWirePorts = nodeType.descriptor.oneWireInputPorts
+        for port in row.inputs where port.wires.count > 1 && oneWirePorts.contains(port.portName) {
+            throw GraphSpecApplierError.severalWiresOnOneWirePort(typeName: row.typeName,
+                                                                  portName: port.portName,
+                                                                  wires:    port.wires.map(\.name).sorted())
+        }
     }
 }
 

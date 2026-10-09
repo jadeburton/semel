@@ -36,7 +36,7 @@ struct TreeBuilder: Node {
     }
 
     public static let descriptor = NodeDescriptor(
-        inputPorts: [.optional(inputPort), .optional(fileMetadataInputPort)],
+        inputPorts: [.optional(inputPort, .many), .optional(fileMetadataInputPort, .many)],
         outputPorts: [outputPort],
         fileMetadataInputPorts: [inputPort: fileMetadataInputPort]
     )

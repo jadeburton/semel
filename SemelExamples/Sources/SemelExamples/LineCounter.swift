@@ -29,7 +29,7 @@ public struct LineCounter: Node {
     }
 
     public static let descriptor = NodeDescriptor(
-        inputPorts: [.required(inputPort)],
+        inputPorts: [.required(inputPort, .many)],
         outputPorts: [outputPort]
     )
 

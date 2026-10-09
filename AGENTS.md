@@ -341,19 +341,38 @@ names something read per call, such as `CommandInterpreter.init`'s `baseDirector
 FileManager.default.currentDirectoryPath`. A default that names a *constant* is not.
 
 **No force unwraps, force tries or force casts.** SwiftLint's `force_unwrapping`,
-`force_try` and `force_cast` are on under `--strict`, with no exemptions. A state the code
-claims impossible is said with a `guard` or a throwing accessor and a typed error naming
-what was missing: `node.requireID()` rather than `node.id!`, `requireName()`, a
-file-system node's throwing `path`, `ProcessInput.firstWire(onRequiredPort:)`. Where a
-crash really is the right outcome, go through `FatalErrors.fail` rather than a bare `!`.
-In tests, `try XCTUnwrap(…)` and a `throws` test method.
+`force_try` and `force_cast` are on under `--strict`, with no exemptions in what you
+write. A state the code claims impossible is said with a `guard` or a throwing accessor
+and a typed error naming what was missing: `node.requireID()` rather than `node.id!`,
+`requireName()`, a file-system node's throwing `path`, `ProcessInput.onlyWire(onRequiredPort:)`.
+Where a crash really is the right outcome, go through `FatalErrors.fail` rather than a
+bare `!`. In tests, `try XCTUnwrap(…)` and a `throws` test method. The one force accepted
+is one the linter cannot see: the implicitly unwrapped process-global singletons, a
+deliberate choice below. It covers those declarations only; do not declare another
+implicitly unwrapped value to get round this rule.
+
+**A port that takes one wire is read as one.** A static port is declared `.one` by
+default — `.required(configuration)` — or `.many` when it holds any number of named wires
+the node reads whole — `.required(input, .many)` on a linker, `.optional(headerFolders,
+.many)`. A node reads a one-wire port through `ProcessInput.onlyWire(onRequiredPort:)` or
+`onlyWire(onOptionalPort:)`, never `inputValues[port]?.first`, which picks one of two
+wires in an order seeded per process. The applier refuses a spec wiring two sources to a
+one-wire port when it builds the graph (`GraphSpecApplierError.severalWiresOnOneWirePort`,
+naming the type, the port and the wires), and `onlyWire` refuses them again where the node
+reads (`NodeError.severalWiresOnOneWirePort`) (B-141). A port you forget to declare
+`.many` fails at the first formula that wires two to it, not silently.
 
 ## Deliberate choices — do not "fix" these
 
 - **Process-global singletons** (`DatabaseLayer.shared`, `BuildEngine.shared`,
   `DataObjectStore.shared`, `ToolRunnerRegistry.instance`, the symbol cache). Threading
   these through every `intern()` and every node function would cost far more plumbing than
-  it saves. They are *swappable* instead, which is what makes them testable.
+  it saves. They are *swappable* instead, which is what makes them testable. The ones that
+  start empty — `DatabaseLayer.shared`, `BuildEngine.shared` — are implicitly unwrapped
+  optionals by decision: a use before the layer exists is a programming error, and it
+  crashes at the use, which names it. This is the one place a force the linter cannot see
+  is accepted; do not add a throwing accessor for it, which would put a `try` on every
+  `intern()` and every query for a state no correct program reaches.
 - **Tool versions come from the machine, not from a pinned list.** Each toolchain package
   declares, when it registers, how its tools are located (`xcrun --find`) and how each
   reports its version; `ToolDiscovery` registers what is found under that version. A node

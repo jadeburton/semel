@@ -39,6 +39,10 @@ struct SwiftPackageReaderConfiguration {
 struct SwiftPackageReader: Node {
     public static let kind: UInt = 23
 
+    /// 2: several wires on a one-wire port are an error naming them, where one was read
+    /// (B-141).
+    public static let implementationVersion = 2
+
     // MARK: Ports
 
     static let configuration = "configuration"
@@ -67,12 +71,12 @@ struct SwiftPackageReader: Node {
         let packageFile: FileNameAndContent
 
         init(input: ProcessInput) throws {
-            let configString = try input.firstWire(onRequiredPort: SwiftPackageReader.configuration)
+            let configString = try input.onlyWire(onRequiredPort: SwiftPackageReader.configuration)
                 .value.expectValue().resolveAsString()
 
             configuration = try .init(properties: [String: String](plainText: configString))
 
-            let packageFileNodeValues = try input.firstWire(onRequiredPort: SwiftPackageReader.packageFile).value
+            let packageFileNodeValues = try input.onlyWire(onRequiredPort: SwiftPackageReader.packageFile).value
 
             let fileEntry = try packageFileNodeValues.expectValue()
 

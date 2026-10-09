@@ -48,6 +48,9 @@ struct IBToolCompilerConfiguration {
 
 public struct IBToolCompiler: Node {
     public static let kind: UInt = 41
+    /// 2: several wires on a one-wire port are an error naming them, where one was taken
+    /// (B-141).
+    public static let implementationVersion = 2
 
     // MARK: Ports
 
@@ -98,12 +101,10 @@ public struct IBToolCompiler: Node {
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        let configurationText = try input.firstWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
+        let configurationText = try input.onlyWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
         let configuration = try IBToolCompilerConfiguration(properties: [String: String](plainText: configurationText))
 
-        guard let documentWire = input.inputValues[Self.document]?.first else {
-            throw NodeError.other(message: "IBToolCompiler: nothing is wired to its document port")
-        }
+        let documentWire = try input.onlyWire(onRequiredPort: Self.document)
         let documentPath = documentWire.key
         guard let compiledPath = Self.compiledPath(of: documentPath) else {
             throw NodeError.other(message: "IBToolCompiler: \(documentPath) is not an Interface Builder document; "

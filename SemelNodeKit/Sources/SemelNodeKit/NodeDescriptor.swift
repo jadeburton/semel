@@ -9,13 +9,37 @@ import Foundation
 public struct NodeDescriptor {
 
     public enum InputPort {
-        case required(String)  // static, must be wired at creation time
-        case optional(String)  // static, may be left not-wired at creation time
-        case dynamic(String)   // wiring managed at runtime by process()
+        case required(String, Arity = .one)  // static, must be wired at creation time
+        case optional(String, Arity = .one)  // static, may be left not-wired at creation time
+        case dynamic(String)                 // wiring managed at runtime by process(); any number of wires
+
+        /// How many wires a static port holds.
+        ///
+        /// Declared rather than read off how the node uses the port, because the first
+        /// reader of the answer is not the node: the applier refuses a formula that wires
+        /// several sources to a one-wire port when it builds the graph, naming the formula's
+        /// node, and `ProcessInput.onlyWire` refuses them again when the node runs. A port
+        /// that took whichever of two wires a dictionary yielded first would pick by
+        /// per-process order, so one formula would build two different things.
+        public enum Arity {
+            /// One wire: a configuration, the source file a compiler compiles.
+            case one
+            /// Any number of named wires, all of which the node reads: a linker's object
+            /// files, a preprocessor's header folders.
+            case many
+        }
 
         public var name: String {
             switch self {
-            case .required(let name), .optional(let name), .dynamic(let name): name
+            case .required(let name, _), .optional(let name, _), .dynamic(let name): name
+            }
+        }
+
+        /// Whether the port holds one wire. A dynamic port holds as many as its node demands.
+        public var holdsOneWire: Bool {
+            switch self {
+            case .required(_, let arity), .optional(_, let arity): arity == .one
+            case .dynamic: false
             }
         }
     }
@@ -76,10 +100,15 @@ public struct NodeDescriptor {
     public var staticInputPorts: [String] {
         inputPorts.compactMap {
             switch $0 {
-            case .required(let name), .optional(let name): return name
+            case .required(let name, _), .optional(let name, _): return name
             case .dynamic: return nil
             }
         }
+    }
+
+    /// The static ports that take one wire, which the applier refuses a second wire on.
+    public var oneWireInputPorts: Set<String> {
+        Set(inputPorts.filter(\.holdsOneWire).map(\.name))
     }
 
     /// The ports that must be wired for the node to produce anything. A required port with
@@ -87,7 +116,7 @@ public struct NodeDescriptor {
     /// `GraphCheck` reports and what nothing else can see.
     public var requiredInputPorts: [String] {
         inputPorts.compactMap {
-            if case .required(let name) = $0 {
+            if case .required(let name, _) = $0 {
                 return name
             }
             return nil
@@ -96,7 +125,7 @@ public struct NodeDescriptor {
 
     public var optionalStaticInputPorts: [String] {
         inputPorts.compactMap {
-            if case .optional(let name) = $0 {
+            if case .optional(let name, _) = $0 {
                 return name
             }
             return nil

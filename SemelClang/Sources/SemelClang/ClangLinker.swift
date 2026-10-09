@@ -49,7 +49,9 @@ public struct ClangLinker: Node {
     public static let kind: UInt = 18
 
     /// 2: passes the `frameworks` and `libraries` its settings state (B-55).
-    public static let implementationVersion = 2
+    /// 3: several wires on `configuration` are an error naming them, where one was taken
+    /// (B-141).
+    public static let implementationVersion = 3
 
     // MARK: Ports
 
@@ -69,8 +71,8 @@ public struct ClangLinker: Node {
     public static let descriptor = NodeDescriptor(
         inputPorts: [
             .required(configuration),
-            .required(input),
-            .optional(libraries),
+            .required(input, .many),
+            .optional(libraries, .many),
         ],
         outputPorts: [output, infoLog, fileMetadata]
     )
@@ -83,7 +85,7 @@ public struct ClangLinker: Node {
         let objectFiles: [FileNameAndContent]
 
         init(input: ProcessInput) throws {
-            let configurationString = try input.firstWire(onRequiredPort: ClangCompiler.configuration).value.expectValue().resolveAsString()
+            let configurationString = try input.onlyWire(onRequiredPort: ClangCompiler.configuration).value.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
             let inputValues = try input.wires(on: ClangLinker.input)

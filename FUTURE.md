@@ -1401,6 +1401,49 @@ it; and the collector's tearing down of a subgraph a builder will demand again o
 next pass is a cost the builder could avoid by keeping the wires of includes it has
 already named.
 
+**B-141** `done` — **A port that takes one wire took whichever of two came first.**
+Decided 2026-10-09 by the owner: the number of wires on an input port is validated, for
+every node. Only the settings nodes refused a second wire (B-120); every tool node read
+its one-wire ports through `ProcessInput.firstWire(onRequiredPort:)` or
+`inputValues[port]?.first`, which is the first entry of a dictionary whose order is
+seeded per process — a formula wiring two configurations to one compiler compiled
+against one of them, and possibly the other in the next process.
+Done 2026-10-09. A static port states how many wires it holds:
+`NodeDescriptor.InputPort.required(_:_:)` and `.optional(_:_:)` take an `Arity`, `.one`
+by default and `.many` for a port the node reads whole; a dynamic port holds as many as
+its node demands. Declared `.many`, because their nodes read every wire: `ClangLinker`'s
+`objectFiles` and `libraries`, `ClangArchiver`'s `objectFiles`, `ClangPreprocessor`'s
+`headerFolders`, `ClangIncludeFinder`'s `sourceFile`, `SwiftCompiler`'s `inputFolder`,
+`inputExtraSourceFiles`, `inputModules`, `inputModuleTrees`, `inputFrameworkTrees`,
+`inputModuleMapFolders` and `headerTrees`, `SwiftLinker`'s `input`, `libraryFolders`,
+`objectTrees`, `linkRequirements` and `frameworkTrees`, `AssetCatalogCompiler`'s
+`catalogs`, `InfoPlistBuilder`'s `partials`, `TreeMerger`'s and `TreeBuilder`'s `input`
+(and `TreeBuilder`'s `fileMetadata`), `FolderTreeBuilder`'s `folder`, and `LineCounter`'s
+`input`. Every other static port is one wire.
+Refused twice, at the two places that can name something useful. When the graph is
+built, the applier asks the row's type before it makes the node, and a spec wiring
+several sources to a one-wire port is `GraphSpecApplierError.severalWiresOnOneWirePort
+(typeName:portName:wires:)`: no node is made, and the error lands on what applied the
+spec — the formula's `ProjectBuilder`, where `errors` names it with the type, the port
+and the wires. When a node reads, `ProcessInput.onlyWire(onRequiredPort:)` (the renamed
+`firstWire`) and `onlyWire(onOptionalPort:)` throw `NodeError.severalWiresOnOneWirePort
+(port:wires:)`, the wires sorted; every node reading a one-wire port goes through them, as
+do the settings nodes' `settings(onPort:)` and the tool and SDK fingerprints of the cache
+key, which no longer key on one of two configurations. `SwiftCompiler`'s own check of its
+bridging header and the "nothing is wired to its … port" sentences of `CodeSigner`,
+`StringCatalogCompiler`, `IBToolCompiler`, `XCFrameworkSliceSelector` and `TreeFile` are
+gone into the same two calls.
+Bumped, since a node that published a result for two wires now publishes an error:
+`ClangCompiler` 4, `ClangPreprocessor` 8, `ClangLinker` 3, `ClangArchiver` 2,
+`SwiftCompiler` 5, `SwiftLinker` 5, `SwiftPackageReader` 2, `CodeSigner` 4,
+`StringCatalogCompiler` 2, `IBToolCompiler` 2, `InfoPlistBuilder` 4,
+`AssetCatalogCompiler` 5, `XCFrameworkSliceSelector` 5, `ProjectBuilder` 6, `OutputFile` 2
+and `TreeFile` 3. `ConfigFilter` and `ConfigMerger` already refused, so they keep theirs.
+`ProcessInputTests` (SemelNodeKit) hold both readers and the declared arity,
+`OneWirePortTests` (SemelCore) the refusal of a tree, a `.many` port taking two and the
+`errors` record on the builder, and `ClangCompilerTests` a compiler given two
+configurations or two sources, which throws naming them and runs nothing.
+
 ### End-to-end roster
 
 Real-world projects for `EndToEnd/Tests/Projects.swift`, each chosen for something IceCubes

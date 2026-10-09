@@ -36,6 +36,10 @@ struct ClangArchiverConfiguration {
 public struct ClangArchiver: Node {
     public static let kind: UInt = 38
 
+    /// 2: several wires on `configuration` are an error naming them, where one was taken
+    /// (B-141).
+    public static let implementationVersion = 2
+
     // MARK: Ports
 
     static let configuration = "configuration"
@@ -53,7 +57,7 @@ public struct ClangArchiver: Node {
     }
 
     public static let descriptor = NodeDescriptor(
-        inputPorts: [.required(configuration), .required(input)],
+        inputPorts: [.required(configuration), .required(input, .many)],
         outputPorts: [output, infoLog, fileMetadata]
     )
 
@@ -64,7 +68,7 @@ public struct ClangArchiver: Node {
         let objectFiles: [FileNameAndContent]
 
         init(input: ProcessInput) throws {
-            let configurationString = try input.firstWire(onRequiredPort: ClangArchiver.configuration).value.expectValue().resolveAsString()
+            let configurationString = try input.onlyWire(onRequiredPort: ClangArchiver.configuration).value.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
             // Sorted, not straight out of the dictionary: the members' order is the

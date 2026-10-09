@@ -109,8 +109,7 @@ func sdkCacheKeyMaterial(configuration properties: [String: String]) -> String? 
 /// known. Read once per key: resolving the value reads the blob from the object store and
 /// verifies its hash, and both halves of the material want the same dictionary.
 private func configurationProperties(input: ProcessInput, configurationPort: String) throws -> [String: String] {
-    guard let value = input.inputValues[configurationPort]?.values.first,
-          case .value(let hash) = value else {
+    guard case .value(let hash)? = try input.onlyWire(onOptionalPort: configurationPort)?.value else {
         return [:]
     }
     return [String: String](plainText: try hash.resolveAsString())

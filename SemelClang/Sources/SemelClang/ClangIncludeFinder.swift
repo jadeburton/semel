@@ -26,7 +26,7 @@ public struct ClangIncludeFinder: Node {
     /// finder on every header a quoted include names, and a header that does not exist is
     /// clang's to judge, not the report's (`ClangPreprocessor`'s `absentHeaderPaths`).
     public static let descriptor = NodeDescriptor(
-        inputPorts: [.required(sourceFileInputPort)],
+        inputPorts: [.required(sourceFileInputPort, .many)],
         outputPorts: [includePathListOutputPort],
         inputPortsToleratingAbsentValue: [sourceFileInputPort]
     )

@@ -40,6 +40,7 @@ final class SwiftCompilerResourceBundleTests: SemelSwiftTestCase {
             SwiftCompiler.inputFolder:      ["folder0": .value(try folder.toJSON().intern())],
             SwiftCompiler.inputFolderTrees: ["input:/pkg/Sources/Kit": .value(try tree.toJSON().intern())],
             SwiftCompiler.inputSourceFiles: ["input:/pkg/Sources/Kit/Kit.swift": .value(try "// kit".intern())],
+            SwiftCompiler.bridgingHeader:   [:],
         ])
         _ = try SwiftCompiler(thisNode: NodeRecord(id: 1, kind: SwiftCompiler.kind)).process(input: input)
     }

@@ -231,7 +231,9 @@ public struct XCFrameworkSliceSelector: Node {
     /// 3: the slice's folder is asked for as a tree, where it was walked (B-135).
     /// 4: a framework's binary is read for its kind, and only a dynamic one is published on
     /// the new `embeddedFrameworks` (B-77 item 3, 12).
-    public static let implementationVersion = 4
+    /// 5: several wires on a one-wire port are an error naming them, where one was taken
+    /// (B-141).
+    public static let implementationVersion = 5
 
     // MARK: Ports
 
@@ -282,18 +284,13 @@ public struct XCFrameworkSliceSelector: Node {
         guard let xcframework = thisNode.properties[Self.pathProperty] else {
             throw NodeError.other(message: "XCFrameworkSliceSelector needs path: <the .xcframework folder>")
         }
-        guard let configurationValue = input.inputValues[Self.configuration]?.values.first else {
-            throw NodeError.other(message: "XCFrameworkSliceSelector: nothing is wired to its configuration port")
-        }
-        let configurationText = try configurationValue.expectValue().resolveAsString()
+        let configurationText = try input.onlyWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
         let configuration = XCFrameworkSliceSelectorConfiguration(properties: [String: String](plainText: configurationText))
 
         let slice: XCFrameworkSlice
         do {
-            guard let plistWire = input.inputValues[Self.infoPlist]?.values.first else {
-                throw NodeError.other(message: "XCFrameworkSliceSelector: nothing is wired to its infoPlist port")
-            }
-            guard let bytes = try DataObjectStore.shared.read(hash: try plistWire.expectValue()) else {
+            let plistValue = try input.onlyWire(onRequiredPort: Self.infoPlist).value
+            guard let bytes = try DataObjectStore.shared.read(hash: try plistValue.expectValue()) else {
                 throw XCFrameworkSliceError.unreadableInfoPlist
             }
             guard let platform = XCFrameworkPlatform(sdk: configuration.sdk, target: configuration.target) else {

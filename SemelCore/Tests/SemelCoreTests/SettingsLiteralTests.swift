@@ -82,20 +82,24 @@ final class SettingsLiteralTests: SemelCoreTestCase {
     }
 
     /// Two sets of settings on one of the merger's ports is the merge this node exists to
-    /// make explicit, done implicitly: the port carries an error naming itself and both wires.
-    func test_twoWiresOnAMergersBaseAreAnErrorOnItsPort() throws {
+    /// make explicit, done implicitly: the formula is refused when the graph is built, naming
+    /// the merger, its port and both wires, and no merger is made (B-141).
+    func test_twoWiresOnAMergersBaseAreRefusedWhenTheGraphIsBuilt() throws {
         let spec = """
             ConfigMerger(base: ['machine': SettingsLiteral(a: '1').output, 'project': SettingsLiteral(a: '2').output], \
             override: ['literals': SettingsLiteral(b: '3').output]).output
             """
-        let (merger, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
-        try merger.makeNode().processWithPreCheck()
-
-        guard case .noValue(.error(let messageHash)) = try merger.readFromOutputPort(ConfigMerger.outputPort) else {
-            return XCTFail("expected the merger's port to carry an error")
+        XCTAssertThrowsError(try GraphSpecNode.parse(spec).findOrCreateMatchingNode()) { error in
+            guard case GraphSpecApplierError.severalWiresOnOneWirePort(let typeName, let portName, let wires) = error else {
+                return XCTFail("expected severalWiresOnOneWirePort, got \(error)")
+            }
+            XCTAssertEqual(typeName, "ConfigMerger")
+            XCTAssertEqual(portName, ConfigMerger.basePort)
+            XCTAssertEqual(wires, ["machine", "project"])
+            XCTAssertEqual("\(error)", "ConfigMerger's input 'base' takes one wire, and 2 are wired to it: "
+                                     + "'machine', 'project'. Wire it once; settings from two places meet in a "
+                                     + "ConfigMerger, whose base and override say which wins")
         }
-        XCTAssertEqual(try messageHash.resolveAsString(),
-                       "input port 'base' takes one wire, and 2 are wired to it: 'machine', 'project'. "
-                     + "Settings from two places meet in a ConfigMerger, whose base and override say which wins")
+        XCTAssertTrue(try DatabaseLayer.shared.node.selectAll().allSatisfy { $0.kind != ConfigMerger.kind })
     }
 }

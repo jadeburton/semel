@@ -22,7 +22,8 @@ struct TreeFile: Node, FileMetadataProvider {
     public static let kind: UInt = 28
 
     /// 2: a link entry is a link, where every entry was a file (B-77).
-    public static let implementationVersion = 2
+    /// 3: several wires on `tree` are an error naming them, where one was read (B-141).
+    public static let implementationVersion = 3
 
     /// The entry's path within the tree: `en.lproj/Localizable.strings`.
     static let nameProperty = "name"
@@ -44,9 +45,7 @@ struct TreeFile: Node, FileMetadataProvider {
     public func process(input: ProcessInput) throws -> ProcessOutput {
         let name = thisNode.properties[Self.nameProperty] ?? ""
 
-        guard let treeValue = input.inputValues[Self.treeInputPort]?.first?.value else {
-            throw NodeError.other(message: "TreeFile '\(name)': nothing is wired to its tree port")
-        }
+        let treeValue = try input.onlyWire(onRequiredPort: Self.treeInputPort).value
         // Whatever stopped the tree stops every file of it: demanding the value hands the
         // engine what stood in the way, and it writes the state that follows onto both ports.
         let manifest: TreeManifest = try TypeRegistry.decodeAndCast(

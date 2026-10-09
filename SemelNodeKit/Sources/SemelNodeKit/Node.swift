@@ -81,14 +81,30 @@ public struct ProcessInput {
         return wires
     }
 
-    /// A wire on a required port, by name and value. The engine processes a node only once
-    /// each required port has a wire, so an empty one here is said as an error naming it.
-    /// Which wire, when a port holds several, is whichever the dictionary yields first.
-    public func firstWire(onRequiredPort port: String) throws -> (key: String, value: NodeValue) {
-        guard let wire = try wires(on: port).first else {
+    /// The one wire on a required one-wire port, by name and value. The engine processes a
+    /// node only once each required port has a wire, so an empty one here is said as an
+    /// error naming it.
+    ///
+    /// Several wires are an error naming them rather than a pick: a dictionary yields its
+    /// entries in an order seeded per process, so taking the first would compile against
+    /// one of two configurations, and a different one in the next process. The applier
+    /// refuses such a wiring when it builds the graph; this is the same rule where the node
+    /// reads, for every node that reads a one-wire port, so no node states it for itself.
+    public func onlyWire(onRequiredPort port: String) throws -> (key: String, value: NodeValue) {
+        guard let wire = try onlyWire(onOptionalPort: port) else {
             throw NodeError.requiredInputPortUnwired(port: port)
         }
         return wire
+    }
+
+    /// The one wire on an optional one-wire port, or nil when nothing is wired to it.
+    /// Several wires are an error naming them, as on a required port.
+    public func onlyWire(onOptionalPort port: String) throws -> (key: String, value: NodeValue)? {
+        let wires = try wires(on: port)
+        guard wires.count <= 1 else {
+            throw NodeError.severalWiresOnOneWirePort(port: port, wires: wires.keys.sorted())
+        }
+        return wires.first
     }
 }
 
