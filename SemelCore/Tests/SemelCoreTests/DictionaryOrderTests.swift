@@ -168,7 +168,7 @@ final class DictionaryOrderTests: XCTestCase {
             "the tree folders the products already name, collected into a set asked only whether it holds one",
         "SemelCore/Sources/SemelCore/ErrorReport.swift: carriers":
             "each carrier adds one to its cause's count, which comes to the same count whichever carrier is counted first; the entries are sorted before they are returned",
-        "SemelSwift/Sources/SemelSwift/SwiftSDKFingerprint.swift: keys":
+        "SemelNodeKit/Sources/SemelNodeKit/SDKFingerprint.swift: keys":
             "the resource values to fetch with each file, an argument that asks for them rather than ordering anything; the fingerprint's own lines are sorted before they are hashed",
         "SemelClang/Sources/SemelClang/ClangPreprocessor.swift: setOfIncludeFiles":
             "becomes wire-spec dictionaries keyed by include path, and a count of them",

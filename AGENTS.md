@@ -316,6 +316,24 @@ it. If you add anything that influences output, it belongs in the key. A tool no
 also carries a hash of the tool binary's own bytes (`toolBinaryCacheKeyMaterial`, filled in
 by `ToolDiscovery`), so two binaries reporting one version string do not share an entry.
 
+**Every input a node reads is in the input file system, derived from it, or declared as
+coming from outside.** The graph can only wake a node for a change it can see, so a node
+that reads a file nobody pushed — a header under the SDK, a library beside the tool —
+silently keeps its output when that file changes. Some inputs are outside by design: the
+sources the runtime fills, `StaticFile` from a push and a formula prelude from a plugin;
+and the machine facts in a key, the tool binary's fingerprint and the SDK's. Those are
+declared, not left implicit, and a machine fact is declared twice, because each half
+closes what the other cannot. The SDK fingerprint is the example (B-47): a node that reads
+the SDK folds the fingerprint of the tree into its key through `cacheKeyMaterial`, which
+stops a wrong reuse — between two machines, or under a machine file that no longer
+describes the SDK — but never schedules anything; and the toolchain declares it as a
+machine setting, `sdkFingerprint`, which the writers of `semel.machine.config` put under
+every namespace whose tool reads the SDK, so a changed SDK is a changed line in a pushed
+file and every node reading that namespace runs again. A new machine fact a node reads
+takes both: material in its key, and a line in the machine file. The tool binary's
+fingerprint has only the first half — the machine file names a tool by its version — so a
+binary replaced under one version is keyed apart and not woken, which is B-03's to close.
+
 **A node's outputs are a function of its inputs.** Nothing nondeterministic crosses a port.
 A node whose tool is not a function of its inputs makes its output deterministic before
 it publishes, inside the node — not in a node after it, which would still leave the raw

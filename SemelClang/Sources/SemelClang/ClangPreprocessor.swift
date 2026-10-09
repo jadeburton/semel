@@ -114,7 +114,8 @@ public struct ClangPreprocessor: Node {
     /// (B-141).
     /// 9: a failure is published as an `ErrorDocument`, the typed value a client renders,
     /// where it was a sentence (B-145).
-    public static let implementationVersion = 9
+    /// 10: the fingerprint of the SDK tree at `sdkPath` is in the key (B-47).
+    public static let implementationVersion = 10
 
     /// `preprocessed` with the `#pragma clang module begin`/`end` lines around the target's
     /// own module taken out, and everything between them kept.
@@ -287,13 +288,6 @@ public struct ClangPreprocessor: Node {
                                           ClangPreprocessor.includeFileLists: includeFileListWireSpecs,
                                           ClangPreprocessor.headerFolderTrees: headerFolderTreeWireSpecs])
         }
-    }
-
-    /// The binary behind the tool version the configuration names: two builds of one
-    /// version preprocess differently, and only a fingerprint of the binary tells them
-    /// apart (B-17).
-    public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
-        try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
     }
 
     /// A preprocess's failure belongs to the source it reads, by the wire's key.

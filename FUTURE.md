@@ -215,7 +215,12 @@ doing` keeps the decisions that would otherwise be raised again.
 the toolchain, SDK and system libraries, reset between builds. The container digest then
 *is* the environment: `sdk=26.5 (25F70)` becomes `image=sha256:…`, and "did we miss an
 input?" stops being a question only an audit can answer. Also the natural home for the
-Remote Runner role (B-30).
+Remote Runner role (B-30). What B-47 leaves here: the SDK reaches the graph as a
+fingerprint of paths, sizes and mtimes, walked once per process — in every SDK-reading
+tool's key and as `sdkFingerprint` in the machine file — which misses an edit that keeps a
+file's size and mtime and an SDK changed under a running server; the image digest is the
+content-addressed answer. The same for the tool binary, which is keyed on its bytes but
+not woken when it changes under one version.
 
 **B-49** `open` `For Fable Only` — **Tool outputs must not depend on where the inputs are mounted — residuals.**
 Done 2026-09-20: parts 1 and 2 — the sandbox contract is `ToolSandbox` (inputs at their

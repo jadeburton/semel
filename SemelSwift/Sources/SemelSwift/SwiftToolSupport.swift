@@ -76,8 +76,8 @@ func resolveSDKPath(sdk: String = defaultSDKName) -> String? {
 /// The build number is part of the identity. Apple ships more than one build of an SDK
 /// version, and two of them can differ in headers and stubs; a check on "26.5" alone would
 /// pass on both machines and let them compile against different SDKs while agreeing that
-/// they had not. (B-47's narrow half. The wide half — the SDK's contents are still not a
-/// graph input — is B-03's.)
+/// they had not. What is inside the SDK reaches the graph as its fingerprint
+/// (`SDKFingerprint` in SemelNodeKit, B-47).
 ///
 /// Compared against a declared `sdkVersion` rather than fed into a cache key. A key can
 /// only stop a wrong reuse; it cannot cause a rebuild, because an unscheduled node never
