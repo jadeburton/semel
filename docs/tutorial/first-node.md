@@ -512,14 +512,15 @@ this, take the next.
     }
 
     public static let descriptor = NodeDescriptor(
-        inputPorts: [.required(inputPort)],
+        inputPorts: [.required(inputPort, .many)],
         outputPorts: [outputPort]
     )
 ```
 
 `thisNode` is the database row; `thisNode.properties` holds whatever plain values the
-formula passed (`dynamicLibrary: 'true'` in Part 1). The descriptor declares the ports. One
-input port can hold any number of named wires.
+formula passed (`dynamicLibrary: 'true'` in Part 1). The descriptor declares the ports. An
+input port declared `.many` holds any number of named wires; one declared without it takes
+exactly one, and a formula wiring two to it is refused when the graph is built.
 
 ```swift
     public func process(input: ProcessInput) throws -> ProcessOutput {

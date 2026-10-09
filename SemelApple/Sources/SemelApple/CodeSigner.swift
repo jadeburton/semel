@@ -72,7 +72,9 @@ public struct CodeSigner: Node {
     /// 3: a tree's symbolic links are laid as links and come back as links in the signed
     /// tree, where a versioned framework's copies were laid as links and handed back as
     /// copies (B-77).
-    public static let implementationVersion = 3
+    /// 4: several wires on a one-wire port are an error naming them, where one was taken
+    /// (B-141).
+    public static let implementationVersion = 4
 
     // MARK: Ports
 
@@ -117,12 +119,10 @@ public struct CodeSigner: Node {
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        let configurationText = try input.firstWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
+        let configurationText = try input.onlyWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
         let configuration = try CodeSignerConfiguration(properties: [String: String](plainText: configurationText))
 
-        guard let bundleWire = input.inputValues[Self.bundle]?.first else {
-            throw NodeError.other(message: "CodeSigner: nothing is wired to its bundle port")
-        }
+        let bundleWire = try input.onlyWire(onRequiredPort: Self.bundle)
         let bundleName = bundleWire.key
         guard !bundleName.isEmpty, !bundleName.contains("/") else {
             throw NodeError.other(message: "CodeSigner: the bundle's wire is keyed '\(bundleName)'; "
@@ -131,7 +131,7 @@ public struct CodeSigner: Node {
         let manifest: TreeManifest = try TypeRegistry.decodeAndCast(encodedJSON: try bundleWire.value.expectValue().resolveAsString())
         var entitlementsFile: FileNameAndContent?
         var infoLog = ""
-        if let entitlementsWire = input.inputValues[Self.entitlements]?.first {
+        if let entitlementsWire = try input.onlyWire(onOptionalPort: Self.entitlements) {
             let adHoc = try Self.adHocEntitlements(from: try entitlementsWire.value.expectValue())
             entitlementsFile = FileNameAndContent(filePath: Self.entitlementsFile, hash: adHoc.hash)
             if !adHoc.leftOut.isEmpty {

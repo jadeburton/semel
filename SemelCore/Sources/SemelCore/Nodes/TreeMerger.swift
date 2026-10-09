@@ -41,7 +41,7 @@ struct TreeMerger: Node {
     }
 
     public static let descriptor = NodeDescriptor(
-        inputPorts: [.optional(inputPort)],
+        inputPorts: [.optional(inputPort, .many)],
         outputPorts: [outputPort]
     )
 

@@ -30,6 +30,9 @@ struct StringCatalogCompilerConfiguration {
 
 public struct StringCatalogCompiler: Node {
     public static let kind: UInt = 30
+    /// 2: several wires on a one-wire port are an error naming them, where one was taken
+    /// (B-141).
+    public static let implementationVersion = 2
 
     // MARK: Ports
 
@@ -66,12 +69,10 @@ public struct StringCatalogCompiler: Node {
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        let configurationText = try input.firstWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
+        let configurationText = try input.onlyWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
         let configuration = try StringCatalogCompilerConfiguration(properties: [String: String](plainText: configurationText))
 
-        guard let catalogWire = input.inputValues[Self.catalog]?.first else {
-            throw NodeError.other(message: "StringCatalogCompiler: nothing is wired to its catalog port")
-        }
+        let catalogWire = try input.onlyWire(onRequiredPort: Self.catalog)
         // Under its own name: the table's name is the file's, and xcstringstool names
         // what it writes after it.
         let catalogName = Path(catalogWire.key).lastComponent ?? catalogWire.key

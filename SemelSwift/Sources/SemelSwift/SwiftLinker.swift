@@ -89,7 +89,9 @@ struct SwiftLinker: Node {
     /// `linkRequirements` state (B-55).
     /// 4: tells clang the SDK with `-isysroot`, so the image records the SDK's version
     /// rather than its deployment target as the SDK it was built with (B-77).
-    public static let implementationVersion = 4
+    /// 5: several wires on `configuration` are an error naming them, where one was linked
+    /// with (B-141).
+    public static let implementationVersion = 5
 
     // MARK: Ports
 
@@ -137,11 +139,11 @@ struct SwiftLinker: Node {
     public static let descriptor = NodeDescriptor(
         inputPorts: [
             .required(configuration),
-            .required(input),
-            .optional(libraryFolders),
-            .optional(objectTrees),
-            .optional(linkRequirements),
-            .optional(frameworkTrees),
+            .required(input, .many),
+            .optional(libraryFolders, .many),
+            .optional(objectTrees, .many),
+            .optional(linkRequirements, .many),
+            .optional(frameworkTrees, .many),
             .dynamic(libraries),
         ],
         outputPorts: [output, infoLog, fileMetadata]
@@ -175,7 +177,7 @@ struct SwiftLinker: Node {
         }
 
         init(input: ProcessInput) throws {
-            let configurationString = try input.firstWire(onRequiredPort: SwiftLinker.configuration).value.expectValue().resolveAsString()
+            let configurationString = try input.onlyWire(onRequiredPort: SwiftLinker.configuration).value.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
             // Sorted: these go straight onto the command line, and Swift Dictionary

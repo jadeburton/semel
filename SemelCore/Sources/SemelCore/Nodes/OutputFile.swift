@@ -94,6 +94,10 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
 
     public static let kind: UInt = 8
 
+    /// 2: several wires on `input` are an error naming them, where the status of one was
+    /// published (B-141).
+    public static let implementationVersion = 2
+
     static let inputPort = "input"
     static let fileMetadataInputPort = FileMetadata.portName
     static let statusOutputPort = "status"
@@ -153,7 +157,7 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
     /// engine writes the state that follows from what stood in the way, rather than this
     /// node repeating the failure of another.
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        _ = try input.firstWire(onRequiredPort: Self.inputPort).value.expectValue()
+        _ = try input.onlyWire(onRequiredPort: Self.inputPort).value.expectValue()
 
         return .init(outputValues: [Self.statusOutputPort: .value(try "Product is up to date".intern())],
                      inputWireSpecs: [:])

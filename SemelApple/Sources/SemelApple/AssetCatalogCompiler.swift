@@ -148,7 +148,9 @@ public struct AssetCatalogCompiler: Node {
     /// 3: a catalog's tree is asked for, where its folders were walked (B-135).
     /// 4: a second run writes the catalogs' Swift symbols when the literals ask, published
     /// on the new `swiftAssetSymbols` (B-77 item 10).
-    public static let implementationVersion = 4
+    /// 5: several wires on `configuration` are an error naming them, where one was taken
+    /// (B-141).
+    public static let implementationVersion = 5
 
     // MARK: Ports
 
@@ -181,7 +183,7 @@ public struct AssetCatalogCompiler: Node {
     }
 
     public static let descriptor = NodeDescriptor(
-        inputPorts: [.required(configuration), .optional(catalogs), .dynamic(catalogTrees), .dynamic(catalogFiles)],
+        inputPorts: [.required(configuration), .optional(catalogs, .many), .dynamic(catalogTrees), .dynamic(catalogFiles)],
         outputPorts: [output, partialInfoPlist, swiftAssetSymbols, infoLog, errorLog]
     )
 
@@ -195,7 +197,7 @@ public struct AssetCatalogCompiler: Node {
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        let configurationText = try input.firstWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
+        let configurationText = try input.onlyWire(onRequiredPort: Self.configuration).value.expectValue().resolveAsString()
         let configuration = try AssetCatalogCompilerConfiguration(properties: [String: String](plainText: configurationText))
 
         // Every folder under a catalog is read from the catalog's tree (B-135), every file

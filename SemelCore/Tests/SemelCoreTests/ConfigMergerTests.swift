@@ -118,7 +118,7 @@ final class ConfigMergerTests: SemelCoreTestCase {
     /// to begin with.
     func test_bothPortsAreRequiredSoAOneSidedMergerCannotBeWritten() {
         let required = ConfigMerger.descriptor.inputPorts.compactMap {
-            if case .required(let name) = $0 {
+            if case .required(let name, _) = $0 {
                 return name
             } else {
                 return nil

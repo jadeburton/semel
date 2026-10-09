@@ -110,7 +110,9 @@ public struct ClangPreprocessor: Node {
     /// 6: a header folder's tree is asked for, where its subfolders were walked (B-135).
     /// 7: the target's own module is handed on as text, without the `#pragma clang module
     /// begin`/`end` that mark it (B-77).
-    public static let implementationVersion = 7
+    /// 8: several wires on a one-wire port are an error naming them, where one was taken
+    /// (B-141).
+    public static let implementationVersion = 8
 
     /// `preprocessed` with the `#pragma clang module begin`/`end` lines around the target's
     /// own module taken out, and everything between them kept.
@@ -191,7 +193,7 @@ public struct ClangPreprocessor: Node {
             .dynamic(headerInputFiles),
             // Optional rather than dynamic: a formula can wire only a static port, and
             // this one is wired by the generated formula, not by this node's own specs.
-            .optional(headerFolders),
+            .optional(headerFolders, .many),
             .dynamic(headerFolderTrees),
         ],
         outputPorts: [output, errorLog, infoLog],
@@ -232,10 +234,10 @@ public struct ClangPreprocessor: Node {
                 .map { ($0.key, $0.manifest) }
             headerFolderTrees = FolderTreeWalk.trees(in: input, port: ClangPreprocessor.headerFolderTrees)
 
-            let configurationString = try input.firstWire(onRequiredPort: ClangCompiler.configuration).value.expectValue().resolveAsString()
+            let configurationString = try input.onlyWire(onRequiredPort: ClangCompiler.configuration).value.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
-            let sourceFileInput = try input.firstWire(onRequiredPort: ClangPreprocessor.sourceFileInput)
+            let sourceFileInput = try input.onlyWire(onRequiredPort: ClangPreprocessor.sourceFileInput)
             inputSourceFile = .init(filePath: sourceFileInput.key, hash: try sourceFileInput.value.expectValue())
 
             let headerInputFiles = try input.wires(on: ClangPreprocessor.headerInputFiles)

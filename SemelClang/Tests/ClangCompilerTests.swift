@@ -216,6 +216,47 @@ final class ClangCompilerTests: SemelClangTestCase {
         }
     }
 
+    // MARK: - One wire per port
+
+    /// Two configurations on the one port that takes one (B-141): the node publishes an
+    /// error naming the port and both wires — a thrown `NodeError` with no state behind it
+    /// reaches every output port as its message — and compiles nothing, where it compiled
+    /// against whichever the dictionary yielded first.
+    func test_twoConfigurationWiresAreAnErrorNamingThemAndNothingIsCompiled() throws {
+        let configuration = try XCTUnwrap(try makeInput().inputValues[ClangCompiler.configuration]?.values.first)
+        let input = ProcessInput(inputValues: [
+            ClangCompiler.configuration: ["machine": configuration, "project": configuration],
+            ClangCompiler.input: ["src/hello.c.p": .value(try "int main(){}".intern())],
+        ])
+
+        XCTAssertThrowsError(try makeTool().process(input: input)) { error in
+            guard let nodeError = error as? NodeError,
+                  case .severalWiresOnOneWirePort(let port, let wires) = nodeError else {
+                return XCTFail("expected severalWiresOnOneWirePort, got \(error)")
+            }
+            XCTAssertEqual(port, ClangCompiler.configuration)
+            XCTAssertEqual(wires, ["machine", "project"])
+            XCTAssertNil(nodeError.publishedState, "published as the error's own message")
+        }
+        XCTAssertTrue(executor.invocations.isEmpty, "nothing is compiled")
+    }
+
+    /// The source port takes one file too: a compiler compiles one translation unit.
+    func test_twoSourceWiresAreAnErrorNamingThem() throws {
+        var inputValues = try makeInput().inputValues
+        inputValues[ClangCompiler.input] = ["src/a.c.p": .value(try "int a;".intern()),
+                                            "src/b.c.p": .value(try "int b;".intern())]
+
+        XCTAssertThrowsError(try makeTool().process(input: ProcessInput(inputValues: inputValues))) { error in
+            guard case NodeError.severalWiresOnOneWirePort(let port, let wires) = error else {
+                return XCTFail("expected severalWiresOnOneWirePort, got \(error)")
+            }
+            XCTAssertEqual(port, ClangCompiler.input)
+            XCTAssertEqual(wires, ["src/a.c.p", "src/b.c.p"])
+        }
+        XCTAssertTrue(executor.invocations.isEmpty)
+    }
+
     // MARK: - Which language a file is
 
     /// Conventionally C++ on case-sensitive systems; lowercasing the path first made it C.

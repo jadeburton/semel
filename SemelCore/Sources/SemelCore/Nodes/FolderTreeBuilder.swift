@@ -46,7 +46,7 @@ struct FolderTreeBuilder: Node {
     }
 
     public static let descriptor = NodeDescriptor(
-        inputPorts: [.required(folderPort), .dynamic(folderTreePort), .dynamic(filesPort), .dynamic(fileMetadataPort)],
+        inputPorts: [.required(folderPort, .many), .dynamic(folderTreePort), .dynamic(filesPort), .dynamic(fileMetadataPort)],
         outputPorts: [outputPort]
     )
 

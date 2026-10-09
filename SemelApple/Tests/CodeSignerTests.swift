@@ -48,6 +48,7 @@ final class CodeSignerTests: SemelAppleTestCase {
         var inputs: [String: [String: NodeValue]] = [
             CodeSigner.configuration: ["configuration": .value(try (configuration ?? self.configuration()).intern())],
             CodeSigner.bundle: [bundle: tree],
+            CodeSigner.entitlements: [:],
         ]
         if let entitlements {
             inputs[CodeSigner.entitlements] = ["entitlements": .value(try entitlements.intern())]

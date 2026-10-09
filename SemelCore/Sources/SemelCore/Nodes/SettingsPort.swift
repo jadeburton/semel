@@ -23,12 +23,8 @@ extension ProcessInput {
     /// one is missing, and a file nobody pushed is named by the report from the state its
     /// own port holds.
     func settings(onPort port: String) throws -> [String: String] {
-        let wires = inputValues[port] ?? [:]
-        guard wires.count <= 1 else {
-            throw NodeError.severalWiresOnOneWirePort(port: port, wires: wires.keys.sorted())
-        }
-        guard let value = wires.values.first,
-              let hash = try? value.expectValue() else {
+        guard let wire = try onlyWire(onOptionalPort: port),
+              let hash = try? wire.value.expectValue() else {
             return [:]
         }
         return [String: String](plainText: try hash.resolveAsString())

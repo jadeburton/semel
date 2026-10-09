@@ -226,8 +226,9 @@ struct SwiftCompiler: Node {
     /// fatal (B-77). At 3, the folder's tree is asked for on `inputFolderTrees`, where its
     /// subfolders were walked on `inputSubfolders` a level per run (B-135). At 4, a
     /// `.docc` folder is not walked for sources, and `packageName` is `-package-name`
-    /// (B-77).
-    public static let implementationVersion = 4
+    /// (B-77). At 5, several wires on a one-wire port are an error naming them, where one
+    /// configuration was compiled with (B-141).
+    public static let implementationVersion = 5
 
     // MARK: Ports
 
@@ -292,14 +293,14 @@ struct SwiftCompiler: Node {
             .required(configuration),
             // Optional: a target that borrows every source it has, as an extension can,
             // has no folder of its own.
-            .optional(inputFolder),
-            .optional(inputExtraSourceFiles),
-            .optional(inputModules),
-            .optional(inputModuleTrees),
-            .optional(inputFrameworkTrees),
-            .optional(inputModuleMapFolders),
+            .optional(inputFolder, .many),
+            .optional(inputExtraSourceFiles, .many),
+            .optional(inputModules, .many),
+            .optional(inputModuleTrees, .many),
+            .optional(inputFrameworkTrees, .many),
+            .optional(inputModuleMapFolders, .many),
             .optional(bridgingHeader),
-            .optional(headerTrees),
+            .optional(headerTrees, .many),
             .dynamic(inputSourceFiles),
             .dynamic(inputFolderTrees),
             .dynamic(inputModuleMapFiles),
@@ -343,7 +344,7 @@ struct SwiftCompiler: Node {
             wiredFolderTrees    = Set((input.inputValues[SwiftCompiler.inputFolderTrees] ?? [:]).keys)
             wiredModuleMapFiles = Set((input.inputValues[SwiftCompiler.inputModuleMapFiles] ?? [:]).keys)
 
-            let configString = try input.firstWire(onRequiredPort: SwiftCompiler.configuration)
+            let configString = try input.onlyWire(onRequiredPort: SwiftCompiler.configuration)
                 .value.expectValue().resolveAsString()
 
             configuration = try .init(properties: [String: String](plainText: configString))
@@ -376,15 +377,10 @@ struct SwiftCompiler: Node {
             frameworkTreeFiles = try TreeManifest.mergedInputFiles(in: input, port: SwiftCompiler.inputFrameworkTrees,
                                                                    under: SwiftCompiler.frameworksFolder)
 
-            let bridgingValues = input.inputValues[SwiftCompiler.bridgingHeader] ?? [:]
-            let bridgingPaths  = bridgingValues.keys.sorted()
-            guard bridgingPaths.count <= 1 else {
-                throw NodeError.other(message: "SwiftCompiler: a target has one bridging header, and \(bridgingPaths.count) are wired: "
-                                             + bridgingPaths.joined(separator: ", "))
-            }
             var bridging: FileNameAndContent?
-            if let path = bridgingPaths.first, let value = bridgingValues[path] {
-                bridging = FileNameAndContent(filePath: (Path(SwiftCompiler.objectiveCFolder) / Path(path)).string, hash: try value.expectValue())
+            if let bridgingWire = try input.onlyWire(onOptionalPort: SwiftCompiler.bridgingHeader) {
+                bridging = FileNameAndContent(filePath: (Path(SwiftCompiler.objectiveCFolder) / Path(bridgingWire.key)).string,
+                                              hash: try bridgingWire.value.expectValue())
             }
             bridgingHeader = bridging
             objectiveCHeaderFiles = try TreeManifest.mergedInputFiles(in: input, port: SwiftCompiler.headerTrees,
