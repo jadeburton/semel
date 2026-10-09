@@ -251,15 +251,23 @@ public final class ExternalFileSystemLister: FileWildcardMatcherInput {
     /// One child of a folder on disk as a push sees it, whatever its name.
     private static func entry(named name: String, inDirectoryPath path: String, realDirectory: String) -> FileWildcardEntry? {
         let fullPath = (path as NSString).appendingPathComponent(name)
-        var isDirectory: ObjCBool = false
         // Followed: a link to nothing, or a loop of links, is left out as a missing
-        // file is.
-        guard FileManager.default.fileExists(atPath: fullPath, isDirectory: &isDirectory) else {
+        // file is. So is what is neither a file nor a folder — a named pipe, a socket, a
+        // device: a push cannot send one and the engine cannot hold one, and a fold that
+        // tried to read one would refuse the whole folder over it (B-143).
+        var status = stat()
+        guard stat(fullPath, &status) == 0 else {
             return nil
+        }
+        let isDirectory: Bool
+        switch status.st_mode & S_IFMT {
+        case S_IFDIR: isDirectory = true
+        case S_IFREG: isDirectory = false
+        default:      return nil
         }
         // A directory entry on disk is the whole story: there is no port behind it to
         // ask, so this lister has no state to report and says so.
-        let kind: FileWildcardEntryKind = isDirectory.boolValue ? .folder : .file
+        let kind: FileWildcardEntryKind = isDirectory ? .folder : .file
         guard let linkTarget = symbolicLinkTarget(at: fullPath) else {
             return FileWildcardEntry(path: Path(name), kind: kind, state: nil, isUnreferenced: false)
         }
@@ -273,7 +281,7 @@ public final class ExternalFileSystemLister: FileWildcardMatcherInput {
         // A symbolic link into a folder above this one is a cycle: following it
         // would walk the same tree without end, growing until memory ran out. A link
         // elsewhere is followed, since a package may keep sources behind one.
-        if isDirectory.boolValue {
+        if isDirectory {
             let realChild = (fullPath as NSString).resolvingSymlinksInPath
             if realDirectory == realChild || realDirectory.hasPrefix(realChild + "/") {
                 return nil

@@ -69,12 +69,14 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// children it then gets mark it (`markManifestDirty`), and the next pass folds it once
     /// over all of them, however many files the push brought it.
     public func didCreate() throws -> ProcessOutput? {
-        .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest(of: []).toJSON().intern()),
-                             Self.contentRootOutputPort: .value(try buildContentRootDocument(of: []).intern()),
-                             Self.subtreeManifestOutputPort: .value(try FolderSubtreeManifest(entries: []).toJSON().intern()),
-                             Self.pinnedOutputPort: try initialPinnedValue(),
-                             Self.symbolicLinkOutputPort: Self.notASymbolicLink],
-              inputWireSpecs: [:])
+        let documents = try buildContentRootDocuments(of: [])
+        return .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest(of: []).toJSON().intern()),
+                                    Self.contentRootOutputPort: .value(try documents.whole.intern()),
+                                    Self.pushedContentRootOutputPort: .value(try documents.pushed.intern()),
+                                    Self.subtreeManifestOutputPort: .value(try FolderSubtreeManifest(entries: []).toJSON().intern()),
+                                    Self.pinnedOutputPort: try initialPinnedValue(),
+                                    Self.symbolicLinkOutputPort: Self.notASymbolicLink],
+                     inputWireSpecs: [:])
     }
 
     /// What a folder made on the way to something placed below it is created with
@@ -94,6 +96,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     func didCreateOnTheWayToAChild() throws -> ProcessOutput {
         .init(outputValues: [Self.folderManifestOutputPort:   .noValue(reason: .initializing),
                              Self.contentRootOutputPort:      .noValue(reason: .initializing),
+                             Self.pushedContentRootOutputPort: .noValue(reason: .initializing),
                              Self.subtreeManifestOutputPort:  .noValue(reason: .initializing),
                              Self.pinnedOutputPort:           try initialPinnedValue(),
                              Self.symbolicLinkOutputPort:     Self.notASymbolicLink],
@@ -217,6 +220,25 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// the content asks for the content.
     static let contentRootOutputPort = "contentRoot"
 
+    /// The content root over what a push of this folder sends, and nothing else: the same
+    /// fold less every dot-named child, every child holding no content — a name a node
+    /// asked for and nobody pushed, a file taken back out — every product, and every
+    /// subfolder left holding nothing by that rule. It is the root `FolderContentRoot
+    /// .root(ofFolderAt:)` folds from the disk, by construction, and so the one a
+    /// dependency's lock is compared with (B-06, B-143): the lock locks what the push
+    /// pushes.
+    ///
+    /// Beside `contentRoot` rather than instead of it. That root is the graph's whole
+    /// state below the folder — a ghost and a removed file are part of what a consumer, or
+    /// a push comparing roots (B-132), has to see — while a lock is taken from a copy on
+    /// disk, which has no ghosts, and whose walk leaves every dot-name out. A dot-named
+    /// file the graph holds because something asked for it by name, or a name a converter
+    /// demanded that the copy lacks, would otherwise fail a lock nobody edited.
+    ///
+    /// Folded with `contentRoot`, from the same reads of the same children, so it is
+    /// current exactly when that one is: the marks and the flush serve both.
+    static let pushedContentRootOutputPort = "pushedContentRoot"
+
     /// The names, kinds and pinned state of everything below this folder at every depth
     /// (B-135): a `FolderSubtreeManifest`, whose document is this folder's children with
     /// each subfolder's own subtree manifest named by hash, so that one value stands for
@@ -249,6 +271,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     public static let descriptor = NodeDescriptor(inputPorts: [],
                                                   outputPorts: [folderManifestOutputPort,
                                                                 contentRootOutputPort,
+                                                                pushedContentRootOutputPort,
                                                                 subtreeManifestOutputPort,
                                                                 pinnedOutputPort,
                                                                 symbolicLinkOutputPort])
@@ -663,59 +686,78 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         return .init(baseFolderPath: try path.string, entries: folderManifestEntries)
     }
 
-    /// The document this folder's content root is the hash of: one line per child, carrying
-    /// what that child's content is. A subfolder contributes its own root, which is how one
-    /// hash comes to stand for a whole tree. `FolderContentRoot` states the format and the
-    /// order; this supplies the lines.
-    private func buildContentRootDocument(of children: [NodeChildSummary]) throws -> String {
+    /// The documents this folder's two content roots are the hashes of: one line per child,
+    /// carrying what that child's content is. A subfolder contributes its own root, which is
+    /// how one hash comes to stand for a whole tree. `FolderContentRoot` states the format
+    /// and the order; this supplies the lines.
+    ///
+    /// `whole` has a line for every child. `pushed` has one for every child a push of the
+    /// folder sends (`pushedContentRootOutputPort`): no dot-name, nothing without content,
+    /// no product, and a subfolder by its own pushed root and only when that holds
+    /// something — what `FolderOnDisk`'s fold of the disk keeps, line for line.
+    private func buildContentRootDocuments(of children: [NodeChildSummary]) throws -> (whole: String, pushed: String) {
         Self.contentRootRebuildCount.increment()
-        let content  = try contentStates(of: children)
-        let (links, modes) = try symbolicLinkTargets(of: children)
+        let content            = try contentStates(of: children, folderPort: Self.contentRootOutputPort)
+        let pushedFolderRoots  = try contentStates(of: children.filter { $0.kind == Folder.kind },
+                                                   folderPort: Self.pushedContentRootOutputPort)
+        let (links, modes)     = try symbolicLinkTargets(of: children)
 
-        var lines = [(name: String, kind: FolderChildKind, content: FolderChildContent)]()
+        var lines  = [FolderContentRoot.Line]()
+        var pushed = [FolderContentRoot.Line]()
         for child in children {
             let childName = try child.requireName()
+            let isPushed  = !childName.hasPrefix(".")
             switch child.kind {
             // A child of a kind the fold reads, with no row for the port its content is on,
             // has had nothing produced on it — the same reading `asNodeValue` gives.
             case StaticFile.kind:
                 let fileContent = content[child.id] ?? .notProduced
-                guard let target = links[child.id] else {
-                    // A file's bytes carry its mode on the line; a state has no mode to carry.
-                    guard case .hash(let hash) = fileContent else {
-                        lines.append((childName, .file, fileContent))
-                        continue
-                    }
-                    lines.append((childName, .file, .file(hash: hash, mode: modes[child.id] ?? FileMetadata.defaultMode)))
+                let kind: FolderChildKind = links[child.id] == nil ? .file : .link
+                // A file's bytes carry its mode on the line, a link its target; a state has
+                // neither, and a removed link stays a link: the metadata a removal leaves is
+                // the one it was pushed with.
+                guard case .hash(let hash) = fileContent else {
+                    lines.append((childName, kind, fileContent))
                     continue
                 }
-                // A link is its target while it stands; removed, it says so as a file does,
-                // and stays a link: the metadata a removal leaves is the one it was pushed with.
-                guard case .hash = fileContent else {
-                    lines.append((childName, .link, fileContent))
-                    continue
+                let line: FolderContentRoot.Line = links[child.id].map { (childName, .link, .symbolicLinkTarget($0)) }
+                    ?? (childName, .file, .file(hash: hash, mode: modes[child.id] ?? FileMetadata.defaultMode))
+                lines.append(line)
+                if isPushed {
+                    pushed.append(line)
                 }
-                lines.append((childName, .link, .symbolicLinkTarget(target)))
 
             case Folder.kind:
                 // A folder that is a link is what the link holds, whatever the copy of what
                 // it names below it holds: that is folded where it is.
                 if let target = links[child.id] {
                     lines.append((childName, .link, .symbolicLinkTarget(target)))
+                    if isPushed {
+                        pushed.append((childName, .link, .symbolicLinkTarget(target)))
+                    }
                     continue
                 }
                 lines.append((childName, .folder, content[child.id] ?? .notProduced))
+                // A push makes a folder only on the way to something below it, so one whose
+                // pushed root is empty is not on the disk a lock is folded from. A state is
+                // kept: a subfolder not folded yet leaves this root saying so.
+                let pushedRoot = pushedFolderRoots[child.id] ?? .notProduced
+                guard isPushed, pushedRoot != .hash(FolderContentRoot.emptyFolderRoot) else {
+                    continue
+                }
+                pushed.append((childName, .folder, pushedRoot))
 
             default:
                 // Every other kind under a folder is a product, whose content the fold does
                 // not reach. `FolderChildContent.notFolded` says why, and saying it here by
                 // `kind` rather than by absence from a dictionary means a node kind that
-                // becomes a folder's child cannot acquire the answer by accident.
+                // becomes a folder's child cannot acquire the answer by accident. A push
+                // sends no product, so the pushed fold has no line for one.
                 lines.append((childName, .other, .notFolded))
             }
         }
 
-        return FolderContentRoot.document(of: lines)
+        return (FolderContentRoot.document(of: lines), FolderContentRoot.document(of: pushed))
     }
 
     /// This folder's children with each subfolder's own subtree manifest, by hash: the
@@ -756,11 +798,14 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// A file's bytes are on its output port, and a folder's content root is on its. The
     /// subfolder's root was folded the same way, so putting it in a line is what makes this
     /// folder's root identify its whole subtree rather than only what is directly in it.
-    private func contentStates(of children: [NodeChildSummary]) throws -> [ObjectID: FolderChildContent] {
+    ///
+    /// `folderPort` is the root a subfolder is read by: its whole one, or its pushed one.
+    private func contentStates(of children: [NodeChildSummary],
+                               folderPort: String) throws -> [ObjectID: FolderChildContent] {
         var result: [ObjectID: FolderChildContent] = [:]
         let parentNodeID = try thisNode.requireID()
 
-        for (kind, portName) in [(Folder.kind,     Folder.contentRootOutputPort),
+        for (kind, portName) in [(Folder.kind,     folderPort),
                                  (StaticFile.kind, StaticFile.outputPort)] where Self.has(children, of: kind) {
             let ports = try database.node.selectChildPorts(parentNodeID: parentNodeID,
                                                            nameSymbolID: portName.asSymbolID())
@@ -872,11 +917,12 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// level per round of the flush, and the rounds are bounded by the depth of the tree:
     /// an edit costs one fold per ancestor, never one per folder.
     func refreshContentRoot() throws {
-        let changed = try thisNode.writeToOutputPort(
-            Self.contentRootOutputPort,
-            value: .value(try buildContentRootDocument(of: childSummaries()).intern()))
+        let documents = try buildContentRootDocuments(of: childSummaries())
+        let changed = try thisNode.writeToOutputPort(Self.contentRootOutputPort, value: .value(try documents.whole.intern()))
+        let pushedChanged = try thisNode.writeToOutputPort(Self.pushedContentRootOutputPort,
+                                                           value: .value(try documents.pushed.intern()))
 
-        if changed, let parentNodeID = thisNode.parentNodeID {
+        if changed || pushedChanged, let parentNodeID = thisNode.parentNodeID {
             try Folder.markContentRootDirty(nodeID: parentNodeID)
         }
     }

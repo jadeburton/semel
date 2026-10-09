@@ -157,8 +157,10 @@ public enum FolderContentRoot {
     /// made executable moves the root (B-132).
     public static let formatTag = "semel-folder-content-root 4"
 
-    public static func document(of children: [(name: String, kind: FolderChildKind,
-                                               content: FolderChildContent)]) -> String {
+    /// One child as the document holds it.
+    public typealias Line = (name: String, kind: FolderChildKind, content: FolderChildContent)
+
+    public static func document(of children: [Line]) -> String {
         let ordered = children.sorted { left, right in
             if left.name.utf8.lexicographicallyPrecedes(right.name.utf8) {
                 return true
@@ -177,6 +179,162 @@ public enum FolderContentRoot {
     }
 }
 
+// MARK: - Reading a document back
+
+extension FolderContentRoot {
+
+    /// The lines of a document `document(of:)` wrote, in its order; nil for text that is
+    /// not one, under this format tag. The inverse of the writer, framing included: a name
+    /// or a link's target is read by its length, so a tab or a newline in either reads back
+    /// as itself.
+    public static func lines(ofDocument document: String) -> [Line]? {
+        var reader = DocumentReader(bytes: Array(document.utf8))
+        guard reader.read(through: 0x0A) == formatTag else {
+            return nil
+        }
+        var lines: [Line] = []
+        while !reader.isAtEnd {
+            guard let kindName = reader.read(through: 0x09), let kind = FolderChildKind(rawValue: kindName),
+                  let content = reader.readContent(),
+                  let nameLength = reader.read(through: 0x09).flatMap({ Int($0) }),
+                  let name = reader.read(count: nameLength), reader.read(through: 0x0A) == "" else {
+                return nil
+            }
+            lines.append((name, kind, content))
+        }
+        return lines
+    }
+
+    /// What a content root holds below it that a pushed root leaves out
+    /// (`Folder`'s `pushedContentRoot`): every dot-named entry, every name holding no
+    /// content, every product, and every folder holding nothing. Walked from the whole root
+    /// through the documents it names, so a lock check that failed can say what it did not
+    /// compare. Paths are relative to the folder whose root `root` is, in the documents'
+    /// order; what a dot-named folder holds is left out with it and not listed.
+    public static func entriesLeftOutOfThePushedRoot(below root: DataObjectHash) throws -> [LeftOutEntry] {
+        var leftOut: [LeftOutEntry] = []
+        try collectLeftOut(below: root, at: "", into: &leftOut)
+        return leftOut
+    }
+
+    private static func collectLeftOut(below root: DataObjectHash, at prefix: String, into leftOut: inout [LeftOutEntry]) throws {
+        guard let lines = lines(ofDocument: try root.resolveAsString()) else {
+            return
+        }
+        for line in lines {
+            let path = prefix + line.name
+            if line.name.hasPrefix(".") {
+                leftOut.append(LeftOutEntry(path: path, reason: .dotNamed))
+                continue
+            }
+            switch (line.kind, line.content) {
+            case (.folder, .hash(let subfolderRoot)):
+                guard subfolderRoot != emptyFolderRoot else {
+                    leftOut.append(LeftOutEntry(path: path + "/", reason: .holdsNothing))
+                    continue
+                }
+                try collectLeftOut(below: subfolderRoot, at: path + "/", into: &leftOut)
+            case (_, .notProduced):
+                leftOut.append(LeftOutEntry(path: path, reason: .notPushed))
+            case (_, .deleted):
+                leftOut.append(LeftOutEntry(path: path, reason: .removed))
+            case (_, .notFolded):
+                leftOut.append(LeftOutEntry(path: path, reason: .product))
+            case (_, .failed):
+                leftOut.append(LeftOutEntry(path: path, reason: .failed))
+            case (_, .hash), (_, .file), (_, .symbolicLinkTarget):
+                continue
+            }
+        }
+    }
+}
+
+/// An entry of the graph's tree that a pushed root does not fold, and why.
+public struct LeftOutEntry: Equatable {
+    public enum Reason: Equatable {
+        /// A dot-name, which a walk of the disk never takes.
+        case dotNamed
+        /// A name something asked for and nobody pushed: a ghost.
+        case notPushed
+        /// A source pushed and then taken back out.
+        case removed
+        /// A node's product, which a push never sends.
+        case product
+        case failed
+        /// A folder with nothing below it a push would send.
+        case holdsNothing
+    }
+
+    public let path: String
+    public let reason: Reason
+
+    public init(path: String, reason: Reason) {
+        self.path   = path
+        self.reason = reason
+    }
+}
+
+/// Reads a document's bytes field by field.
+private struct DocumentReader {
+    let bytes: [UInt8]
+    var offset = 0
+
+    var isAtEnd: Bool { offset >= bytes.count }
+
+    /// The text up to `separator`, which is consumed; nil when there is none.
+    mutating func read(through separator: UInt8) -> String? {
+        guard let end = bytes[offset...].firstIndex(of: separator) else {
+            return nil
+        }
+        let text = String(decoding: bytes[offset..<end], as: UTF8.self)
+        offset = end + 1
+        return text
+    }
+
+    /// The next `count` bytes as text; nil when there are fewer.
+    mutating func read(count: Int) -> String? {
+        guard count >= 0, offset + count <= bytes.count else {
+            return nil
+        }
+        let text = String(decoding: bytes[offset..<(offset + count)], as: UTF8.self)
+        offset += count
+        return text
+    }
+
+    /// A child's content token and the tab after it: `FolderChildContent.token` read back.
+    mutating func readContent() -> FolderChildContent? {
+        let targetPrefix = Array("target ".utf8)
+        if bytes[offset...].starts(with: targetPrefix) {
+            offset += targetPrefix.count
+            guard let length = read(through: 0x20).flatMap({ Int($0) }), let target = read(count: length),
+                  read(through: 0x09) == "" else {
+                return nil
+            }
+            return .symbolicLinkTarget(target)
+        }
+        guard let token = read(through: 0x09) else {
+            return nil
+        }
+        let words = token.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
+        switch words.count {
+        case 1:
+            switch token {
+            case "not-produced": return .notProduced
+            case "deleted":      return .deleted
+            case "failed":       return .failed
+            case "not-folded":   return .notFolded
+            default:             return nil
+            }
+        case 2 where words[0] == "hash":
+            return .hash(words[1])
+        case 4 where words[0] == "hash" && words[2] == "mode":
+            return UInt16(words[3], radix: 8).map { .file(hash: words[1], mode: $0) }
+        default:
+            return nil
+        }
+    }
+}
+
 // MARK: - The same fold over a folder on disk
 
 extension FolderContentRoot {
@@ -184,6 +342,12 @@ extension FolderContentRoot {
     /// The root the engine will publish for `folder` once it has been pushed, computed from
     /// the disk: what `semel-swift prepare` records in a dependency's lock (B-06), so that
     /// a build compares the tree it was given with the tree that was vendored.
+    ///
+    /// It is the folder's *pushed* root (`Folder`'s `pushedContentRoot`) the lock check
+    /// compares this with, not its whole one (B-143). The graph can hold below a vendored
+    /// folder what this walk never sees — a dot-named file something asked for by name, a
+    /// name a converter demanded that the copy lacks — and the pushed root leaves out
+    /// exactly what the walk does, so the two agree by construction.
     ///
     /// Folded by `document(of:)` and hashed by `Sha256`, as the engine folds and interns,
     /// so the two cannot differ in the format. They could still differ in *what* is folded,

@@ -344,6 +344,87 @@ use. `selectPath` decoding whole nodes is now the push queue's largest single co
 
 ## Design, correctness and code quality
 
+**B-143** `done` — **A fresh `prepare` and `build` could fail on the lock `prepare` had just
+written.** Reported 2026-10-09 on a proprietary tree: `semel-swift prepare` vendored a
+dependency and wrote its lock, and the next `build` stopped with `is not the tree its lock
+records`, nothing edited between. The dependency held no links, and dot-files and
+dot-folders at several levels. `LockFoldParityTests` folds 28 crafted shapes on disk
+(`FolderContentRoot.root(ofFolderAt:)`), pushes each as the client pushes and compares with
+the engine's fold after the settle. The shapes that agreed are kept as guards:
+- modes 600, 664, 640, 444, 775, 700, 4755, 2755 and 1644 (each reads as `st_mode & 0o7777`
+  on both sides, and the wire carries it raw);
+- links inside the folder, outside it, absolute, dangling, looping, above themselves, and
+  one naming its target in another case (`/` is plain APFS, so case-insensitive);
+- a hard link;
+- empty folders and folders holding only empty folders, dot-names or a dangling link
+  (both sides drop them);
+- a folder nobody can list, and a path past `PATH_MAX` (both sides see nothing there,
+  silently);
+- dot-names at every level, including a dot-folder of plain files and a plain folder
+  inside a dot-folder;
+- files and folders hidden by `UF_HIDDEN` (neither the lister nor `FolderOnDisk` enumerates
+  with `.skipsHiddenFiles`, so both keep them);
+- NFC and NFD names (both sides take the lister's bytes);
+- spaces, quotes and control characters in names;
+- an empty file, and one over the 8 MB push batch;
+- lock-like and file-like names;
+- a mixed-mode `semel-artifacts` framework;
+- xattrs and the immutable flag.
+
+What diverged:
+
+1. **A pipe or a socket in the tree.** The lister listed it as a file. The disk fold could
+   not read it (a pipe blocks on open, a socket refuses it) and failed `prepare`, while the
+   push skipped it and went on. `ExternalFileSystemLister` now takes a regular file or a
+   folder (links followed) and nothing else, so both sides leave such a node out.
+2. **What the graph holds and a copy's fold never sees** — the owner's case. A vendored
+   folder's `contentRoot` folds every child the engine has. Two kinds of child are never in
+   a copy's fold:
+   - a dot-named file pushed by name: `build`'s follow of a missing source,
+     `push <path>/.file`, a watcher's `--only`, then kept by every later push through
+     `HeldTree.hiddenFiles`;
+   - a ghost: a name a converter asked for that nobody pushed, folded `not-produced`.
+
+   `SwiftFormulaConverter` made ghosts under valid packages. It asked for
+   `Sources/<Target>` for every target that names no `path:`, where SwiftPM also looks in
+   `Source`, `src` and `srcs`, case-insensitively on a Mac's volume. It also asked for every
+   declared resource whether the folder held it or not.
+
+   The fix chosen keeps the lock locking what the push pushes. The alternative was forbidding
+   such demands under a locked folder. It was not chosen because a demand is how the follow
+   finds a source, and demands that hang on the lock's outcome were B-133's loop.
+
+   `Folder` now publishes `pushedContentRoot`. It is the same fold, from the same reads and
+   marks, less every dot-name, every child without content, every product and every
+   subfolder left empty by that rule: `FolderOnDisk`'s fold by construction.
+   `DependencyLockCheck` compares the lock with it. It also wires the whole root, which it
+   reads only when a lock fails, to name what the comparison left out: "2 dot-named: …,
+   1 asked for and never pushed: …" (`FolderContentRoot.lines(ofDocument:)`, the writer's
+   inverse).
+3. **The converter's ghosts themselves.**
+   - A target that names no folder is now found from the manifests of its package folder
+     and of the predefined folders it holds (`DefaultTargetFolders`). One none of them holds
+     is the conversion's error naming the four paths tried.
+   - A declared resource the target's folder lacks is named in a notice and not asked for,
+     as SwiftPM warns and builds without it.
+   - A declared catalog or bundle is read from its folder's manifest. The walk never
+     enters such a folder, so `.process("Resources/Media.xcassets")` and
+     `.copy("Foo.bundle")` were asked for as files of the folder's path.
+
+`FolderContentRoot`'s document is unchanged and so is its tag. Existing locks stay valid:
+the disk fold is what it was, and the engine side now matches it. `SwiftFormulaConverter`
+is version 21 (new demands, a new lock comparison). `Folder` gains an output port, which
+needs no version, as it never processes.
+
+Not fixed, filed here:
+- (a) A dot-named declared resource is still asked for as declared, so the follow pushes
+  it by name. It is built and not locked. A dot-named declared *folder* cannot be pushed at
+  all (`hiddenFile` takes files only).
+- (b) A hand-written `SwiftFormulaConverter` with no `root:` over a vendored folder reads
+  `semel.config` and `semel.machine.config` from inside it.
+- (c) A `.fmla` inside a vendored package is built by `FormulaFilePlugin`, which does not
+  skip `Dependencies`.
+
 **B-139** `done` — **`wait` could return before the pass a push asked for had run.**
 Found 2026-10-04: `SettleTests.test_aWaiterNeverSlipsBetweenTheWakeUpAndThePassItAsksFor`
 failed on `main` about one run in three at a load average of 6 (`round 146: the wait
@@ -387,10 +468,11 @@ asks for nothing a vendored package does not list; only an artifact that is not 
    reprocessed over inputs it has seen before within one settle, and reports it as the
    build's error naming the node and what it keeps demanding, wants a decision on what
    "seen before" costs to keep.
-2. **A folder a vendored package's manifest names and the package lacks** — a target whose
-   `path:` is wrong — is a ghost under the package, and the build ends on the lock:
-   `is not the tree its lock records`, naming two roots and not the path. The converter,
-   or the lock check, could name the demanded paths under the folder that nothing pushed.
+2. ~~**A folder a vendored package's manifest names and the package lacks** ends the build
+   on the lock, naming two roots and not the path.~~ Done in B-143: the lock compares the
+   folder's pushed root, which leaves a ghost out, so the build ends on the folder itself,
+   `…/Sources/Sparkle/ has not been pushed`; a target that names no path is no longer
+   guessed into a ghost, and a failed lock names what it did not compare.
 
 **B-47** `open` `For Fable Only` — **The SDK is declared but not a graph input.**
 Closed so far (2026-09-12): the declared identity is version *and* build, `26.5 (25F70)`,

@@ -143,7 +143,12 @@ enum PackageResources {
         // The manifest's rules first: a copy keeps its shape, a processed folder is
         // flattened to the bundle's root except for what is recognised by type.
         for declared in target.declared {
-            let isFolder = manifests[fullPath(targetFolder: targetFolder, relative: declared.path)] != nil
+            let isFolder: Bool
+            switch presence(of: declared.path, targetFolder: targetFolder, manifests: manifests) {
+            case .folder: isFolder = true
+            case .file:   isFolder = false
+            case .absent: continue
+            }
             let name = (declared.path as NSString).lastPathComponent
             if declared.isCopy {
                 claim(PackageResource(kind: isFolder ? .folder : .file, path: declared.path, bundlePath: name))
@@ -178,6 +183,54 @@ enum PackageResources {
         }
 
         return found.sorted { $0.path < $1.path }
+    }
+
+    /// What a declared resource is in the graph.
+    enum Presence: Equatable {
+        case file
+        case folder
+        /// Not pushed: the manifest declares a resource the target's folder does not hold.
+        case absent
+    }
+
+    /// What the resource the manifest declares at `relative` is, read from the manifest of
+    /// the folder holding it — which is walked even where the resource is a folder that is
+    /// not, an asset catalog or a bundle, so a catalog declared by its path is the folder
+    /// it is and not a file of its name, a second node on one path (B-143).
+    ///
+    /// A resource the folder does not hold is SwiftPM's warning, not its error, so the
+    /// target still builds without it; asked for anyway, it was a name nobody pushed — a
+    /// ghost under the package. It is left out, and `absentDeclared` names it.
+    ///
+    /// A path through a dot-name is the one exception, and is taken as it is declared: a
+    /// walk of the disk never lists a dot-name, so it is never in a manifest until it is
+    /// asked for, and asking is how `build`'s follow pushes it by its name (B-77 item 5).
+    /// Pushed, it is built into the bundle; a lock leaves it out as the walk does, so it
+    /// is built and not locked.
+    static func presence(of relative: String, targetFolder: String, manifests: [String: FolderManifest]) -> Presence {
+        let full = Path(fullPath(targetFolder: targetFolder, relative: relative))
+        if manifests[full.string] != nil {
+            return .folder
+        }
+        // Where there is no manifest to ask — outside the target's folder, whose tree is all
+        // the converter reads, or inside a folder its walk does not enter — the path is
+        // taken as declared.
+        guard let name = full.lastComponent, let parent = full.deletingLastComponent,
+              !full.segments.contains(where: { $0.hasPrefix(".") && $0 != "." && $0 != ".." }),
+              let parentManifest = manifests[parent.string] else {
+            return .file
+        }
+        guard let entry = parentManifest.entries.first(where: { $0.name == name && $0.isPinned }) else {
+            return .absent
+        }
+        return entry.isFolder ? .folder : .file
+    }
+
+    /// The resources `rules` declares that the target's folder does not hold, as declared.
+    static func absentDeclared(rules target: Rules, targetFolder: String, manifests: [String: FolderManifest]) -> [String] {
+        target.declared.map(\.path).filter {
+            presence(of: $0, targetFolder: targetFolder, manifests: manifests) == .absent
+        }
     }
 
     /// Where a resource declared relative to the target folder is, with its dot segments

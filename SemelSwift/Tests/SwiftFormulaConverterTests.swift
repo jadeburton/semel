@@ -47,12 +47,20 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         return trees
     }
 
+    private func targetNames(in manifests: [String]) throws -> [String] {
+        try manifests.flatMap { text -> [String] in
+            let object = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
+            return ((object?["targets"] as? [[String: Any]]) ?? []).compactMap { $0["name"] as? String }
+        }
+    }
+
     private func convert(packageFolder: String = "input:/pkg",
                          json: String,
                          externalManifests: [String: String] = [:],
                          folderContents: [String: [FolderManifestEntry]] = [:],
                          locks: [String: String] = [:],
                          contentRoots: [String: DataObjectHash] = [:],
+                         wholeContentRoots: [String: DataObjectHash] = [:],
                          linkerSettings: String? = nil,
                          supplyTargetFolders: Bool = true) throws -> ProcessOutput {
         let manifest = FolderManifest(baseFolderPath: packageFolder, entries: folderContents[packageFolder] ?? [])
@@ -85,10 +93,40 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             }
             let lockFiles     = asked(SwiftFormulaConverter.dependencyLocks)
             let lockedFolders = asked(SwiftFormulaConverter.dependencyContentRoots)
+            let wholeRoots    = asked(SwiftFormulaConverter.dependencyWholeContentRoots)
             let linkerConfigs = linkerSettings == nil ? [] : asked(SwiftFormulaConverter.linkerConfiguration)
             let binaryFolders = asked(SwiftFormulaConverter.binaryArtifactFolders)
-            guard !lockFiles.isEmpty || !lockedFolders.isEmpty || !linkerConfigs.isEmpty || !binaryFolders.isEmpty else {
+            let parents       = asked(SwiftFormulaConverter.targetFolderParents)
+            let targetFolders = supplyTargetFolders ? asked(SwiftFormulaConverter.targetFolders) : []
+            guard !lockFiles.isEmpty || !lockedFolders.isEmpty || !wholeRoots.isEmpty || !linkerConfigs.isEmpty
+                    || !binaryFolders.isEmpty || !parents.isEmpty || !targetFolders.isEmpty else {
                 return output
+            }
+            // A target folder found somewhere other than `Sources/<Target>`, from
+            // `folderContents`.
+            for folder in targetFolders {
+                inputValues[SwiftFormulaConverter.targetFolders, default: [:]][folder] =
+                    .value(try FolderSubtreeManifest.folding(at: folder, listings: folderContents).toJSON().intern())
+            }
+            // A folder a target that names none is looked for in (B-143): from
+            // `folderContents`, or else as SwiftPM's first guess has it — a package folder
+            // holding `Sources`, and `Sources` holding a folder for every target.
+            for parent in parents {
+                var entries = folderContents[parent]
+                if entries == nil, parent.hasSuffix("/Sources") {
+                    entries = try targetNames(in: [json] + Array(externalManifests.values)).map {
+                        FolderManifestEntry(name: $0, isFolder: true, isPinned: true)
+                    }
+                }
+                let listing = FolderManifest(baseFolderPath: parent,
+                                             entries: entries ?? [FolderManifestEntry(name: "Sources", isFolder: true, isPinned: true)])
+                inputValues[SwiftFormulaConverter.targetFolderParents, default: [:]][parent] =
+                    .value(try listing.toJSON().intern())
+            }
+            for folder in wholeRoots {
+                inputValues[SwiftFormulaConverter.dependencyWholeContentRoots, default: [:]][folder] =
+                    .value(try XCTUnwrap(wholeContentRoots[folder] ?? contentRoots[folder],
+                                         "the converter asked for the whole root of \(folder)"))
             }
             for folder in binaryFolders {
                 inputValues[SwiftFormulaConverter.binaryArtifactFolders, default: [:]][folder] =
@@ -876,8 +914,78 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
         XCTAssertNoThrow(try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]).expectValue())
         XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.dependencyContentRoots]).rendered,
-                       [vendoredGRDB: "Folder(path: '\(vendoredGRDB)').contentRoot"],
-                       "the root is what the lock is compared with, so it is a wire and a change to it re-runs the check")
+                       [vendoredGRDB: "Folder(path: '\(vendoredGRDB)').pushedContentRoot"],
+                       "the pushed root is what the lock is compared with, so it is a wire and a change to it re-runs the check")
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.dependencyWholeContentRoots]).rendered,
+                       [vendoredGRDB: "Folder(path: '\(vendoredGRDB)').contentRoot"])
+    }
+
+    /// The graph holds below a vendored folder what a copy's fold never sees — a dot-named
+    /// file pushed by its name, a name the build asked for that nobody pushed — and the
+    /// comparison leaves those out. When a lock fails anyway, the message names them, so
+    /// that what it did not compare is not mistaken for what differs (B-143).
+    func test_aLockThatDoesNotMatchNamesWhatTheComparisonLeftOut() throws {
+        let sources = FolderContentRoot.document(of: [("Lib.swift", .file, .file(hash: "aa", mode: 0o644)),
+                                                      (".swiftlint.yml", .file, .file(hash: "bb", mode: 0o644)),
+                                                      ("Missing.swift", .file, .notProduced)])
+        let whole = FolderContentRoot.document(of: [("Package.swift", .file, .file(hash: "cc", mode: 0o644)),
+                                                    (".spi.yml", .file, .file(hash: "dd", mode: 0o644)),
+                                                    ("Sources", .folder, .hash(try sources.intern()))])
+        let output = try convert(packageFolder: "input:/repo/DatabaseModels", json: sourceControlManifest(),
+                                 externalManifests: [vendoredGRDB: grdbShapedManifest],
+                                 locks: [grdbLockPath: grdbLock(root: "abc123")],
+                                 contentRoots: [vendoredGRDB: "def456"],
+                                 wholeContentRoots: [vendoredGRDB: try whole.intern()])
+
+        let reason = try pendingReason(output)
+        XCTAssertTrue(reason.contains("2 dot-named: .spi.yml, Sources/.swiftlint.yml"), "got:\n\(reason)")
+        XCTAssertTrue(reason.contains("1 asked for and never pushed: Sources/Missing.swift"), "got:\n\(reason)")
+    }
+
+    // MARK: - A target that names no folder (B-143)
+
+    private let unplacedManifest = """
+        {
+          "name": "Kit",
+          "dependencies": [],
+          "products": [{"name": "Kit", "targets": ["Kit"], "type": {"library": ["automatic"]}}],
+          "targets": [{"name": "Kit", "type": "regular", "dependencies": []}]
+        }
+        """
+
+    /// SwiftPM looks under `Sources`, `Source`, `src` and `srcs`, and on a Mac's volume
+    /// finds the folder whatever its case; the converter reads where the target is from
+    /// the folders' manifests rather than spelling the first guess into a demand.
+    func test_aTargetThatNamesNoFolderIsFoundUnderAnyOfSwiftPMsFolders() throws {
+        let contents: [String: [FolderManifestEntry]] = [
+            "input:/pkg":     [file("Package.swift"), folder("src")],
+            "input:/pkg/src": [folder("kit")],
+            "input:/pkg/src/kit": [file("Kit.swift")],
+        ]
+        let output = try convert(json: unplacedManifest, folderContents: contents)
+
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]).rendered,
+                       ["input:/pkg/src/kit": "Folder(path: 'input:/pkg/src/kit').subtreeManifest"])
+        let formula = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]).expectValue().resolveAsString()
+        XCTAssertTrue(formula.contains("input:/pkg/src/kit"), formula)
+        XCTAssertFalse(formula.contains("input:/pkg/Sources/Kit"), formula)
+    }
+
+    /// A target none of those folders holds is the conversion's error, naming where it
+    /// looked — and its folder is never asked for, so nothing nobody pushed is made under
+    /// the package.
+    func test_aTargetNoneOfSwiftPMsFoldersHoldsIsTheConversionsError() throws {
+        let contents: [String: [FolderManifestEntry]] = [
+            "input:/pkg":         [file("Package.swift"), folder("Sources")],
+            "input:/pkg/Sources": [folder("Other")],
+        ]
+        let output = try convert(json: unplacedManifest, folderContents: contents)
+
+        let reason = try pendingReason(output)
+        XCTAssertTrue(reason.contains("target Kit of package Kit declares no path"), "got:\n\(reason)")
+        XCTAssertTrue(reason.contains("input:/pkg/Sources/Kit, input:/pkg/Source/Kit, input:/pkg/src/Kit, input:/pkg/srcs/Kit"),
+                      "got:\n\(reason)")
+        XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]?.isEmpty ?? true, true)
     }
 
     /// The whole point: a dependency that moved stops the build, and the message names the
