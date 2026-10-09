@@ -159,7 +159,9 @@ type renames every node below it.
 A wire does not always carry a value. When it does not, it carries the **reason** instead —
 still waiting for one (`pending`), the producer has not run yet (`initializing`), an input
 of the producer was missing (`inputNotProduced`) or itself broken (`inputInError`), the
-source was removed (`deleted`), or the producer failed, with its message (`error`). A node
+source was removed (`deleted`), or the producer failed, with a document saying why — what
+the tool printed or the engine's condition, what it belongs to, what to change — that the
+prompt draws as the error report (`error`). A node
 reading such a wire usually cannot do its work, and its own outputs become nothing with the
 reason that points upstream:
 

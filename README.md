@@ -96,14 +96,14 @@ rm build/**
 
 | Command | Description |
 |---------|-------------|
-| `build <folder> [--into <dir>] [--no-follow]` | `push <folder>`, `wait`, `errors` in one word, then `export` — to `--into`, or to `semel-out/<folder>` under the base — unless the build reported errors, when it names the products the errors stop instead (`Not exported into <dir>: errors stop output:/…`). Follows the formula's inputs within your tree: a source the settle reports as not pushed, such as the `semel.machine.config` beside the folder or a path dependency beside a package, is pushed with a line saying which formula asked, and the build waits again; `--no-follow` pushes the folder alone. Errors are reported once, one entry per cause |
+| `build <folder> [--into <dir>] [--no-follow] [--verbose]` | `push <folder>`, `wait`, `errors` in one word, then `export` — to `--into`, or to `semel-out/<folder>` under the base. With errors, the report ends with its summary line saying what became of the export: `nothing exported` when a product has no value, `exported to <dir>` when every product has one, and with `--into` the products that have a value are exported, `3 of 5 products exported`; the exit status is non-zero either way. Follows the formula's inputs within your tree: a source the settle reports as not pushed, such as the `semel.machine.config` beside the folder or a path dependency beside a package, is pushed with a line saying which formula asked, and the build waits again; `--no-follow` pushes the folder alone. `--verbose` adds the engine's facts under each error |
 | `d` / `debug [<cache key>]` | Dump the full graph state; given a cache entry's key, dump instead the key material that entry was keyed on — the text whose sha256 is that key, so two machines that disagreed about a build diff two texts rather than two hashes |
 | `n` / `nudge` | Force-reschedule all nodes for re-evaluation |
 | `wait` | Block until the build has settled: every scheduled node processed, nothing asking for another pass |
 | `watch` | Show the progress line without committing to a wait: until any key is pressed, which leaves the settle running and says where it stood, or until the settle ends, which prints its summary and `Settled.` as `wait` would. Needs a terminal on standard input; in a script it says so and returns |
-| `watch <folder> [--into <dir>] [--only <pattern>]... [--except <pattern>]...` | Start a `semel-watch` for the session's base and that folder, as a child of the prompt: it pushes what you save, after two quiet seconds, and with `--into` exports after each settle without errors, and after one with errors names the products they stop. Its lines interleave with the prompt's; the settle summaries are the prompt's own. One per session — a second replaces the first |
+| `watch <folder> [--into <dir>] [--only <pattern>]... [--except <pattern>]... [--verbose]` | Start a `semel-watch` for the session's base and that folder, as a child of the prompt: it pushes what you save, after two quiet seconds, and with `--into` exports what has a value after each settle, saying what it exported on the error report's summary line. Its lines interleave with the prompt's; the settle summaries and error reports are the prompt's own. One per session — a second replaces the first |
 | `unwatch` | Stop the watcher `watch <folder>` started; `quit` stops it too |
-| `e` / `errors [<product>]` | Show all current build errors, one entry per cause, grouped by the products each stops: every product under `output:` in path order with its errors under it — a tree product by its folder, naming the entries reached — then the errors that stop no product. An error stopping several products is printed under the first and named, `— see <product>`, under the rest. Given a product (`output:/Packages/libModels.a`, `-o Packages/libModels.a`, or relative to the current directory) or a tree product's folder, only the errors stopping it, filtered by the server; a product with none says so, and a path that is no product is an error naming it |
+| `e` / `errors [<product>] [--verbose]` | What has no value, and why: each cause once, in the order of its first line — the diagnostic as the tool wrote it, with `input:/` written as the path below the base so a terminal makes it a link; then what it belongs to (`target:`, `product:`, `package:`, `resource:`, `formula:`, `project:`, `source:`); `needed by:` and the products that have no value because of it, by file name, three named and the rest counted, a tree product by its folder; and, where the engine can state one, the thing to change (`re-lock with:`, `missing:`, `set:`, `register:`, `write with:`, `vendor with:`). What carries a failure downstream is never listed. The summary line ends it: `1 error · 5 products without a value`. Given a product (`output:/Packages/libModels.a`, `-o Packages/libModels.a`, or relative to the current directory) or a tree product's folder, the causes it has no value because of, under `libModels.a has no value because:`, filtered by the server; a product with none says `libModels.a has a value.`, and a path that is no product is an error naming it. `--verbose` adds the engine's facts under each cause: the node, its ports and how many nodes carry it. In colour at a terminal unless `NO_COLOR` is set |
 | `explain <path>` (`why`) | Say why the last settle did what it did to a product (`output:/hello/hello`, `-o hello/hello`, or relative to the current directory): the nodes upstream of it that ran and the ones the cache answered, each with the wires whose values changed for it, down to the pushed files that changed. The record is the last settle's only, kept in memory: a restart forgets it, and `explain` says so |
 | `check` | Walk the graph and report every invariant that does not hold — a wire whose endpoint is gone, a product nothing produces, a manifest disagreeing with its folder. Repairs nothing; `reset` is the repair. Ask it of a settled graph (`wait`, or after `build`): a node the engine is still wiring has no wires yet, and the reply says how many nodes were still scheduled |
 | `collect` | Delete every object in the store that nothing refers to — no port, no cached build, no artifact snapshot, no archived graph, and no tree or content-root document that a referenced object is — and say how many went and how many stayed. The engine runs the same collection itself at idle, once after launch and then whenever the store has grown by 64 MB; an object younger than a minute is never collected |
@@ -144,8 +144,9 @@ two quiet seconds after
 each burst of saves — an editor's save, a `git checkout`, a generator's output — and runs
 one `begin`, a `push` of what changed and an `rm` of what went, `commit`: one settle, and
 its summary, per burst. It follows the formula's inputs as `build` does, and with `--into`
-exports after each settle without errors — after one with errors it names the products
-they stop instead. What it watches is what `push` would push;
+exports what has a value after each settle — after one with errors, the error report's
+summary line says what it exported. `--verbose` adds the engine's facts under each error.
+What it watches is what `push` would push;
 `--only` and `--except` narrow that with the wildcards a for-each takes, and the export
 folder and `semel-out` are never pushed. A [locked folder](#locked-folders) is not watched
 unless an `--only` names it, and the launch line says which are locked and that
@@ -276,7 +277,8 @@ Comparing costs little beside resolution itself: folding all thirty-four of Code
 semel-server/    semelserv — the composition root: registers the toolchains, starts the
                  engine, listens on the socket. One per user.
 semel/           semel — the prompt; opens a connection to semelserv and nothing else
-  CommandInterpreter/  SemelCLI: the REPL, its command plugins and renderers
+  CommandInterpreter/  SemelCLI: the REPL, its command plugins and renderers — the error
+                       report's lines are drawn here, from the documents (ErrorReportRenderer)
   Server/              SemelServer: the engine behind one RequestHandler, sessions, events
   Transport/           SemelTransport: the Unix-socket listener and frame stream
 semel-swift/     semel-swift — `prepare`: finds a tree's roots, vendors git dependencies,
@@ -297,7 +299,7 @@ SemelCore/       The engine
   Cache                Content-addressed cache of a node's outputs, keyed on type, properties and every input
   GraphSpec            A node's demand for an upstream subgraph, as text; GraphSpecApplier matches it against the graph
   FormulaParser        Reads .fmla text into a graph spec
-  ErrorReport          How a node's errors are written out, at settle and on request
+  ErrorReport          Which failures the graph holds, as documents, at settle and on request
   ProductReach         Which products a failing node stops: the walk down its wires, once per report
   Nodes/
     StaticFile         Raw file content node
@@ -320,6 +322,9 @@ SemelNodeKit/    Node-authoring API — no dependency on the engine
   ToolDiscovery        The tools each toolchain declares, registered under the version found
   ToolRunner           Runs a tool in an isolated sandbox
   ToolSandbox          What a tool is allowed to know about the directory it runs in
+  ErrorDocument        What a failing node publishes: the diagnostic, what it belongs to and
+                       the remedy, as values a client renders; ErrorCondition, every engine
+                       condition a report shows
   SemelPaths           Where the home, database, object store and socket live
 SemelProtocol/   The wire protocol between semel and semelserv: typed requests and
                  responses, frames, and the connection a client holds. A frame's JSON is
