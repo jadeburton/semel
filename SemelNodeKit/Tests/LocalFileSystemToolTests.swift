@@ -147,6 +147,36 @@ final class LocalFileSystemToolTests: XCTestCase {
         XCTAssertTrue(result.errorOutput.isEmpty, result.errorOutput)
     }
 
+    /// A tool that fails has said why in its own output; the file it then did not write is
+    /// a fact on the result and not a line under that output, so a compile error reads as
+    /// the compiler wrote it. A tool that exits cleanly without its output leaves the same
+    /// fact, which is the one case a node turns into a sentence.
+    func test_anOutputTheToolDidNotWriteIsAFactNotALineInItsLog() throws {
+        let failed = try LocalFileSystemTool(localPath: "/bin/sh")
+            .execute(arguments: ["-c", "echo 'bad.c:1:1: error: unknown type' >&2; exit 1"],
+                     environment: [:],
+                     inputFiles: [],
+                     expectedOutputFileNames: ["out.o"])
+
+        XCTAssertEqual(failed.exitCode, 1)
+        XCTAssertEqual(failed.errorOutput.trimmingCharacters(in: .whitespacesAndNewlines), "bad.c:1:1: error: unknown type")
+        XCTAssertEqual(failed.missingOutputFiles, ["out.o"])
+        XCTAssertEqual(try failed.asOutputNodeValue(tool: "clang").errorMessage(),
+                       "clang exited with status 1:\nbad.c:1:1: error: unknown type")
+
+        let silent = try LocalFileSystemTool(localPath: "/bin/sh")
+            .execute(arguments: ["-c", "true"],
+                     environment: [:],
+                     inputFiles: [],
+                     expectedOutputFileNames: ["out.o"])
+
+        XCTAssertEqual(silent.exitCode, 0)
+        XCTAssertTrue(silent.errorOutput.isEmpty, silent.errorOutput)
+        XCTAssertEqual(silent.missingOutputFiles, ["out.o"])
+        XCTAssertEqual(try silent.asOutputNodeValue(tool: "clang").errorMessage(),
+                       "clang exited with status 0 and wrote nothing at out.o")
+    }
+
     /// A link among the inputs is laid as the link it is, beside the files it names (B-77),
     /// and a file given a mode is laid with it, writable, where the store's objects are
     /// read-only; in an output folder a link comes back as the link it is, and what it names

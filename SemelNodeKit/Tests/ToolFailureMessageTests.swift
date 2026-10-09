@@ -69,4 +69,29 @@ final class ToolFailureMessageTests: XCTestCase {
         XCTAssertEqual(try treeMessage.resolveAsString(), "the tool exited with status 2:\nerror: it broke")
         XCTAssertEqual(treeMessage, outputMessage)
     }
+
+    /// A clean run that wrote none of its output names what it did not write, with the
+    /// status so the reader knows the tool did not fail; a tree whose folder the tool did
+    /// not make says the same of the folder.
+    func test_aCleanRunThatWroteNothingNamesWhatItDidNotWrite() throws {
+        let noFile = SimplifiedToolExecuteResult(exitCode: 0, resolvedSandboxPath: "/semel", infoOutput: "", errorOutput: "",
+                                                 outputFiles: [:], outputTrees: [:], missingOutputFiles: ["main.o"])
+        XCTAssertEqual(try noFile.asOutputNodeValue(tool: "clang").errorMessage(),
+                       "clang exited with status 0 and wrote nothing at main.o")
+
+        let noFolder = SimplifiedToolExecuteResult(exitCode: 0, resolvedSandboxPath: "/semel", infoOutput: "", errorOutput: "",
+                                                   outputFiles: [:], outputTrees: [:], missingOutputFolders: ["compiled"])
+        XCTAssertEqual(try noFolder.asTreeNodeValue(folder: "compiled", tool: "actool").errorMessage(),
+                       "actool exited with status 0 and wrote nothing at compiled")
+    }
+}
+
+extension NodeValue {
+    /// The error a value carries, resolved, for an assertion; nil for a value or another reason.
+    func errorMessage() throws -> String? {
+        guard case .noValue(.error(let message)) = self else {
+            return nil
+        }
+        return try message.resolveAsString()
+    }
 }
