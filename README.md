@@ -34,7 +34,7 @@ cd semel
 swift build -c release
 ```
 
-The build places five executables under `.build/release`: `semelserv`, the engine; `semel`, the CLI; `semel-swift`, a tool to prepare a Swift project/package for Semel, including placing SPM dependendencies; `semel-clang`, which adds a Semel configuration file to the C/C++ source directory; and `semel-watch`, which pushes a tree into the engine as you save.
+The build places six executables under `.build/release`: `semelserv`, the engine; `semel`, the CLI; `semel-swift`, a tool to prepare a Swift project/package for Semel, including placing SPM dependendencies; `semel-clang`, which adds a Semel configuration file to the C/C++ source directory; `semel-watch`, which pushes a tree into the engine as you save; and `semel-monitor`, which shows at the top right of the screen what each settle did.
 
 ## Usage
 
@@ -160,6 +160,23 @@ one for the session's base; `unwatch` or `quit` stops it.
 
 ```sh
 .build/release/semel-watch /path/to/repo Packages --into ./out --except 'Packages/**/Tests/**'
+```
+
+To see what a save built without looking at a terminal, run `semel-monitor` beside it. It
+subscribes to the engine's events and changes nothing: for each settle that moved a
+product or broke one it shows a card at the top right of the screen — `3 products changed,
+1 appeared`, up to three names as the error report names them, and `3 computed · 9 from
+cache` — and a settle that moved nothing shows nothing. A result card goes after eight
+seconds, or stays while the pointer is over it; an error card leads with the first error's
+line as the report prints it and stays until clicked or until a later settle gives its
+products a value. Five at most are on screen, the older folded into the bottom card. The
+menu bar item says whether an engine is running — the monitor never starts one, and
+reconnects by itself when one comes back — and holds *Pause notifications*. `--only
+<folder>` keeps the products under that folder of `output:`; `--print` writes each card as
+lines on standard output instead, for a script.
+
+```sh
+.build/release/semel-monitor --only App
 ```
 
 ### Formulae
@@ -300,6 +317,10 @@ semel-clang/     semel-clang — writes semel.machine.config for the clang tools
 semel-watch/     semel-watch — watches a tree with FSEvents and, after two quiet seconds,
                  runs the push and rm a person would type, through SemelCLI; one per tree
   Sources/SemelWatch/  SemelWatch: the filter, the coalescer, the batch planner, the loop
+semel-monitor/   semel-monitor — subscribes to the engine's events and shows each settle
+                 as a card at the top right of the screen; the AppKit shell in App/
+  Sources/SemelMonitor/  SemelMonitor: the planner (events in, cards out), the card's
+                         words, the clock, the subscription that reopens itself
 machine-file/    SemelMachineFile: the one writer of semel.machine.config, for both tools
 ```
 

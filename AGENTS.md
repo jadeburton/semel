@@ -31,7 +31,7 @@ The root package links `SemelProtocol` through `SemelCLI` and `SemelServer`, so 
 build covers it; its own line above is still the only thing that runs its tests.
 
 A root test run covers **only** the root package's test targets: `SemelCLITests`,
-`SemelTransportTests`, `SemelServerTests`, `SemelWatchTests` and `SemelEndToEndTests`. The engine and the
+`SemelTransportTests`, `SemelServerTests`, `SemelWatchTests`, `SemelMonitorTests` and `SemelEndToEndTests`. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
 all eight.
 
@@ -82,7 +82,8 @@ them: `EndToEndRun` starts `semelserv` over a fresh home, drives `semel`, `semel
 and `semel-clang` against it, and builds each project up to four times to compare the bytes:
 twice over one copy, once from a copy at a second mount, once under a perturbed
 environment. `WatchEndToEndTests` runs `semel-watch` there too, over a real FSEvents
-stream: the one place its adapter is exercised.
+stream: the one place its adapter is exercised. `MonitorEndToEndTests` runs `semel-monitor
+--print` against a server it watches stop and start again.
 
 A test that needs a node type but does not care which should use `SampleTool` from
 `SampleNodes.swift` rather than reaching for a real toolchain node — that habit is what
