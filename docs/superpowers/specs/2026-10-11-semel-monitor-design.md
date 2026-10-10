@@ -120,6 +120,24 @@ not exist yet: a typed walk of the graph's shape (`debug` prints it as text toda
 subscription to node state changes. Those are the second design, and the second version
 will state what it needs when the first has shown what people look at.
 
+## Phases
+
+Decided 2026-10-11: delivered in clear phases, each a working app on its own.
+
+1. **Notifies, nothing more.** The executable, the socket with resubscription and the
+   watcher's backoff, the status item with two states (no engine, connected) and a menu
+   of *Pause notifications* and *Quit*, the planner, result cards that go after eight
+   seconds and error cards that stay until dismissed, `--only`, `--print`, and the tests
+   for all of that. No products window, no export, no running card, no node names: a
+   settle in progress shows nothing until it ends. Clicking a card dismisses it.
+2. **The products window and export.** *Products…* and the click on a card open the
+   window listing `output:`, marking the settle's products, showing the errors' lines,
+   and exporting a selection through the prompt's export code.
+3. **The running card and the live window.** The running card updated from `progress`,
+   then *Show window* with the running nodes, the queue and the counts, over the same
+   events. The full graph view is designed separately when this phase has shown what
+   people look at.
+
 ## Testing
 
 - `NotificationPlannerTests`: one card per settle; nothing for an empty settle; the
