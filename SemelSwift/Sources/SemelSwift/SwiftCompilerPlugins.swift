@@ -17,20 +17,28 @@
 // not would key a compile like the one before. The fingerprint the descriptor carries
 // covers them.
 //
-// What is fingerprinted, by content as the binary is (`toolBinaryFingerprint`):
-// everything under the toolchain's `lib/swift/host` — the plugins, the in-process plugin
-// server and the swift-syntax libraries the plugins link — and its `local/lib/swift/host/
-// plugins`; and for every platform beside the SDK's, its two plugin folders and its
-// `swift-plugin-server`. Every platform rather than the one being built: discovery takes
-// the fingerprint before any configuration names an SDK, and a descriptor is per tool, not
-// per SDK. A platform installed or removed therefore moves every Swift key once, which is
-// the cost of not knowing at discovery which platform a build is for. Paths are recorded
-// relative to the toolchain and to the platforms folder, so one toolchain at two places
-// fingerprints alike, as its binary does.
+// What is fingerprinted: everything under the toolchain's `lib/swift/host` — the plugins,
+// the in-process plugin server and the swift-syntax libraries the plugins link — and its
+// `local/lib/swift/host/plugins`; and for every platform beside the toolchain, its two
+// plugin folders and its `swift-plugin-server`. Every platform rather than the one being
+// built: discovery takes the fingerprint before any configuration names an SDK, and a
+// descriptor is per tool, not per SDK. A platform installed or removed therefore moves
+// every Swift key once, which is the cost of not knowing at discovery which platform a
+// build is for. Paths are recorded relative to the toolchain and to the platforms folder.
 //
-// Measured on Xcode 26.6 on an M4: 75 MB under the toolchain's `lib/swift/host` and 8.7 MB
-// of plugins and plugin servers across the ten platforms, about 0.1 s with a warm page
-// cache, beside the 0.2 s the frontend's own 171 MB takes. Once per process, in discovery.
+// Each file is recorded by its path, size and modification time, not its bytes — the
+// scheme the SDK's fingerprint uses (`sdkContentFingerprint`), for the reason it does.
+// Discovery runs as `semelserv` starts, before it listens, and a client that started the
+// server waits for it: reading 85 MB of plugins and libraries there is a cost every start
+// pays on a cold disk, where the walk is a hundredth of a second. What the key needs from
+// these files is that a different file is a different line, and a plugin replaced by an
+// update or a patch has a new size or modification time; the frontend's own bytes, which
+// are hashed, already tell two compilers of one version apart. A plugin restored over
+// another with its timestamp kept and its size unchanged would go unseen, which is the
+// gap the SDK's fingerprint accepts too.
+//
+// Measured on Xcode 26.6 on an M4: 137 files, 85 MB. Their bytes took 0.6 s from a copy
+// not yet in the page cache and 0.44 s warm (`shasum`); the walk takes 0.01 s.
 
 import CryptoKit
 import Foundation
@@ -40,16 +48,29 @@ enum SwiftCompilerPlugins {
 
     /// The fingerprint of the plugins the compiler at `toolPath` runs, or nil when there
     /// are none to be found. `toolPath` is what discovery located — `…/usr/bin/swiftc` —
-    /// and the toolchain is the folder above its `bin`; the platforms are the folder
-    /// holding the default SDK's platform.
+    /// and the toolchain is the folder above its `bin`. The platforms are the developer
+    /// folder's, found from the toolchain's path rather than asked of `xcrun`, which would
+    /// be one more subprocess before the server listens.
+    ///
+    /// ISSUE: a toolchain outside a developer folder's `Toolchains` — a swift.org one in
+    /// `/Library/Developer/Toolchains` — finds no platforms this way, and its fingerprint
+    /// covers its own plugins alone, though the platform's still expand `@Model`.
     static func fingerprint(ofToolAt toolPath: String) -> String? {
         let toolchain = URL(fileURLWithPath: toolPath).resolvingSymlinksInPath()
             .deletingLastPathComponent()   // bin
             .deletingLastPathComponent()   // usr
-        let platforms = xcrun(["--show-sdk-platform-path"]).map {
-            URL(fileURLWithPath: $0).deletingLastPathComponent()
+        return fingerprint(toolchain: toolchain, platforms: platformsFolder(besideToolchain: toolchain))
+    }
+
+    /// `<developer>/Platforms` for a toolchain at `<developer>/Toolchains/<name>.xctoolchain/usr`,
+    /// nil for a toolchain anywhere else.
+    static func platformsFolder(besideToolchain toolchain: URL) -> URL? {
+        let components = toolchain.standardizedFileURL.pathComponents
+        guard let index = components.lastIndex(of: "Toolchains"), index > 0 else {
+            return nil
         }
-        return fingerprint(toolchain: toolchain, platforms: platforms)
+        let developer = NSString.path(withComponents: Array(components[..<index]))
+        return URL(fileURLWithPath: developer, isDirectory: true).appendingPathComponent("Platforms", isDirectory: true)
     }
 
     /// The fingerprint of the plugin files under `toolchain` — a toolchain's `usr` — and
@@ -83,8 +104,11 @@ enum SwiftCompilerPlugins {
                                 "Developer/usr/local/lib/swift/host/plugins",
                                 "Developer/usr/bin/swift-plugin-server"]
 
-    /// One line per regular file at or under `url`: its path under `label`, and the
-    /// fingerprint of its bytes. A link is recorded as the link it is, by what it names,
+    private static let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
+                                                 .contentModificationDateKey]
+
+    /// One line per regular file at or under `url`: its path under `label`, its size and
+    /// its modification time. A link is recorded as the link it is, by what it names,
     /// since the file it names is recorded where it is. Sorted, since the file system's
     /// enumeration order is not the key's.
     private static func fileLines(at url: URL, labelled label: String) -> [String] {
@@ -96,7 +120,6 @@ enum SwiftCompilerPlugins {
         guard isDirectory.boolValue else {
             return line(for: url, labelled: label).map { [$0] } ?? []
         }
-        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
         guard let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: keys) else {
             return []
         }
@@ -112,16 +135,19 @@ enum SwiftCompilerPlugins {
     }
 
     private static func line(for url: URL, labelled label: String) -> String? {
-        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else {
+        guard let values = try? url.resourceValues(forKeys: Set(keys)) else {
             return nil
         }
         if values.isSymbolicLink == true {
             let target = (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) ?? ""
             return "\(label)\u{0}link\u{0}\(target)"
         }
-        guard values.isRegularFile == true, let fingerprint = toolBinaryFingerprint(ofFileAt: url.path) else {
+        guard values.isRegularFile == true else {
             return nil
         }
-        return "\(label)\u{0}file\u{0}\(fingerprint)"
+        let size     = values.fileSize ?? 0
+        // Microseconds, as the SDK's fingerprint records them.
+        let modified = Int64((values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1_000_000)
+        return "\(label)\u{0}file\u{0}\(size)\u{0}\(modified)"
     }
 }

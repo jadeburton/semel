@@ -3126,8 +3126,11 @@ are the acceptance tests, in rising cost:
    compiler's fingerprint covered `swift-frontend` alone. A `ToolFinder` now names a
    companion fingerprint that `ToolDiscovery` folds into the descriptor's, and the
    compiler's covers everything under the toolchain's `lib/swift/host` and every
-   platform's plugin folders and plugin server, by content (`SwiftCompilerPlugins`; about
-   0.1 s once per process on Xcode 26.6). Accepted by the `swift-macro-app` fixture, whose
+   platform's plugin folders and plugin server, each file by path, size and modification
+   time as the SDK's fingerprint records it (`SwiftCompilerPlugins`). Discovery runs before
+   `semelserv` listens: hashing the 85 MB by content (0.6 s from a cold copy on an M4,
+   longer on a slow disk) kept a hosted runner's server from answering before the client
+   that started it gave up; the walk takes 0.01 s. Accepted by the `swift-macro-app` fixture, whose
    app uses `@Observable` and `@Model`; the sample itself is not in the roster.
 2. *swift-syntax* alone — no macro support needed to build it; a large pure-Swift build and
    a useful performance benchmark in its own right.

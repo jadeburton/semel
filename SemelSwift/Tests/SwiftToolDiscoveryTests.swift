@@ -58,9 +58,10 @@ final class SwiftToolDiscoveryTests: SemelSwiftTestCase {
     // MARK: - The compiler's plugins (B-80)
 
     /// A toolchain's `usr` and a platforms folder, under a fresh folder, holding the plugin
-    /// files the compiler runs; `observation` is the bytes of the toolchain's Observation
-    /// plugin, which a test changes.
-    private func pluginTrees(observation: String = "observation") throws -> (toolchain: URL, platforms: URL) {
+    /// files the compiler runs, each modified at one fixed moment; `observation` is the
+    /// bytes of the toolchain's Observation plugin, which a test changes.
+    private func pluginTrees(observation: String = "observation",
+                             modified: Date = Date(timeIntervalSince1970: 1_790_000_000)) throws -> (toolchain: URL, platforms: URL) {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("semel-swift-plugins-\(UUID().uuidString)", isDirectory: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: root) }
@@ -76,12 +77,13 @@ final class SwiftToolDiscoveryTests: SemelSwiftTestCase {
             let url = root.appendingPathComponent(path)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data(content.utf8).write(to: url)
+            try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
         }
         return (root.appendingPathComponent("toolchain/usr"), root.appendingPathComponent("Platforms"))
     }
 
-    /// Where the toolchain sits is not the fingerprint: two copies of one toolchain agree,
-    /// as two copies of one binary do.
+    /// Where the toolchain sits is not the fingerprint: two copies of one toolchain, the
+    /// same files at the same moments, agree.
     func test_thePluginFingerprintDoesNotDependOnWhereTheToolchainIs() throws {
         let first = try pluginTrees(), second = try pluginTrees()
 
@@ -89,17 +91,29 @@ final class SwiftToolDiscoveryTests: SemelSwiftTestCase {
         XCTAssertEqual(SwiftCompilerPlugins.fingerprint(toolchain: second.toolchain, platforms: second.platforms), fingerprint)
     }
 
-    /// A plugin's bytes are the fingerprint, the toolchain's and the platform's alike: a
-    /// toolchain whose Observation plugin differs keys apart from one whose does not, as
-    /// does a platform without its SwiftData plugin.
-    func test_thePluginFingerprintFollowsThePluginsBytes() throws {
+    /// A plugin replaced is a new size or a new modification time, and either moves the
+    /// fingerprint, the toolchain's plugins and the platform's alike: a toolchain whose
+    /// Observation plugin differs keys apart from one whose does not, as does a platform
+    /// without its SwiftData plugin.
+    func test_thePluginFingerprintFollowsThePluginsSizesAndTimes() throws {
         let original = try pluginTrees()
-        let patched  = try pluginTrees(observation: "observation, patched")
+        let resized  = try pluginTrees(observation: "observation, patched")
+        let touched  = try pluginTrees(modified: Date(timeIntervalSince1970: 1_790_000_001))
         let fingerprint = SwiftCompilerPlugins.fingerprint(toolchain: original.toolchain, platforms: original.platforms)
 
-        XCTAssertNotEqual(SwiftCompilerPlugins.fingerprint(toolchain: patched.toolchain, platforms: patched.platforms), fingerprint)
+        XCTAssertNotEqual(SwiftCompilerPlugins.fingerprint(toolchain: resized.toolchain, platforms: resized.platforms), fingerprint)
+        XCTAssertNotEqual(SwiftCompilerPlugins.fingerprint(toolchain: touched.toolchain, platforms: touched.platforms), fingerprint)
         XCTAssertNotEqual(SwiftCompilerPlugins.fingerprint(toolchain: original.toolchain, platforms: nil), fingerprint,
                           "the platform's plugins are part of it")
+    }
+
+    /// The platforms are the developer folder's beside an Xcode toolchain, found from its
+    /// path with no subprocess; a toolchain elsewhere has none.
+    func test_thePlatformsAreFoundBesideAnXcodeToolchain() {
+        let toolchain = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr")
+        XCTAssertEqual(SwiftCompilerPlugins.platformsFolder(besideToolchain: toolchain)?.path,
+                       "/Applications/Xcode.app/Contents/Developer/Platforms")
+        XCTAssertNil(SwiftCompilerPlugins.platformsFolder(besideToolchain: URL(fileURLWithPath: "/usr/local/swift/usr")))
     }
 
     /// The SDK beside the platform's plugins is not: it is the SDK fingerprint's.
