@@ -31,7 +31,7 @@ final class CheckpointTests: XCTestCase {
         externalRoot = makeTempDirectory()
         let database = try DatabaseLayer()
         engine = try BuildEngine(database: database, startProcessingLoop: false)
-        try TypeRegistry.register(types: [SlowLineCounter.self])
+        try TypeRegistry.register(types: [CountingLineCounter.self])
         BuildEngine.shared = engine
         engine.startProcessingLoop()
         let handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
@@ -191,11 +191,12 @@ final class CheckpointTests: XCTestCase {
 
     // MARK: - The cache
 
-    /// The node that does the work is answered from the cache: the restored file is the
-    /// value its entry was keyed on. A node under the cache's floor — the product's own
-    /// `OutputFile` — runs again, as it does on every settle that reaches it.
+    /// The nodes that cache are answered from the cache: the counter, whose restored file is
+    /// the value its entry was keyed on, and the project builder reading the formula. The
+    /// project finder and the product's own `OutputFile`, which store no entry, run again,
+    /// as they do on every settle that reaches them.
     func test_aRestoreIsAnsweredFromTheCache() throws {
-        try write(#"product "lines.txt" = SlowLineCounter(input: ["main.c": StaticFile(path: <main.c>)])"#,
+        try write(#"product "lines.txt" = CountingLineCounter(input: ["main.c": StaticFile(path: <main.c>)])"#,
                   to: "src/semel.fmla")
         try write("int main(void) {\n    return 0;\n}\n", to: "src/main.c")
         run("build src")
@@ -203,18 +204,17 @@ final class CheckpointTests: XCTestCase {
 
         try write("int main(void) { return 1; }\n", to: "src/main.c")
         run("build src")
-        let processedBefore = SlowLineCounter.processed.value
+        let processedBefore = CountingLineCounter.processed.value
 
         let printed = run("restore first")
         let settled = try XCTUnwrap(printed.first { $0.contains("scheduled") }, "\(printed)")
-        XCTAssertTrue(settled.contains(" 1 from cache"), settled)
-        XCTAssertEqual(SlowLineCounter.processed.value, processedBefore, "the counter did not run")
+        XCTAssertTrue(settled.contains(" 2 computed, 2 from cache"), settled)
+        XCTAssertEqual(CountingLineCounter.processed.value, processedBefore, "the counter did not run")
     }
 }
 
-/// A node whose work costs more than the cache's floor, so that its result is cached:
-/// `LineCounter` with a pause, counting its runs.
-struct SlowLineCounter: Node {
+/// `LineCounter`, counting its runs, so a test can tell a hit from a run.
+struct CountingLineCounter: Node {
     static let kind: UInt = 987_140
 
     static let inputPort  = "input"
@@ -232,7 +232,6 @@ struct SlowLineCounter: Node {
 
     func process(input: ProcessInput) throws -> ProcessOutput {
         Self.processed.increment()
-        Thread.sleep(forTimeInterval: 0.03)
         let wires = (input.inputValues[Self.inputPort] ?? [:]).sorted { $0.key < $1.key }
         let lines = try wires.map { "\($0.key): \(try $0.value.expectValue().resolveAsString().split(separator: "\n").count)" }
         return .init(outputValues: [Self.outputPort: .value(try lines.joined(separator: "\n").intern())],

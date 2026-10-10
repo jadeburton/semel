@@ -49,7 +49,10 @@ public struct ConfigFilter: Node {
     /// reader can act on it, so the port is left out of `inputPortsToleratingAbsentValue`.
     public static let descriptor = NodeDescriptor(
         inputPorts: [.required(inputPort)],
-        outputPorts: [outputPort]
+        outputPorts: [outputPort],
+        // Selecting a namespace's lines costs what a lookup and a write cost, and the slice
+        // is worth nothing to another machine (B-147).
+        cachesOutputs: false
     )
 
     public func process(input: ProcessInput) throws -> ProcessOutput {

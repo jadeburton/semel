@@ -24,8 +24,6 @@ final class SettleRecordTests: SemelCoreTestCase {
         try super.setUpWithError()
         engine = try BuildEngine(database: try DatabaseLayer(), startProcessingLoop: false)
         BuildEngine.shared = engine
-        // Above the cache's floor, so the first build stores what the later ones hit.
-        SampleTool.processingDurationForTests = 0.02
         engine.startProcessingLoop()
         // The loop's start-up pass settled before any test builds: a batch holds back
         // wake-ups, not a pass already running, and such a pass could take the batch's
@@ -34,7 +32,6 @@ final class SettleRecordTests: SemelCoreTestCase {
     }
 
     override func tearDown() {
-        SampleTool.processingDurationForTests = 0
         engine.stopProcessingLoop()
         engine.waitUntilIdleBlocking()
         engine = nil

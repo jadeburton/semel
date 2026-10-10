@@ -41,7 +41,10 @@ struct TreeFile: Node, FileMetadataProvider {
 
     public static let descriptor = NodeDescriptor(
         inputPorts: [.required(treeInputPort)],
-        outputPorts: [outputPort, fileMetadataOutputPort]
+        outputPorts: [outputPort, fileMetadataOutputPort],
+        // Reading one entry out of a manifest costs less than a lookup; an entry per bundle
+        // file would take cache slots from the tools (B-147).
+        cachesOutputs: false
     )
 
     public func process(input: ProcessInput) throws -> ProcessOutput {

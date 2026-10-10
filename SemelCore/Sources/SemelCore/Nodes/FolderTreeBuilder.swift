@@ -49,7 +49,10 @@ struct FolderTreeBuilder: Node {
 
     public static let descriptor = NodeDescriptor(
         inputPorts: [.required(folderPort, .many), .dynamic(folderTreePort), .dynamic(filesPort), .dynamic(fileMetadataPort)],
-        outputPorts: [outputPort]
+        outputPorts: [outputPort],
+        // Placing a walked folder's hashes in a manifest costs what a lookup and a write
+        // cost (B-147).
+        cachesOutputs: false
     )
 
     public func process(input: ProcessInput) throws -> ProcessOutput {

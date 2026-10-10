@@ -315,6 +315,8 @@ wrong fails at the first real formula with "port does not exist", not in any uni
 it. If you add anything that influences output, it belongs in the key. A tool node's key
 also carries a hash of the tool binary's own bytes (`toolBinaryCacheKeyMaterial`, filled in
 by `ToolDiscovery`), so two binaries reporting one version string do not share an entry.
+Whether an entry is written at all is declared per type (`NodeDescriptor.cachesOutputs`)
+and never decided by how long a run took, which would make the cache depend on the clock.
 
 **Every input a node reads is in the input file system, derived from it, or declared as
 coming from outside.** The graph can only wake a node for a change it can see, so a node

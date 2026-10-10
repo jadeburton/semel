@@ -264,35 +264,56 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
         XCTAssertEqual(try loaded.outputValues[SampleTool.output]?.expectValue().resolveAsString(), "OBJECT")
     }
 
-    /// The storage floor is about new work: a build cheaper than storing it is not worth a
-    /// row. A row already standing that this Semel cannot read is not new work — nothing
-    /// else replaces it, and it holds its slot until the whole cache turns over under it.
-    /// So a build of any cost replaces it.
-    func test_anUnreadableRowIsReplacedEvenByABuildUnderTheStorageFloor() throws {
+    /// A row standing that this Semel cannot read is replaced by the build that missed on
+    /// it, however quick that build was: nothing else can put a readable entry in its slot.
+    func test_anUnreadableRowIsReplacedByTheBuildThatMissedOnIt() throws {
         let tool  = try makeCompilerNode()
         let input = try makeInput()
         let material = try tool.buildCacheKeyMaterial(input: input)
         let key = try material.cacheKey()
         try storeAnUnreadableRow(key: key)
 
-        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.001,
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0,
                                                  output: try builtOutput())
 
         XCTAssertNotNil(try tool.loadCachedOutputs(cacheKey: key),
-                        "the row nothing could read is the one this build was allowed to store over")
+                        "the row nothing could read is the one this build stored over")
     }
 
-    /// And the floor itself still holds where it is about new work.
-    func test_aBuildUnderTheStorageFloorStoresNothingWhereNoRowStands() throws {
+    /// Whether an entry is stored is the type's declaration, never the run's duration: a
+    /// build that took no time at all is stored like any other (B-147).
+    func test_aBuildThatTookNoTimeIsStored() throws {
         let tool  = try makeCompilerNode()
         let input = try makeInput()
         let material = try tool.buildCacheKeyMaterial(input: input)
 
-        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.001,
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0,
                                                  output: try builtOutput())
 
-        XCTAssertNil(try engine.database.cacheEntry.select(hash: try material.cacheKey()),
-                     "an entry that costs more to store than to recompute is not worth a row")
+        XCTAssertNotNil(try tool.loadCachedOutputs(cacheKey: try material.cacheKey()))
+    }
+
+    /// A type declared not to cache stores nothing however long it ran, and a row standing
+    /// under its key — one a Semel that cached the type wrote — answers nothing either.
+    func test_aTypeDeclaredNotToCacheStoresNothingAndHitsNothing() throws {
+        let (node, _) = try GraphSpecNode(UncachedSampleTool.self).findOrCreateMatchingNode()
+        let tool  = try UncachedSampleTool(thisNode: node)
+        let input = ProcessInput(inputValues: [
+            SampleTool.configuration: ["configuration": .value(try "toolDescriptor.name=sample".intern())],
+        ])
+        let material = try tool.buildCacheKeyMaterial(input: input)
+        let key = try material.cacheKey()
+        let output = AppliedOutput(outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
+                                   specTable: GraphSpecTable(inputWireSpecs: [:], rows: [:]))
+
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 10, output: output)
+        XCTAssertNil(try engine.database.cacheEntry.select(hash: key), "a type that does not cache writes no row")
+
+        let entry = ProcessCacheEntry(outputValues: output.outputValues, specTable: output.specTable,
+                                      keyMaterial: material)
+        try engine.database.cacheEntry.save(.init(hash: key, content: Data(try entry.toJSON().utf8),
+                                                  cost: 1, timestamp: Date()))
+        XCTAssertNil(try tool.loadCachedOutputs(cacheKey: key), "and is not answered from a row that stands")
     }
 
     // MARK: - What a lookup counts as recently used

@@ -83,16 +83,29 @@ public struct NodeDescriptor {
     /// formula names one directly, and makes ghosts there of files nobody will push.
     public let formulaFolderProperty: String?
 
+    /// Whether the engine stores what this node computes and answers a later run with the
+    /// same key from it. True unless the type says otherwise.
+    ///
+    /// A property of the type, never of a run: an entry that existed only when processing
+    /// took long enough would depend on the machine's speed and load, so one graph would
+    /// settle differently on two machines and a shared cache would fill differently from
+    /// each. A type declares `false` when its work costs less than looking up and writing an
+    /// entry — it reshapes a value already in the graph and runs no tool — and when what it
+    /// computes is not worth sharing with another machine either. A tool node always caches.
+    public let cachesOutputs: Bool
+
     public init(inputPorts: [InputPort] = [],
                 outputPorts: [String],
                 inputPortsToleratingAbsentValue: Set<String> = [],
                 fileMetadataInputPorts: [String: String] = [:],
-                formulaFolderProperty: String? = nil) {
+                formulaFolderProperty: String? = nil,
+                cachesOutputs: Bool = true) {
         self.inputPorts = inputPorts
         self.outputPorts = outputPorts
         self.inputPortsToleratingAbsentValue = inputPortsToleratingAbsentValue
         self.fileMetadataInputPorts = fileMetadataInputPorts
         self.formulaFolderProperty = formulaFolderProperty
+        self.cachesOutputs = cachesOutputs
     }
 
     /// Whether a value that will never arrive on this port is something the node minds.

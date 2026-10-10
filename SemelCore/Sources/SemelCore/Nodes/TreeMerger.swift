@@ -44,7 +44,9 @@ struct TreeMerger: Node {
 
     public static let descriptor = NodeDescriptor(
         inputPorts: [.optional(inputPort, .many)],
-        outputPorts: [outputPort]
+        outputPorts: [outputPort],
+        // Merging manifests costs what a lookup and a write cost (B-147).
+        cachesOutputs: false
     )
 
     public func process(input: ProcessInput) throws -> ProcessOutput {

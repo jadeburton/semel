@@ -92,8 +92,8 @@ extension Node {
         }
 
         // The material once, and the key from it: the entry this saves is keyed on exactly
-        // what it stores beside it.
-        let keyMaterial = try? buildCacheKeyMaterial(input: input)
+        // what it stores beside it. A type that does not cache takes no key at all.
+        let keyMaterial = descriptor.cachesOutputs ? try? buildCacheKeyMaterial(input: input) : nil
         let cacheKey    = keyMaterial.flatMap { try? $0.cacheKey() }
         var didWriteCachedOutput = false
 
@@ -152,7 +152,8 @@ extension Node {
             return nil
         }
 
-        let keyMaterial = try? buildCacheKeyMaterial(input: input)
+        // A type that does not cache takes no key: nothing would look it up or store under it.
+        let keyMaterial = descriptor.cachesOutputs ? try? buildCacheKeyMaterial(input: input) : nil
         let cacheKey    = keyMaterial.flatMap { try? $0.cacheKey() }
 
         if let cached = try? loadCachedOutputs(cacheKey: cacheKey) {

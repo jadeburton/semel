@@ -52,7 +52,10 @@ public struct ConfigMerger: Node {
     public static let descriptor = NodeDescriptor(
         inputPorts: [.required(basePort), .required(overridePort)],
         outputPorts: [outputPort],
-        inputPortsToleratingAbsentValue: [overridePort]
+        inputPortsToleratingAbsentValue: [overridePort],
+        // Laying one settings file over another costs what a lookup and a write cost, and the
+        // merge is worth nothing to another machine (B-147).
+        cachesOutputs: false
     )
 
     /// A wire carrying no value contributes nothing rather than failing the node — the same
