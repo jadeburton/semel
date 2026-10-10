@@ -2,7 +2,9 @@
 
 Status: design, for review before any code. Follows the 2026-10-11 request for a Mac app
 that shows notifications when build products appear, change or disappear, to grow later
-into a real-time view of the nodes at work.
+into a real-time view of the nodes at work. Mockups of the cards, the status item, the
+products window and the live window: `2026-10-11-semel-monitor-mockups.html` beside this
+file, a page with no dependencies that opens in any browser.
 
 ## The problem
 
