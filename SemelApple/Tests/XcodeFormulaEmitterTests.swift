@@ -117,17 +117,28 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertFalse(formula.contains("Documentation.docc"), formula)
     }
 
-    /// A listed Objective-C source is compiled through clang, over the folder it sits in
-    /// as its header folder, and linked beside the Swift.
+    /// A listed Objective-C source is compiled through clang and linked beside the Swift.
+    /// It finds the project's headers through the header map, laid out — every header
+    /// the project references on `-iquote` by its folder, and by name under the product —
+    /// and its own folder is no search path (B-77 item 4).
     func test_aListedObjectiveCSourceIsCompiledAndLinked() throws {
         let pbxproj = XcodeProjectTests.groupedFixture
             .replacingOccurrences(of: "path = Util.swift;", with: "path = Util.m;")
+            .replacingOccurrences(of: "path = LICENSE.txt;", with: "path = Util.h;")
         let formula = try groupedFormula(pbxproj: pbxproj)
 
         XCTAssertTrue(formula.contains("func preprocess_Food_Truck(path) =\n    ClangPreprocessor("), formula)
-        XCTAssertTrue(formula.contains("'input:/repo/Shared/Sources': Folder(path: 'input:/repo/Shared/Sources').manifest"), formula)
+        XCTAssertFalse(formula.contains("headerFolders:"), formula)
+        XCTAssertTrue(formula.contains("func headers_Food_Truck() =\n    TreeBuilder(input: [\n"
+                                       + "        'Util.h': StaticFile(path: 'input:/repo/Util.h').output\n    ]).files"), formula)
+        XCTAssertTrue(formula.contains("func targetHeaders_Food_Truck() =\n    TreeBuilder(input: [\n"
+                                       + "        'Food Truck/Util.h': StaticFile(path: 'input:/repo/Util.h').output\n    ]).files"), formula)
+        XCTAssertTrue(formula.contains("        quoteHeaderTrees: ['input:/repo': headers_Food_Truck().files],\n"
+                                       + "        headerTrees: ['derived-headers': TreeBuilder(input: ['Food_Truck-Swift.h': compiler_Food_Truck().objectiveCHeader]).files, "
+                                       + "'target-headers': targetHeaders_Food_Truck().files]"), formula)
         XCTAssertTrue(formula.contains("'input:/repo/Shared/Sources/Util.m.o': ClangCompiler("), formula)
-        XCTAssertTrue(formula.contains("input: ['input:/repo/Shared/Sources/Util.m.p': preprocess_Food_Truck(path: 'input:/repo/Shared/Sources/Util.m')]).output"),
+        XCTAssertTrue(formula.contains("input: ['input:/repo/Shared/Sources/Util.m.p': preprocess_Food_Truck(path: 'input:/repo/Shared/Sources/Util.m')], "
+                                       + "frameworkTrees: ['FoodKit': frameworks_FoodKit().files]).output"),
                       formula)
     }
 
@@ -451,7 +462,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(formula.contains("SettingsLiteral(cStandard: 'gnu11', modules: 'true', objectiveCARC: 'true', "
                                        + "target: 'arm64-apple-ios18.5-simulator')"), "the compiler takes no defines: \(formula)")
         XCTAssertTrue(formula.contains("input: ['input:/repo/IceCubesApp/Legacy/Greeter.m.p': "
-                                       + "preprocess_IceCubesApp(path: 'input:/repo/IceCubesApp/Legacy/Greeter.m')]).output"), formula)
+                                       + "preprocess_IceCubesApp(path: 'input:/repo/IceCubesApp/Legacy/Greeter.m')], frameworkTrees: "), formula)
         XCTAssertTrue(formula.contains("'IceCubesApp C++': SettingsLiteral(cxxRuntime: 'true').output"), formula)
         XCTAssertFalse(formula.contains("product 'Ice Cubes.app/Greeter.h'"), "a header is no resource: \(formula)")
     }
@@ -460,6 +471,43 @@ final class XcodeFormulaEmitterTests: XCTestCase {
     /// headers as the tree it imports from — `headers_<Target>()`, the shape a package's C
     /// target hands a Swift importer — and the macros its C-family sources are
     /// preprocessed with, as Xcode tells the importer.
+    /// A search-path setting's words as folders of the project: `$(SRCROOT)/…` and a
+    /// relative path alike, `/**` recursive, a quoted path with spaces one word, and what
+    /// names no folder of the project — the inherited marker passed over, an absolute
+    /// path, a setting nothing defines, one climbing out — kept aside to be said (B-77 item 4).
+    func test_searchPathSettingsAreFoldersOfTheProject() {
+        let settings = XcodeBuildSettings(values: [
+            "HEADER_SEARCH_PATHS": "$(inherited) $(SRCROOT)/include \"$(PROJECT_DIR)/MySQL Client Libraries/include\" vendor/**",
+            "USER_HEADER_SEARCH_PATHS": "$(SRCROOT)/** ../Outside /usr/local/include",
+            "FRAMEWORK_SEARCH_PATHS": "$(SRCROOT)/Frameworks $(PLATFORM_DIR)/Developer/Library/Frameworks",
+        ])
+        let paths = XcodeSearchPaths(settings: settings)
+
+        XCTAssertEqual(paths.headerSearchPaths, [.init(path: "include", isRecursive: false),
+                                                 .init(path: "MySQL Client Libraries/include", isRecursive: false),
+                                                 .init(path: "vendor", isRecursive: true)])
+        XCTAssertEqual(paths.userHeaderSearchPaths, [.init(path: "", isRecursive: true)])
+        XCTAssertEqual(paths.frameworkSearchPaths, [.init(path: "Frameworks", isRecursive: false)])
+        XCTAssertEqual(paths.outside, ["../Outside", "/usr/local/include", "$(PLATFORM_DIR)/Developer/Library/Frameworks"])
+        XCTAssertEqual(XcodeSearchPaths.expanded(.init(path: "vendor", isRecursive: true),
+                                                 listing: .init(files: [], folders: ["b", "a", "a/deep"])),
+                       ["vendor", "vendor/a", "vendor/a/deep", "vendor/b"])
+    }
+
+    /// A recursive header search path is its folder and every folder the converter found
+    /// below it, each a header folder of the target's preprocessor.
+    func test_aRecursiveHeaderSearchPathIsEveryFolderBelowIt() throws {
+        let formula = try formula(listing: objectiveCListing,
+                                  xcconfig: objectiveCSettings + "\nHEADER_SEARCH_PATHS = $(SRCROOT)/IceCubesApp/**")
+
+        XCTAssertTrue(formula.contains("        headerFolders: [\n"
+                                       + "            'input:/repo/IceCubesApp': Folder(path: 'input:/repo/IceCubesApp').manifest,\n"
+                                       + "            'input:/repo/IceCubesApp/Embeds': Folder(path: 'input:/repo/IceCubesApp/Embeds').manifest,\n"
+                                       + "            'input:/repo/IceCubesApp/Legacy': Folder(path: 'input:/repo/IceCubesApp/Legacy').manifest,\n"
+                                       + "            'input:/repo/IceCubesApp/Legacy/Private': Folder(path: 'input:/repo/IceCubesApp/Legacy/Private').manifest\n"
+                                       + "        ]"), formula)
+    }
+
     func test_theBridgingHeaderReachesTheSwiftCompilerWithTheTargetsHeaders() throws {
         let formula = try formula(listing: objectiveCListing, xcconfig: objectiveCSettings)
 
@@ -1036,7 +1084,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         let compiler = try block("func compiler_Probe() =", in: try exceptionProbeFormula())
 
         XCTAssertTrue(compiler.contains("SettingsLiteral(defines: 'PROBE_CONDITION', experimentalFeatures: 'DebugDescriptionMacro', "
-                                        + "languageMode: '5', moduleName: 'Probe', target: 'arm64-apple-macosx15.0', "
+                                        + "languageMode: '5', moduleName: 'Probe', objectiveCHeaderName: 'Probe-Swift.h', target: 'arm64-apple-macosx15.0', "
                                         + "unsafeFlags: '[\"-DPROBE_OTHER_SWIFT\",\"-strict-concurrency=targeted\",\"-enable-bare-slash-regex\"]', "
                                         + "upcomingFeatures: 'DisableOutwardActorInference,InferSendableFromCaptures,GlobalActorIsolatedTypesUsability,"
                                         + "ExistentialAny,InferIsolatedConformances,NonisolatedNonsendingByDefault')"), compiler)

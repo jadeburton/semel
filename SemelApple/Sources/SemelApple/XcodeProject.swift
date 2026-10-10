@@ -212,16 +212,44 @@ struct XcodeProject {
         /// A folder reference (`lastKnownFileType = folder`): a folder the resources phase
         /// copies whole, under its own name — NetNewsWire's `Themes/Sepia.nnwtheme`.
         let isFolderReference: Bool
+        /// The entry's own flags, `settings = {COMPILER_FLAGS = "-fno-objc-arc"; }`, as one
+        /// string of words: what Xcode passes a listed source after the target's (B-77 item 4).
+        var compilerFlags: String?
 
-        init(path: String, platformFilters: Set<String> = [], isFolderReference: Bool = false) {
+        init(path: String, platformFilters: Set<String> = [], isFolderReference: Bool = false, compilerFlags: String? = nil) {
             self.path = path
             self.platformFilters = platformFilters
             self.isFolderReference = isFolderReference
+            self.compilerFlags = compilerFlags
         }
 
         /// Whether the file is built for the SDK named, by Xcode's platform names.
         func isBuilt(forSDK sdk: String) -> Bool {
             platformFilters.isEmpty || platformFilters.contains(XcodeProject.platformName(forSDK: sdk))
+        }
+    }
+
+    /// What a frameworks phase links besides the SDK's frameworks and package products, by
+    /// where the file is: the SDK's, named; the project's own tree, by path.
+    struct LinkedFiles: Equatable {
+        /// `z` for `libz.tbd`, `c++` for `libc++.tbd`, `icucore` for `libicucore.dylib`.
+        var sdkLibraries: [String] = []
+        /// `Frameworks/ShortcutRecorder.framework`, relative to the project's folder.
+        var frameworks: [String] = []
+        /// `MySQL Client Libraries/lib/libmysqlclient.24.dylib`, relative to the project's
+        /// folder.
+        var libraries: [String] = []
+
+        /// The `-l` name of a library file: `libz.tbd` is `z`; nil for a file that is not a
+        /// library.
+        static func libraryName(ofFile fileName: String) -> String? {
+            let name = fileName as NSString
+            guard ["tbd", "dylib", "a"].contains(name.pathExtension), fileName.hasPrefix("lib") else {
+                return nil
+            }
+            // `libssl.3.dylib` is `ssl.3`: ld finds `lib<name>.dylib` for `-l<name>`.
+            let stem = String(name.deletingPathExtension.dropFirst("lib".count))
+            return stem.isEmpty ? nil : stem
         }
     }
 
@@ -247,6 +275,13 @@ struct XcodeProject {
         let packageProducts: [PackageProduct]
         /// System frameworks from the frameworks phase, by name: `QuickLook`.
         let frameworks: [String]
+        /// What else the frameworks phase links (B-77 item 4): the SDK's libraries, by the
+        /// name `-l` takes (`libz.tbd` is `z`), and frameworks and libraries in the project's
+        /// own tree — vendored, prebuilt — by their paths relative to the project's folder.
+        var linkedFiles = LinkedFiles()
+        /// The file names a copy-files phase embeds under `Frameworks`:
+        /// `ShortcutRecorder.framework`.
+        var embeddedFrameworks: [String] = []
         /// Product file names the copy-files phase embeds under `PlugIns`.
         let embeddedExtensions: [String]
         /// File references in the resources phase, relative to the project folder, each
@@ -298,6 +333,17 @@ struct XcodeProject {
             sourceFiles.filter { $0.isBuilt(forSDK: sdk) }.map(\.path)
         }
 
+        /// The flags each listed source has of its own, by path relative to the project.
+        var listedCompilerFlags: [String: String] {
+            var flags: [String: String] = [:]
+            for file in sourceFiles {
+                if let compilerFlags = file.compilerFlags {
+                    flags[file.path] = compilerFlags
+                }
+            }
+            return flags
+        }
+
         /// The resources phase's files built for `sdk`, in order.
         func resourcePaths(forSDK sdk: String) -> [String] {
             resourceFiles.filter { $0.isBuilt(forSDK: sdk) }.map(\.path)
@@ -328,6 +374,10 @@ struct XcodeProject {
     let synchronizedFolderPaths: [String]
     /// Remote packages the project declares, by repository URL.
     let remotePackageURLs: [String]
+    /// Every header the project's groups reference, relative to its folder, sorted: what
+    /// Xcode's project header map holds, by which a quoted import finds a header by name
+    /// wherever in the project it sits, whatever target it belongs to (B-77 item 4).
+    let headerPaths: [String]
 
     func configuration(named name: String) -> BuildConfiguration? {
         configurations.first { $0.name == name }
@@ -489,6 +539,13 @@ struct XcodeProject {
             .filter { $0["isa"] as? String == "XCRemoteSwiftPackageReference" }
             .compactMap { $0["repositoryURL"] as? String }
             .sorted()
+        headerPaths = Set(objects.compactMap { id, object -> String? in
+            guard object["isa"] as? String == "PBXFileReference", let path = object["path"] as? String,
+                  XcodeFormulaEmitter.isHeader(path) else {
+                return nil
+            }
+            return reader.path(of: id)
+        }).sorted()
 
         let targetIDs = (root["targets"] as? [String] ?? []).filter { objects[$0]?["isa"] as? String == "PBXNativeTarget" }
         var targets = try targetIDs.compactMap { targetID -> Target? in
@@ -684,6 +741,44 @@ struct XcodeProject {
             return path(of: id).map { [$0] } ?? []
         }
 
+        /// What one entry of a frameworks phase links, by where its file is.
+        enum LinkedFile {
+            case sdkFramework(String)
+            case sdkLibrary(String)
+            case projectFramework(String)
+            case projectLibrary(String)
+        }
+
+        /// A frameworks phase's file by where it is: the SDK's — `sourceTree = SDKROOT`, or an
+        /// absolute path into the system (Sequel Ace's `/usr/lib/libssl.dylib` was one) —
+        /// named, and one in the project's tree by its path. Nil for a product another target
+        /// builds (`BUILT_PRODUCTS_DIR`), and for a file that is neither framework nor library.
+        func linkedFile(_ fileRefID: String) -> LinkedFile? {
+            guard let reference = objects[fileRefID], let filePath = reference["path"] as? String else {
+                return nil
+            }
+            let fileName = (filePath as NSString).lastPathComponent
+            let isFramework = (fileName as NSString).pathExtension == "framework"
+            let libraryName = LinkedFiles.libraryName(ofFile: fileName)
+            guard isFramework || libraryName != nil else {
+                return nil
+            }
+            let sdkFile: LinkedFile? = isFramework ? .sdkFramework((fileName as NSString).deletingPathExtension)
+                                                   : libraryName.map(LinkedFile.sdkLibrary)
+            switch reference["sourceTree"] as? String ?? "<group>" {
+            case "SDKROOT", "DEVELOPER_DIR", "<absolute>":
+                return sdkFile
+            case "BUILT_PRODUCTS_DIR":
+                return nil
+            default:
+                // A reference under a group rooted in the SDK has no path in the project.
+                guard let path = path(of: fileRefID) else {
+                    return sdkFile
+                }
+                return isFramework ? .projectFramework(path) : .projectLibrary(path)
+            }
+        }
+
         /// A file reference to a plain folder, which Xcode copies whole: `folder` is the
         /// type of one, where a catalog is `folder.assetcatalog` and a group is no file
         /// reference at all.
@@ -745,6 +840,8 @@ struct XcodeProject {
             // app links LanguageServerProtocol and LanguageClient through the phase alone.
             var productDependencyIDs = target["packageProductDependencies"] as? [String] ?? []
             var frameworks: [String] = []
+            var linkedFiles = LinkedFiles()
+            var embeddedFrameworks: [String] = []
             var embeddedExtensions: [String] = []
             var sourceFiles: [BuildFile] = []
             var resourceFiles: [BuildFile] = []
@@ -766,22 +863,33 @@ struct XcodeProject {
                         filters.insert(single)
                     }
                     let isFolderReference = isFolderReference(fileRefID)
+                    let compilerFlags = (buildFile["settings"] as? [String: Any])?["COMPILER_FLAGS"] as? String
                     return paths(ofFileReference: fileRefID).map {
-                        BuildFile(path: $0, platformFilters: filters, isFolderReference: isFolderReference)
+                        BuildFile(path: $0, platformFilters: filters, isFolderReference: isFolderReference,
+                                  compilerFlags: compilerFlags.flatMap { $0.isEmpty ? nil : $0 })
                     }
                 }
                 switch isa {
                 case "PBXFrameworksBuildPhase":
-                    frameworks += fileRefs
-                        .compactMap { $0["path"] as? String }
-                        .filter { $0.hasSuffix(".framework") }
-                        .map { ($0 as NSString).lastPathComponent.replacingOccurrences(of: ".framework", with: "") }
+                    for fileRefID in fileRefIDs {
+                        switch linkedFile(fileRefID) {
+                        case .sdkFramework(let name):  frameworks.append(name)
+                        case .sdkLibrary(let name):    linkedFiles.sdkLibraries.append(name)
+                        case .projectFramework(let path): linkedFiles.frameworks.append(path)
+                        case .projectLibrary(let path):   linkedFiles.libraries.append(path)
+                        case nil:                      break
+                        }
+                    }
                     productDependencyIDs += buildFiles.compactMap { $0["productRef"] as? String }
                 case "PBXCopyFilesBuildPhase":
-                    // dstSubfolderSpec 13 is PlugIns: where an app embeds its extensions.
+                    // dstSubfolderSpec 13 is PlugIns: where an app embeds its extensions; 10
+                    // is Frameworks.
                     let destination = (phase["dstSubfolderSpec"] as? String) ?? (phase["dstSubfolderSpec"] as? Int).map(String.init)
                     if destination == "13" {
                         embeddedExtensions += fileRefs.compactMap { $0["path"] as? String }
+                    }
+                    if destination == "10" {
+                        embeddedFrameworks += fileRefs.compactMap { ($0["path"] as? String).map { ($0 as NSString).lastPathComponent } }
                     }
                 case "PBXSourcesBuildPhase":
                     // A target that lists its files rather than owning a folder (B-77):
@@ -825,6 +933,8 @@ struct XcodeProject {
                                embeddedExtensions: embeddedExtensions.sorted(),
                                resourceFiles: resourceFiles.sorted { $0.path < $1.path },
                                sourceFiles: sourceFiles.sorted { $0.path < $1.path })
+            built.linkedFiles = linkedFiles
+            built.embeddedFrameworks = embeddedFrameworks.sorted()
             // A plugin is a target dependency on a product Xcode names `plugin:<name>`.
             built.plugins = (target["dependencies"] as? [String] ?? []).compactMap { dependencyID -> String? in
                 guard let productName = object(object(dependencyID)?["productRef"] as? String)?["productName"] as? String,

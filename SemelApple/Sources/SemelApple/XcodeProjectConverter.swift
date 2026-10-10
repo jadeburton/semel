@@ -69,7 +69,14 @@ public struct XcodeProjectConverter: Node {
     /// project's other errors are (B-77 item 3).
     /// 19: a failure is published as an `ErrorDocument`, the typed value a client renders,
     /// where it was a sentence (B-145).
-    public static let implementationVersion = 19
+    /// 20: a C-family source finds headers the way Xcode's header map finds them — every
+    /// header the project references on `-iquote` by its folder and by name under the
+    /// product — with the prefix header forced in, the Swift's Objective-C interface on an
+    /// `-I`, the header search paths read and walked, a source's own `COMPILER_FLAGS`
+    /// passed after the target's, the SDK's libraries linked by name, and a framework of
+    /// the project's tree compiled and linked against as the tree it is and embedded where
+    /// a copy-files phase puts it (B-77 item 4).
+    public static let implementationVersion = 20
 
     // MARK: Ports
 
@@ -158,6 +165,12 @@ public struct XcodeProjectConverter: Node {
         }
     }
 
+    /// `sequel-ace` for `sequel-ace.xcodeproj`: what Xcode gives a build as `PROJECT_NAME`,
+    /// which `SWIFT_OBJC_INTERFACE_HEADER_NAME = $(PROJECT_NAME)-Swift.h` names.
+    var projectName: String {
+        get throws { ((Path(try projectPath).lastComponent ?? "") as NSString).deletingPathExtension }
+    }
+
     /// The folder holding the project, which its paths are relative to.
     var projectFolder: String {
         get throws { (Path(try projectPath).deletingLastComponent ?? Path("")).string }
@@ -243,7 +256,7 @@ public struct XcodeProjectConverter: Node {
         func evaluatedSettings(of target: XcodeProject.Target) throws -> XcodeBuildSettings {
             try XcodeBuildSettings.resolve(project: project, target: target, configuration: configurationName, sdk: sdk,
                                            xcconfig: { expansions[$0]?.assignments },
-                                           extra: ["TARGET_NAME": target.name])
+                                           extra: ["TARGET_NAME": target.name, "PROJECT_NAME": try projectName])
         }
         let application: XcodeProject.Target
         do {
@@ -292,6 +305,26 @@ public struct XcodeProjectConverter: Node {
             walkedRoots.append(folder)
             specs[Self.folders]?[folder] = .folderTree(at: folder)
         }
+        // The folders the targets' search paths name, walked too, so the emitter knows what
+        // a recursive entry and a framework search path hold (B-77 item 4). A search path
+        // naming a folder the clone does not have is common — a `Carthage/Build` never
+        // built — so one that is not there holds nothing, where a missing source folder
+        // is waited on.
+        var searchFolders: [String] = []
+        do {
+            for target in bundleTargets {
+                for entry in XcodeSearchPaths(settings: try evaluatedSettings(of: target)).folders {
+                    let path = entry.path.isEmpty ? projectFolder : "\(projectFolder)/\(entry.path)"
+                    guard !walkedRoots.contains(path), !searchFolders.contains(path) else {
+                        continue
+                    }
+                    searchFolders.append(path)
+                    specs[Self.folders]?[path] = .folderTree(at: path)
+                }
+            }
+        } catch let failure as XcodeProjectError {
+            return failed(failure.errorCondition, specs: specs)
+        }
         // A folder the group names in `explicitFolders` is one item, copied whole.
         let explicitFolderPaths = Set(bundleTargets.flatMap(\.synchronizedFolders).flatMap { folder in
             folder.explicitFolders.map { "\(projectFolder)/\(folder.path)/\($0)" }
@@ -300,7 +333,7 @@ public struct XcodeProjectConverter: Node {
         // whole by its own node, and a folder copied whole by a `FolderTreeBuilder`, each
         // walking it itself; only a group is read here.
         var arrived: [String: FolderManifest] = [:]
-        for root in walkedRoots {
+        for root in walkedRoots + searchFolders {
             guard let tree = trees[root] else {
                 continue
             }
@@ -344,6 +377,9 @@ public struct XcodeProjectConverter: Node {
         guard walkedRoots.allSatisfy({ trees[$0] != nil }) else {
             return pending("waiting for the target's folders", specs: specs)
         }
+        guard searchFolders.allSatisfy({ Self.hasSettled(input.inputValues[Self.folders]?[$0]) }) else {
+            return pending("waiting for the folders the search paths name", specs: specs)
+        }
         guard packageSearch.isComplete else {
             return pending("looking for local packages in the synchronized folders", specs: specs)
         }
@@ -359,7 +395,7 @@ public struct XcodeProjectConverter: Node {
         }
 
         var listings: [String: XcodeFormulaEmitter.FolderListing] = [:]
-        for sourceFolder in Set(sourceFolders + lendingFolders).sorted() {
+        for sourceFolder in Set(sourceFolders + lendingFolders + searchFolders).sorted() {
             var listing = XcodeFormulaEmitter.FolderListing()
             for (folder, manifest) in arrived.sorted(by: { $0.key < $1.key })
                 where folder == sourceFolder || folder.hasPrefix(sourceFolder + "/") {
@@ -418,6 +454,17 @@ public struct XcodeProjectConverter: Node {
         return Path("\(projectFolder)/\(relativePath)").resolvingDotSegments?.string
     }
 
+    /// Whether a wire has its answer: a value, or the absence of one that is final — a
+    /// folder nobody pushed. Not yet wired, or pending, is still to come.
+    static func hasSettled(_ value: NodeValue?) -> Bool {
+        switch value {
+        case nil, .noValue(.pending):
+            return false
+        default:
+            return true
+        }
+    }
+
     /// What has arrived for one xcconfig file. A wire with no answer yet, or a pending one,
     /// is waited on; any other absence of a value is a file nobody pushed.
     static func xcconfigFile(at path: String?, values: [String: NodeValue]) -> XcconfigFile {
@@ -466,7 +513,7 @@ public struct XcodeProjectConverter: Node {
         for target in [application] + embedded {
             let settings = try XcodeBuildSettings.resolve(project: project, target: target, configuration: configurationName, sdk: sdk,
                                                            xcconfig: { expansions[$0]?.assignments },
-                                                           extra: ["TARGET_NAME": target.name])
+                                                           extra: ["TARGET_NAME": target.name, "PROJECT_NAME": try projectName])
             undefinedNames.formUnion(settings.unresolvedReferences)
         }
 

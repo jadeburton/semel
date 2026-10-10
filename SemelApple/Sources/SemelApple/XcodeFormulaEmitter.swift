@@ -558,6 +558,14 @@ struct XcodeFormulaEmitter {
         if !compilerArguments.isEmpty {
             compilerLiterals["arguments"] = compilerArguments.joined(separator: ",")
         }
+        // The Objective-C interface of the target's Swift, which its Objective-C imports by
+        // the name the settings give it — Xcode's default is `<Module>-Swift.h` — and which
+        // the compiler writes only when there is Objective-C to import it (B-77 item 4).
+        let objectiveCHeaderName = objectiveC.sources.isEmpty ? nil
+            : (settings["SWIFT_OBJC_INTERFACE_HEADER_NAME"].flatMap { $0.isEmpty ? nil : $0 } ?? "\(identity.moduleName)-Swift.h")
+        if let objectiveCHeaderName {
+            compilerLiterals["objectiveCHeaderName"] = objectiveCHeaderName
+        }
         // What the target takes from another target's folder: sources one by one on the
         // compiler, resources with the target's own. A listed file goes the same way,
         // keyed by its whole path: two groups may each hold a `View.swift`, and the key
@@ -567,21 +575,40 @@ struct XcodeFormulaEmitter {
         } + listedSources.map {
             "        \(Self.quoted($0)): StaticFile(path: \(Self.quoted("\(build.projectFolder)/\($0)"))).output"
         }
-        // The bridging header by itself, and the target's headers as the tree it imports
-        // from — the shape a package's C target hands a Swift importer, `headers<Target>()`.
+        // The target's headers as one tree, by their paths relative to the project's folder:
+        // what its bridging header imports from — the shape a package's C target hands a
+        // Swift importer, `headers_<Target>()` — and its C-family sources' header map.
+        let headerTree = objectiveC.headersBesideTheBridgingHeader
+        let hasHeaderTree = !headerTree.isEmpty && (objectiveC.bridgingHeader != nil || !objectiveC.sources.isEmpty)
+        if hasHeaderTree {
+            blocks.append(Self.treeBuilder(named: "headers_\(name)", files: headerTree))
+        }
+        // The bridging header by itself, and the tree beside it.
         var bridgingWires = ""
         if let bridgingHeader = objectiveC.bridgingHeader {
             bridgingWires += ",\n        bridgingHeader: [\(Self.quoted(bridgingHeader)): "
                            + "StaticFile(path: \(Self.quoted("\(build.projectFolder)/\(bridgingHeader)"))).output]"
-            let headers = objectiveC.headers.filter { $0.key != bridgingHeader }
-            if !headers.isEmpty {
-                blocks.append(
-                    "func headers_\(name)() =\n" +
-                    "    TreeBuilder(input: [\n" +
-                    headers.map { "        \(Self.quoted($0.key)): StaticFile(path: \(Self.quoted($0.path))).output" }.joined(separator: ",\n") +
-                    "\n    ]).files")
+            if hasHeaderTree {
                 bridgingWires += ",\n        headerTrees: [\(Self.quoted(target.name)): headers_\(name)().files]"
             }
+        }
+
+        // ── frameworks and libraries of the project's own tree (B-77 item 4) ──
+        // A framework the frameworks phase names by its place in the project — vendored,
+        // prebuilt — travels as the tree it is, links kept: compiled against, linked by
+        // name, and embedded where a copy-files phase puts it. One a framework search path
+        // finds without the phase naming it is compiled against and nothing more.
+        let projectFrameworks = projectFrameworks(of: target, settings: settings, listing: listing)
+        var compiledFrameworkTrees: [String] = []
+        if !projectFrameworks.linked.isEmpty {
+            blocks.append(Self.frameworkMerger(named: "linkedFrameworks_\(name)", frameworks: projectFrameworks.linked,
+                                               projectFolder: build.projectFolder))
+            compiledFrameworkTrees.append("        \(Self.quoted("\(target.name) linked")): linkedFrameworks_\(name)().files")
+        }
+        if !projectFrameworks.searched.isEmpty {
+            blocks.append(Self.frameworkMerger(named: "searchedFrameworks_\(name)", frameworks: projectFrameworks.searched,
+                                               projectFolder: build.projectFolder))
+            compiledFrameworkTrees.append("        \(Self.quoted("\(target.name) searched")): searchedFrameworks_\(name)().files")
         }
 
         // ── resources ────────────────────────────────────────────────────────
@@ -716,7 +743,7 @@ struct XcodeFormulaEmitter {
             (folderWires.isEmpty ? "" : ",\n        inputFolder: [\n" + folderWires.joined(separator: ",\n") + "\n        ]") +
             (borrowedSources.isEmpty ? "" : ",\n        extraSourceFiles: [\n" + borrowedSources.joined(separator: ",\n") + "\n        ]") +
             (moduleTrees.isEmpty ? "" : ",\n        moduleTrees: [\n" + moduleTrees.joined(separator: ",\n") + "\n        ]") +
-            (frameworkTrees.isEmpty ? "" : ",\n        frameworkTrees: [\n" + frameworkTrees.joined(separator: ",\n") + "\n        ]") +
+            Self.wires("frameworkTrees", frameworkTrees + compiledFrameworkTrees) +
             bridgingWires +
             "\n    )")
 
@@ -725,19 +752,48 @@ struct XcodeFormulaEmitter {
         // Xcode's header map lets a quoted import find — and linked into the executable.
         var objectEntries = ["'\(identity.moduleName).o': compiler_\(name)().object"]
         if !objectiveC.sources.isEmpty {
-            let headerFolderWires = objectiveC.headerFolders.map {
+            // What each preprocess is given besides its source: the header folders, the
+            // header map — the target's headers on `-iquote`, and by name under its product
+            // — the prefix header, and the frameworks (B-77 item 4).
+            var headerWires = Self.wires("headerFolders", objectiveC.headerFolders.map {
                 "            \(Self.quoted($0)): Folder(path: \(Self.quoted($0))).manifest"
+            })
+            if hasHeaderTree {
+                headerWires += ",\n        quoteHeaderTrees: [\(Self.quoted(build.projectFolder)): headers_\(name)().files]"
+                blocks.append(Self.treeBuilder(named: "targetHeaders_\(name)", files: objectiveC.targetHeaders(product: identity.productName)))
+            }
+            var includeTrees: [String] = []
+            if let objectiveCHeaderName {
+                includeTrees.append("'\(Self.generatedHeadersFolder)': TreeBuilder(input: [\(Self.quoted(objectiveCHeaderName)): "
+                                    + "compiler_\(name)().objectiveCHeader]).files")
+            }
+            if hasHeaderTree {
+                includeTrees.append("'\(Self.targetHeadersFolder)': targetHeaders_\(name)().files")
+            }
+            if !includeTrees.isEmpty {
+                headerWires += ",\n        headerTrees: [" + includeTrees.joined(separator: ", ") + "]"
+            }
+            if let prefixHeader = objectiveC.prefixHeader {
+                headerWires += ",\n        prefixHeader: [\(Self.quoted(prefixHeader)): StaticFile(path: \(Self.quoted(prefixHeader))).output]"
+            }
+            headerWires += Self.wires("frameworkTrees", compiledFrameworkTrees + frameworkTrees)
+            if !objectiveC.searchPathsOutside.isEmpty {
+                blocks.append("// Search paths and a prefix header outside the project, which no push can fill, are left out (B-77 item 4): "
+                              + objectiveC.searchPathsOutside.joined(separator: ", "))
             }
             func preprocessor(named function: String, literals: [String: String]) -> String {
                 "func \(function)(path) =\n" +
                 "    ClangPreprocessor(\n" +
                 "        configuration: ['config': \(configuration(namespace: Self.clangPreprocessorNamespace, literals: literals))],\n" +
-                "        input: [path: StaticFile(path: path)],\n" +
-                "        headerFolders: [\n" + headerFolderWires.joined(separator: ",\n") + "\n        ]\n" +
-                "    )"
+                "        input: [path: StaticFile(path: path)]" +
+                headerWires +
+                "\n    )"
             }
             blocks.append(preprocessor(named: "preprocess_\(name)", literals: objectiveC.preprocessorLiterals))
             let compilerConfiguration = configuration(namespace: Self.clangCompilerNamespace, literals: objectiveC.compilerLiterals)
+            let compilerFrameworks = compiledFrameworkTrees + frameworkTrees
+            let compilerFrameworkWires = compilerFrameworks.isEmpty ? ""
+                : ", frameworkTrees: [" + compilerFrameworks.map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: ", ") + "]"
             // A source with flags of its own (`additionalCompilerFlagsByRelativePath`) is
             // preprocessed and compiled by nodes of its own, the flags after the target's,
             // as Xcode passes them after `OTHER_CFLAGS`.
@@ -754,12 +810,15 @@ struct XcodeFormulaEmitter {
                                                                 literals: objectiveC.compilerLiterals(adding: fileFlags))
                 }
                 objectEntries.append("\(Self.quoted(source + ".o")): ClangCompiler(configuration: ['config': \(sourceCompilerConfiguration)], "
-                                     + "input: [\(Self.quoted(source + ".p")): \(preprocessorFunction)(path: \(Self.quoted(source)))]).output")
+                                     + "input: [\(Self.quoted(source + ".p")): \(preprocessorFunction)(path: \(Self.quoted(source)))]"
+                                     + "\(compilerFrameworkWires)).output")
             }
         }
 
         // ── the executable ───────────────────────────────────────────────────
         var linkerArguments: [String] = target.frameworks.sorted().flatMap { ["-framework", $0] }
+        // The SDK's libraries the frameworks phase names, `-lz` for `libz.tbd` (B-77 item 4).
+        linkerArguments += target.linkedFiles.sdkLibraries.map { "-l\($0)" }
         if target.isExtension {
             // What ld needs for an app extension, through the swiftc driver: its entry
             // point, and the flag that marks it safe for one.
@@ -769,8 +828,14 @@ struct XcodeFormulaEmitter {
         if !linkerArguments.isEmpty {
             linkerLiterals["arguments"] = linkerArguments.joined(separator: ",")
         }
+        // A library in the project's tree is linked by its file, where the phase names it.
+        for library in target.linkedFiles.libraries {
+            objectEntries.append("\(Self.quoted(library)): StaticFile(path: \(Self.quoted("\(build.projectFolder)/\(library)"))).output")
+        }
+        let linkedFrameworkTrees = frameworkTrees
+            + (projectFrameworks.linked.isEmpty ? [] : ["        \(Self.quoted("\(target.name) linked")): linkedFrameworks_\(name)().files"])
         // Passed as an `-rpath` only when the frameworks trees hold a framework.
-        if !frameworkTrees.isEmpty {
+        if !linkedFrameworkTrees.isEmpty {
             linkerLiterals["frameworksRunpath"] = layout.frameworksRunpath
         }
         // C++ or Objective-C++ among the target's own sources brings the C++ runtime, as a
@@ -789,12 +854,17 @@ struct XcodeFormulaEmitter {
             "        input: \(linkerInput)" +
             (objectTrees.isEmpty ? "" : ",\n        objectTrees: [\n" + objectTrees.joined(separator: ",\n") + "\n        ]") +
             (linkRequirements.isEmpty ? "" : ",\n        linkRequirements: [\n" + linkRequirements.joined(separator: ",\n") + "\n        ]") +
-            (frameworkTrees.isEmpty ? "" : ",\n        frameworkTrees: [\n" + frameworkTrees.joined(separator: ",\n") + "\n        ]") +
+            Self.wires("frameworkTrees", linkedFrameworkTrees) +
             "\n    ).output"))
         // The dynamic ones embedded where the executable's runpath finds them, and signed
-        // with the bundle on the Mac.
-        if !embeddedFrameworkTrees.isEmpty {
-            products.append(.tree(folder: layout.frameworksFolder, inputs: "\n" + embeddedFrameworkTrees.joined(separator: ",\n") + "\n    "))
+        // with the bundle on the Mac; and each of the project's own a copy-files phase
+        // embeds, as the tree the project holds.
+        let embeddedProjectFrameworks = projectFrameworks.linked.filter {
+            target.embeddedFrameworks.contains(($0 as NSString).lastPathComponent)
+        }.map { "        \(Self.quoted(($0 as NSString).lastPathComponent)): \(Self.frameworkTree(at: $0, projectFolder: build.projectFolder))" }
+        if !embeddedFrameworkTrees.isEmpty || !embeddedProjectFrameworks.isEmpty {
+            let inputs = embeddedFrameworkTrees + embeddedProjectFrameworks
+            products.append(.tree(folder: layout.frameworksFolder, inputs: "\n" + inputs.joined(separator: ",\n") + "\n    "))
         }
 
         for (index, catalog) in stringCatalogs.enumerated() {
@@ -922,6 +992,62 @@ struct XcodeFormulaEmitter {
     }
 
     // MARK: - Helpers
+
+    /// `,\n        <port>: [\n<items>\n        ]`, or nothing for no items: one port of a call
+    /// laid out as the emitter lays them, each item already indented.
+    static func wires(_ port: String, _ items: [String]) -> String {
+        items.isEmpty ? "" : ",\n        \(port): [\n" + items.joined(separator: ",\n") + "\n        ]"
+    }
+
+    /// `func <name>() = TreeBuilder(…).files` over files by their key in the tree and their
+    /// path in the input file system.
+    static func treeBuilder(named name: String, files: [(key: String, path: String)]) -> String {
+        "func \(name)() =\n" +
+        "    TreeBuilder(input: [\n" +
+        files.map { "        \(quoted($0.key)): StaticFile(path: \(quoted($0.path))).output" }.joined(separator: ",\n") +
+        "\n    ]).files"
+    }
+
+    /// The sandbox folder a target's headers by name are laid under, `<folder>/<Product>/Foo.h`.
+    static let targetHeadersFolder = "target-headers"
+    /// The sandbox folder the headers a build writes are laid under — the `-Swift.h` — as
+    /// Xcode's `DerivedSources` is a search path.
+    static let generatedHeadersFolder = "derived-headers"
+
+    /// A framework of the project's tree, relative to its folder, as the tree it is, under
+    /// its own name: `FolderTreeBuilder` keeps a versioned framework's links as links.
+    static func frameworkTree(at path: String, projectFolder: String) -> String {
+        "FolderTreeBuilder(under: \(quoted((path as NSString).lastPathComponent)), "
+            + "folder: ['folder': Folder(path: \(quoted("\(projectFolder)/\(path)"))).manifest]).files"
+    }
+
+    /// `func <name>() = TreeMerger(…).files` over the frameworks at `frameworks`, relative to
+    /// the project's folder, each by its path.
+    static func frameworkMerger(named name: String, frameworks: [String], projectFolder: String) -> String {
+        "func \(name)() =\n" +
+        "    TreeMerger(input: [\n" +
+        frameworks.map { "        \(quoted($0)): \(frameworkTree(at: $0, projectFolder: projectFolder))" }.joined(separator: ",\n") +
+        "\n    ]).files"
+    }
+
+    /// The frameworks of the project's tree a target is built against, relative to the
+    /// project's folder: the ones its frameworks phase links, and the ones a framework
+    /// search path of the project finds, directly in a folder it names, that the phase does
+    /// not — each by name once, the phase's first.
+    func projectFrameworks(of target: XcodeProject.Target, settings: XcodeBuildSettings,
+                           listing: (String) -> FolderListing?) -> (linked: [String], searched: [String]) {
+        let linked = target.linkedFiles.frameworks
+        var names = Set(linked.map { ($0 as NSString).lastPathComponent })
+        var searched: [String] = []
+        for entry in XcodeSearchPaths(settings: settings).frameworkSearchPaths {
+            let folderPath = entry.path.isEmpty ? build.projectFolder : "\(build.projectFolder)/\(entry.path)"
+            for folder in (listing(folderPath)?.folders ?? []).sorted()
+            where !folder.contains("/") && (folder as NSString).pathExtension == "framework" && names.insert(folder).inserted {
+                searched.append(entry.path.isEmpty ? folder : "\(entry.path)/\(folder)")
+            }
+        }
+        return (linked, searched)
+    }
 
     /// `ConfigMerger(base: ['settings': ConfigFilter(...)], override: ['literals':
     /// SettingsLiteral(<literals>).output]).output`: the namespace's block of the project's
@@ -1167,9 +1293,14 @@ struct XcodeFormulaEmitter {
     struct ObjectiveCSources {
         /// Every C-family source, by its path in the input file system, sorted.
         var sources: [String] = []
-        /// The preprocessor's header folders: the target's synchronized folders and the
-        /// folder of each listed source outside them. Sorted.
+        /// The preprocessor's header folders, `-I` each: the target's synchronized folders,
+        /// and the folders its header search paths name (B-77 item 4). Sorted.
         var headerFolders: [String] = []
+        /// `GCC_PREFIX_HEADER`, by its path in the input file system (B-77 item 4).
+        var prefixHeader: String?
+        /// Search-path entries naming no folder of the project, which the formula says it
+        /// leaves out.
+        var searchPathsOutside: [String] = []
         var preprocessorLiterals: [String: String] = [:]
         var compilerLiterals: [String: String] = [:]
         /// `GCC_PREPROCESSOR_DEFINITIONS`, one `NAME` or `NAME=value` each.
@@ -1181,9 +1312,30 @@ struct XcodeFormulaEmitter {
         var compilesCxx = false
         /// `SWIFT_OBJC_BRIDGING_HEADER`, relative to the project's folder.
         var bridgingHeader: String?
-        /// Every header in the target's synchronized folders, by its path relative to the
-        /// project's folder (the key) and in the input file system (the path). Sorted.
+        /// Every header in the target's synchronized folders and every header the project's
+        /// groups reference, by its path relative to the project's folder (the key) and in
+        /// the input file system (the path). Sorted. What Xcode's header map finds a quoted
+        /// import in (B-77 item 4).
         var headers: [(key: String, path: String)] = []
+
+        /// The headers less the bridging header, which the Swift compiler is handed by
+        /// itself: the tree `headers_<Target>()` holds.
+        var headersBesideTheBridgingHeader: [(key: String, path: String)] {
+            headers.filter { $0.key != bridgingHeader }
+        }
+
+        /// The headers by file name under `<product>/`, the first of each name in path
+        /// order: the header map's `#import <Product/Foo.h>`.
+        func targetHeaders(product: String) -> [(key: String, path: String)] {
+            var seen = Set<String>()
+            return headers.compactMap { header in
+                let name = (header.key as NSString).lastPathComponent
+                guard seen.insert(name).inserted else {
+                    return nil
+                }
+                return (key: "\(product)/\(name)", path: header.path)
+            }
+        }
 
         /// The preprocessor's literals for a source with flags of its own: the target's
         /// `OTHER_CFLAGS`, then the source's.
@@ -1252,6 +1404,7 @@ struct XcodeFormulaEmitter {
         var result = ObjectiveCSources()
         var sources = Set<String>()
         var searchedFolders = Set<String>()
+        var headersByKey: [String: String] = [:]
         for (folder, folderPath) in sourceFolders {
             searchedFolders.insert(folderPath)
             for file in (listing(folderPath) ?? FolderListing()).files where !folder.excludes(file) && !Self.isInsideCatalog(file) {
@@ -1262,23 +1415,50 @@ struct XcodeFormulaEmitter {
                     }
                 }
                 if Self.isHeader(file) {
-                    result.headers.append((key: "\(folder.path)/\(file)", path: "\(folderPath)/\(file)"))
+                    headersByKey["\(folder.path)/\(file)"] = "\(folderPath)/\(file)"
                 }
             }
         }
-        let synchronizedPaths = sourceFolders.map(\.1)
-        let borrowedFlags = target.borrowedCompilerFlags
+        // Every header the project references, whichever target it is in, as Xcode's
+        // project header map holds them: a listed source finds `"SPConstants.h"` in another
+        // group's folder by name, which no folder of its own holds (B-77 item 4). They are
+        // its header map rather than its folders: a listed source's own folder is no search
+        // path, so a preprocess places the headers and not every source beside them.
+        // ISSUE: a header beside a listed source that the project does not reference is not
+        // placed, where Xcode finds it beside the includer.
+        for header in project.headerPaths where headersByKey[header] == nil {
+            headersByKey[header] = "\(build.projectFolder)/\(header)"
+        }
+        let borrowedFlags = target.borrowedCompilerFlags.merging(target.listedCompilerFlags) { borrowed, _ in borrowed }
         for relativePath in listed + target.borrowedFiles.filter(Self.isCFamilySource) {
             let path = "\(build.projectFolder)/\(relativePath)"
             sources.insert(path)
             if let flags = borrowedFlags[relativePath] {
                 result.fileFlags[path] = XcodeBuildSettings.words(flags)
             }
-            if !synchronizedPaths.contains(where: { path.hasPrefix($0 + "/") }) {
-                searchedFolders.insert((path as NSString).deletingLastPathComponent)
+        }
+        result.headers = headersByKey.keys.sorted().compactMap { key in headersByKey[key].map { (key: key, path: $0) } }
+
+        // The header search paths that name folders of the project, a recursive one with
+        // every folder below it. `USER_HEADER_SEARCH_PATHS` is an `-I` like the others.
+        // ISSUE: Xcode searches it for a quoted include alone unless `ALWAYS_SEARCH_USER_PATHS
+        // = YES`, so an angle include finds a header there that Xcode would not; and the
+        // folders are searched in path order, where Xcode searches them in the setting's.
+        let searchPaths = XcodeSearchPaths(settings: settings)
+        for entry in searchPaths.headerSearchPaths + searchPaths.userHeaderSearchPaths {
+            let entryPath = entry.path.isEmpty ? build.projectFolder : "\(build.projectFolder)/\(entry.path)"
+            for folder in XcodeSearchPaths.expanded(entry, listing: listing(entryPath)) {
+                searchedFolders.insert(folder.isEmpty ? build.projectFolder : "\(build.projectFolder)/\(folder)")
             }
         }
-        result.headers.sort { $0.key < $1.key }
+        result.searchPathsOutside = searchPaths.outside
+        if let prefixHeader = settings["GCC_PREFIX_HEADER"].map(Self.projectRelativePath), !prefixHeader.isEmpty {
+            if prefixHeader.hasPrefix("/") || prefixHeader.contains("$(") {
+                result.searchPathsOutside.append(prefixHeader)
+            } else {
+                result.prefixHeader = "\(build.projectFolder)/\(prefixHeader)"
+            }
+        }
         result.bridgingHeader = settings["SWIFT_OBJC_BRIDGING_HEADER"].map(Self.projectRelativePath).flatMap { $0.isEmpty ? nil : $0 }
         result.defines = settings.list("GCC_PREPROCESSOR_DEFINITIONS")
         result.otherFlags = settings.list("OTHER_CFLAGS")
