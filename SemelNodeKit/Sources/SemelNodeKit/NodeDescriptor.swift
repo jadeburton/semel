@@ -73,14 +73,26 @@ public struct NodeDescriptor {
     /// cannot pick another port off it — still passes its mode on.
     public let fileMetadataInputPorts: [String: String]
 
+    /// The property a formula's folder fills when the formula that names the node leaves it
+    /// out: `root` on `SwiftFormulaConverter`, which reads the build's configuration and
+    /// vendored dependencies from there.
+    ///
+    /// Filled by the formula's builder rather than defaulted by the node, because only the
+    /// builder knows which formula named it. A node defaulting to a folder it does know —
+    /// the package it converts — reads `semel.config` from inside a vendored package when a
+    /// formula names one directly, and makes ghosts there of files nobody will push.
+    public let formulaFolderProperty: String?
+
     public init(inputPorts: [InputPort] = [],
                 outputPorts: [String],
                 inputPortsToleratingAbsentValue: Set<String> = [],
-                fileMetadataInputPorts: [String: String] = [:]) {
+                fileMetadataInputPorts: [String: String] = [:],
+                formulaFolderProperty: String? = nil) {
         self.inputPorts = inputPorts
         self.outputPorts = outputPorts
         self.inputPortsToleratingAbsentValue = inputPortsToleratingAbsentValue
         self.fileMetadataInputPorts = fileMetadataInputPorts
+        self.formulaFolderProperty = formulaFolderProperty
     }
 
     /// Whether a value that will never arrive on this port is something the node minds.

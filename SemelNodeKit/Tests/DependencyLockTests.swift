@@ -62,6 +62,33 @@ final class DependencyLockTests: XCTestCase {
         }
     }
 
+    /// The dot-named resources a lock covers are one `hidden` line each, sorted, the one key
+    /// said more than once; a lock with none reads as a lock always did (B-143).
+    func test_theHiddenFilesAreOneLineEachSorted() throws {
+        var withHidden = grdb
+        withHidden.hiddenFiles = ["Sources/Kit/.config", ".env"].sorted()
+
+        XCTAssertEqual(try DependencyLock.parse(withHidden.text), withHidden)
+        let lines = withHidden.text.components(separatedBy: "\n")
+        XCTAssertEqual(Array(lines[6...7]), ["hidden    .env", "hidden    Sources/Kit/.config"])
+        XCTAssertFalse(grdb.text.contains("hidden"), grdb.text)
+        XCTAssertEqual(withHidden.hiddenFilesByFolder(under: Path("Dependencies/GRDB.swift")),
+                       ["Dependencies/GRDB.swift": [".env"], "Dependencies/GRDB.swift/Sources/Kit": [".config"]])
+    }
+
+    /// A `hidden` line names a dot-named file a push can send by its name: never a path
+    /// through a dot-named folder, never one climbing out, never a plain name, never twice.
+    func test_aHiddenPathAPushCannotSendIsRefused() {
+        for path in [".git/config", "../.env", "/abs/.env", "Sources/plain", "Sources//.env", "."] {
+            XCTAssertThrowsError(try DependencyLock.parse("content sha256:abc\nfold x\nhidden \(path)\n"), path) { error in
+                XCTAssertEqual(error as? DependencyLockError, .malformedHiddenFile(path, line: 3))
+            }
+        }
+        XCTAssertThrowsError(try DependencyLock.parse("content sha256:abc\nfold x\nhidden .env\nhidden .env\n")) { error in
+            XCTAssertEqual(error as? DependencyLockError, .malformedHiddenFile(".env", line: 4))
+        }
+    }
+
     func test_blankLinesCommentsAndExtraSpacesAreFree() throws {
         let text = """
 

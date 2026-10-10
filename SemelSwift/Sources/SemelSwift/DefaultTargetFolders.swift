@@ -18,11 +18,12 @@ import SemelNodeKit
 /// and takes the target's folder from what they list. A target none of them holds is the
 /// conversion's error, naming the folders tried, as SwiftPM's is; never a demand for a
 /// folder that is not there.
-struct DefaultTargetFolders {
+public struct DefaultTargetFolders {
 
     /// SwiftPM's predefined source folders for a regular, executable or system-library
-    /// target, in the order it tries them.
-    static let predefinedFolders = ["Sources", "Source", "src", "srcs"]
+    /// target, in the order it tries them. Public for `prepare`, which finds a target's
+    /// folder on disk by the same list.
+    public static let predefinedFolders = ["Sources", "Source", "src", "srcs"]
 
     /// One package, by its folder, and the targets in it that declare no `path:`.
     struct Package {

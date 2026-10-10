@@ -118,6 +118,27 @@ final class FolderOnDiskTests: XCTestCase {
                        "the lock's fold leaves dot-names out")
     }
 
+    /// A folder with its lock beside it has the dot-named files the lock names walked as
+    /// well, whether the walk starts above the lock or inside the locked folder, and folds
+    /// to the root `prepare` records for the folder told the same names (B-143).
+    func test_aDotNamedFileALockNamesIsWalkedAndFolded() throws {
+        try write("app/Dependencies/Pkg/Sources/Kit/.config", "declared")
+        try write("app/Dependencies/Pkg/Sources/Kit/Kit.swift", "kit")
+        try write("app/Dependencies/Pkg/.swiftlint.yml", "not declared")
+        let lock = DependencyLock(contentRoot: "abc", fold: FolderContentRoot.formatTag, hiddenFiles: ["Sources/Kit/.config"])
+        try write("app/Dependencies/Pkg.semel-lock", lock.text)
+
+        for start in ["app", "app/Dependencies/Pkg", "app/Dependencies/Pkg/Sources"] {
+            let pushed = FolderOnDisk.read(Path(start), under: root.path).entriesToPush.map(\.path.string)
+            XCTAssertTrue(pushed.contains("app/Dependencies/Pkg/Sources/Kit/.config"), "\(start): \(pushed)")
+            XCTAssertFalse(pushed.contains("app/Dependencies/Pkg/.swiftlint.yml"), "\(start): \(pushed)")
+        }
+        let package = root.appendingPathComponent("app/Dependencies/Pkg")
+        let walked = FolderOnDisk.read(Path("app/Dependencies/Pkg"), under: root.path)
+        XCTAssertEqual(walked.contentRoot, try FolderContentRoot.root(ofFolderAt: package, hiddenFiles: lock.hiddenFiles))
+        XCTAssertNotEqual(walked.contentRoot, try FolderContentRoot.root(ofFolderAt: package))
+    }
+
     private func subfolder(named name: String, of folder: FolderOnDisk) -> FolderOnDisk? {
         for case .folder(let subfolder) in folder.children where subfolder.path.lastComponent == name {
             return subfolder

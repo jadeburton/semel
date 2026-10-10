@@ -142,9 +142,10 @@ final class LockFoldParityTests: SemelCoreTestCase {
     /// the graph below the package — and asks that the engine's pushed root, which the lock
     /// check compares, is the one the lock would record. Where nothing but the push touched
     /// the package, the whole root is that root too, as the graph holds only what was sent.
-    private func assertTheFoldsAgree(_ shape: String, onlyThePush: Bool = true, afterPush: () throws -> Void = {},
+    private func assertTheFoldsAgree(_ shape: String, hiddenFiles: [String] = [], onlyThePush: Bool = true,
+                                     afterPush: () throws -> Void = {},
                                      file: StaticString = #filePath, line: UInt = #line) throws {
-        let recorded = try FolderContentRoot.root(ofFolderAt: packageURL)
+        let recorded = try FolderContentRoot.root(ofFolderAt: packageURL, hiddenFiles: hiddenFiles)
         try push()
         try afterPush()
         try Folder.flushDirtyManifests()
@@ -314,21 +315,44 @@ final class LockFoldParityTests: SemelCoreTestCase {
         try assertTheFoldsAgree("dot names")
     }
 
-    /// A dot-named file the graph holds because it was pushed by its name — `build`'s
-    /// follow of a missing source, `push <path>/.swiftlint.yml`, a watcher's `--only` —
-    /// is in the folder's whole root and never in the copy's fold. The pushed root leaves
-    /// it out as the walk does, so the lock holds.
-    func test_aDotNamedFileHeldByNameIsLeftOutOfTheComparedRoot() throws {
+    /// A dot-named file the package's manifest declares as a resource is named by the lock
+    /// `prepare` writes, which folds it in; a push of the folder, which reads the lock
+    /// beside it, sends it, so the engine's pushed root holds it and the two agree: the
+    /// file the build reads is locked (B-143). A dot-name the lock does not name is left
+    /// out by both, at any level.
+    func test_aDotNamedFileTheLockNamesIsLockedAndPushed() throws {
+        try write("Sources/Lib/Code.swift", "code\n")
+        try write("Sources/Lib/Resources/.config.json", "{}\n")
+        try write(".env", "declared at the root\n")
+        try write("Sources/Lib/.swiftlint.yml", "rules\n")
+        let hidden = [".env", "Sources/Lib/Resources/.config.json"]
+        let lock = DependencyLock(contentRoot: "-", fold: FolderContentRoot.formatTag, hiddenFiles: hidden)
+        try Data(lock.text.utf8).write(to: disk.appendingPathComponent(DependencyLock.lockPath(forDependencyAt: package)))
+
+        try assertTheFoldsAgree("declared dot-file", hiddenFiles: hidden)
+
+        XCTAssertNotEqual(try FolderContentRoot.root(ofFolderAt: packageURL, hiddenFiles: hidden),
+                          try FolderContentRoot.root(ofFolderAt: packageURL), "the named files are in the root")
+        XCTAssertEqual(try leftOut(), [])
+    }
+
+    /// A dot-named file pushed into the folder by its name and named by no lock — `push
+    /// <path>/.swiftlint.yml`, a watcher's `--only` — is in the pushed root, as a push of
+    /// the folder sends every dot-named file the graph holds: the build would read a file
+    /// the lock does not describe, and the lock fails on it rather than leave it out.
+    func test_aDotNamedFileHeldByNameAndNamedByNoLockIsCompared() throws {
         try write("Sources/Lib/Code.swift", "code\n")
         try write("Sources/Lib/.swiftlint.yml", "rules\n")
-        try write(".spi.yml", "version: 1\n")
-        try assertTheFoldsAgree("held dot-file", onlyThePush: false) {
-            for name in ["Sources/Lib/.swiftlint.yml", ".spi.yml"] {
-                _ = try StaticFile.push(Array("held\n".utf8), mode: FileMetadata.defaultMode, at: Path("\(package)/\(name)"))
-            }
-        }
-        XCTAssertEqual(try leftOut(), [LeftOutEntry(path: ".spi.yml", reason: .dotNamed),
-                                       LeftOutEntry(path: "Sources/Lib/.swiftlint.yml", reason: .dotNamed)])
+        let recorded = try FolderContentRoot.root(ofFolderAt: packageURL)
+        try push()
+        _ = try StaticFile.push(Array("rules\n".utf8), mode: FileMetadata.defaultMode, at: Path("\(package)/Sources/Lib/.swiftlint.yml"))
+        try Folder.flushDirtyManifests()
+
+        let node = try XCTUnwrap(try engine.inputFileSystem.childNode(path: Path(package)))
+        XCTAssertNotEqual(try node.readFromOutputPort(Folder.pushedContentRootOutputPort).expectValue(), recorded)
+        XCTAssertEqual(try node.readFromOutputPort(Folder.pushedContentRootOutputPort).expectValue(),
+                       try FolderContentRoot.root(ofFolderAt: packageURL, hiddenFiles: ["Sources/Lib/.swiftlint.yml"]))
+        XCTAssertEqual(try leftOut(), [], "nothing is left out: the file is compared")
     }
 
     /// A name a converter asks for below the package that the copy does not have — a

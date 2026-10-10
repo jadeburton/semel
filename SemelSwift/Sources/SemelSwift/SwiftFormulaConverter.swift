@@ -180,7 +180,8 @@ struct SwiftFormulaConverter: Node {
         outputPorts: [formulaOutput, infoLog],
         // A lock nobody wrote is a state the converter reads — it says so in a notice and
         // builds — so the report does not name the unpushed file as a failure.
-        inputPortsToleratingAbsentValue: [dependencyLocks]
+        inputPortsToleratingAbsentValue: [dependencyLocks],
+        formulaFolderProperty: rootProperty
     )
 
     /// The wires a `path` property stands for: the package folder's manifest, and a reader
@@ -202,15 +203,24 @@ struct SwiftFormulaConverter: Node {
         ]
     }
 
-    /// Where the build's config file and vendored dependencies live: the `root` property
-    /// when a formula gives one — `SwiftFormulaConverter(path: <Timeline>, root: <.>)` —
-    /// otherwise the package's own folder. Several packages included by one formula share
-    /// one `Dependencies` folder and one `semel.config` this way, instead of vendoring and
-    /// compiling their common closure once per package (B-56). Sources are never affected:
-    /// a target's files are under its package whatever the root.
+    /// Where the build's config file and vendored dependencies live: the `root` property,
+    /// `SwiftFormulaConverter(path: <Timeline>, root: <.>)`. Several packages included by
+    /// one formula share one `Dependencies` folder and one `semel.config` this way, instead
+    /// of vendoring and compiling their common closure once per package (B-56). Sources are
+    /// never affected: a target's files are under its package whatever the root.
+    ///
+    /// A formula that leaves `root` out has its own folder filled in by its builder
+    /// (`formulaFolderProperty`), never the package's: a formula naming a vendored package
+    /// by its path, `SwiftFormulaConverter(path: <Dependencies/X>)`, would otherwise read
+    /// `semel.config` and `semel.machine.config` from inside the copy, where nobody pushes
+    /// either. Only a converter no formula named — one a test wires by hand — has no root,
+    /// and takes its package's folder.
     private func buildRoot(defaultingTo packageFolder: String) -> String {
-        thisNode.properties["root"] ?? packageFolder
+        thisNode.properties[Self.rootProperty] ?? packageFolder
     }
+
+    /// The property `buildRoot` reads.
+    static let rootProperty = "root"
 
     // MARK: - Processing
 

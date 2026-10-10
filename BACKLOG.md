@@ -344,21 +344,39 @@ use. `selectPath` decoding whole nodes is now the push queue's largest single co
 
 ## Design, correctness and code quality
 
-**B-144** `open` — **Deleting a running server's home sometimes fails with a permission error.**
+**B-144** `done` — **Deleting a running server's home sometimes failed with a permission error.**
 Seen 2026-10-09 twice in one day, once on the hosted runner (PR #170's first check) and
 once on the owner's Mac (an agent's root suite run), and passed on rerun both times:
-`SocketFileTests.test_deletingTheServersHomeStopsTheServerCleanly` fails in its
+`SocketFileTests.test_deletingTheServersHomeStopsTheServerCleanly` failed in its
 `removeItem(at: home)` with `NSCocoaErrorDomain 513`, "“home” couldn't be removed because
 you don't have permission to access it". The test starts `semelserv` over a home of its
-own and removes the home while the server runs. Nothing in the home is a read-only
-directory by design, so the failure is a race with the server writing while the walk
-removes: a file or folder appearing in a directory the walk has emptied, or an object
-being written under a temporary name, leaves the top folder non-empty and Foundation
-reports it as the top path with the wrong reason. Not yet reproduced on demand; the
-nightly's run of the same test passes. To establish: what the server writes between its
-start and the removal (the log, the socket, the database's WAL, the store's first
-objects), and whether the test should stop writes first or retry the removal once the
-server has gone. The end-to-end harness's own cleanup of run roots may hit the same race.
+own and removes the home while the server runs.
+
+Fixed 2026-10-10. The cause is the test's ordering, not the server. `BuildEngine.start()`
+starts the processing loop as a task and returns, and `semelserv` goes on to listen, so the
+socket file can appear while the loop's first pass is still running: it makes the
+`ProjectFinder` and the `input:` and `output:` roots, processes the finder, interns its
+first objects (each written in its shard under a temporary `.<hash>.<uuid>` name, then
+renamed) and commits to the graph, and a pool connection opened after the walk removed
+`graph.sqlite` creates it again with its `-wal` and `-shm`. The test waited for the socket
+file only. Foundation's removal walks the tree depth first; a file created in a folder the
+walk has emptied makes the folder's `rmdir` fail, and the error is reported against the
+top path as 513 with an underlying `EPERM`: a loop creating files under a folder while
+another thread removes it reproduces exactly that error 283 times in 300. Looping the
+test's shape against the debug `semelserv` failed 6 rounds in 40 on a quiet machine and 6
+in 40 at a load of 10 with a release build running; what was left each time was a shard,
+a temporary object in it, or a recreated database. Nothing the server writes is out of
+place: the first settle is the engine's work, and the server stops cleanly whatever is
+removed under it. The test now runs `semel wait` through the socket before the removal,
+so the engine is idle when the walk starts, and an idle engine writes nothing: 0 in 40,
+loaded and not.
+
+The same race elsewhere: the end-to-end harness stops each server with SIGTERM and waits
+for it to exit before it removes a run root, and kills and waits on a failure, so nothing
+is writing then; the sweep of stale roots touches only roots a day old, best effort.
+`ErrorReportEndToEndTests` removes its home after `semel stop`, with every build in it
+already settled, and ignores a failure. `WatcherTests` waits for idle before it removes its
+store (B-146). None of them can hit it.
 
 **B-143** `done` — **A fresh `prepare` and `build` could fail on the lock `prepare` had just
 written.** Reported 2026-10-09 on a proprietary tree: `semel-swift prepare` vendored a
@@ -433,13 +451,40 @@ is version 21 (new demands, a new lock comparison). `Folder` gains an output por
 needs no version, as it never processes.
 
 Not fixed, filed here:
-- (a) A dot-named declared resource is still asked for as declared, so the follow pushes
+- ~~(a) A dot-named declared resource is still asked for as declared, so the follow pushes
   it by name. It is built and not locked. A dot-named declared *folder* cannot be pushed at
-  all (`hiddenFile` takes files only).
-- (b) A hand-written `SwiftFormulaConverter` with no `root:` over a vendored folder reads
-  `semel.config` and `semel.machine.config` from inside it.
-- (c) A `.fmla` inside a vendored package is built by `FormulaFilePlugin`, which does not
-  skip `Dependencies`.
+  all (`hiddenFile` takes files only).~~ Done 2026-10-10, under "the lock locks what the
+  push pushes". The client cannot read a manifest, so the lock carries what `prepare`
+  read from it: one `hidden <path>` line per dot-named file a target declares as a
+  resource, a file on disk in no dot-named folder (`Preparation.hiddenResourceFiles`,
+  `DependencyLock.hiddenFiles`). `prepare` folds those files into the root it records;
+  `FolderOnDisk.read` walks the files the lock beside a folder names, whether the walk
+  starts above the lock or inside the folder, so a push of the tree sends them; and the
+  engine's pushed root keeps every dot-named file holding content, as a push sends every
+  one the graph holds (B-77 item 5), and leaves out only a dot-named folder. The three
+  folds agree by construction and the file is locked. The flip side is deliberate: a
+  dot-named file pushed into a locked folder by its name and named by no lock is now
+  compared, and fails the lock and the barrier, since the build would read a file the
+  lock does not describe. A lock whose `hidden` lines are not what the manifest declares
+  is re-vendored (`CopyReason.hiddenFilesDiffer`). A declared dot-named *folder* stays
+  unsupported: no push sends one, so no manifest in the graph ever holds it and the
+  converter cannot tell it from a file not pushed yet; it is asked for by its path, the
+  follow cannot push it, and the build stops naming it as never pushed.
+- ~~(b) A hand-written `SwiftFormulaConverter` with no `root:` over a vendored folder reads
+  `semel.config` and `semel.machine.config` from inside it.~~ Done 2026-10-10. A node type
+  can declare a property the formula's folder fills when the formula that names it leaves
+  it out (`NodeDescriptor.formulaFolderProperty`), and `ProjectBuilder` fills it, in an
+  `include` and at any depth of a product. The converter declares `root`, so `root:` is
+  the folder of the formula that names it, never the package's; only a converter no
+  formula named, one a test wires by hand, still takes its package's folder.
+  `ProjectBuilder` is version 8.
+- ~~(c) A `.fmla` inside a vendored package is built by `FormulaFilePlugin`, which does not
+  skip `Dependencies`.~~ Done 2026-10-10. `ProjectFinder` makes no builder for a project
+  file at any depth below a locked folder, a folder `F` with `F.semel-lock` beside it, and
+  a notice names each one skipped with the folder whose lock it is under. The lock rather
+  than the name `Dependencies`, because the lock is the engine's own rule, the one the
+  lock barrier reads, and the folder's name is the Swift toolchain's. `ProjectFinder` is
+  version 5.
 
 **B-139** `done` — **`wait` could return before the pass a push asked for had run.**
 Found 2026-10-04: `SettleTests.test_aWaiterNeverSlipsBetweenTheWakeUpAndThePassItAsksFor`

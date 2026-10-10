@@ -204,9 +204,11 @@ enum PackageResources {
     ///
     /// A path through a dot-name is the one exception, and is taken as it is declared: a
     /// walk of the disk never lists a dot-name, so it is never in a manifest until it is
-    /// asked for, and asking is how `build`'s follow pushes it by its name (B-77 item 5).
-    /// Pushed, it is built into the bundle; a lock leaves it out as the walk does, so it
-    /// is built and not locked.
+    /// pushed, and asking is how `build`'s follow pushes it by its name (B-77 item 5). In
+    /// a vendored package it is pushed already: `prepare` names each declared dot-named
+    /// file in the lock, which folds it into the root it locks, and a push of the folder
+    /// sends what its lock names (B-143). A declared dot-named *folder* can be pushed by
+    /// neither, so it is asked for and never arrives, and the build stops on it by name.
     static func presence(of relative: String, targetFolder: String, manifests: [String: FolderManifest]) -> Presence {
         let full = Path(fullPath(targetFolder: targetFolder, relative: relative))
         if manifests[full.string] != nil {

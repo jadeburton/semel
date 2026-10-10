@@ -270,6 +270,8 @@ extension PrepareReport {
             return "\(named), re-vendored: its lock was folded as \(lock.fold), and this prepare folds as \(FolderContentRoot.formatTag)"
         case .artifactsDiffer:
             return "\(named), re-vendored: its lock's binary-target checksums are not its manifest's"
+        case .hiddenFilesDiffer:
+            return "\(named), re-vendored: its lock's dot-named resources are not its manifest's"
         case .contentDiffers:
             return "\(named), re-vendored: the copy had changed since its lock was written"
         case .pinMoved(let lock):
@@ -311,13 +313,13 @@ public enum Preparation {
         public var summarize: (URL) throws -> PackageSummary
         /// Resolves the roots and vendors their checkouts into the folder, asking the
         /// checksums of an existing copy's manifest before it is left as it is.
-        public var vendor: ([URL], URL, Vendoring.ManifestChecksums) throws -> [Vendoring.Copied]
-        public var vendorProject: (URL, URL, Vendoring.ManifestChecksums) throws -> [Vendoring.Copied]
+        public var vendor: ([URL], URL, Vendoring.ReadManifestFacts) throws -> [Vendoring.Copied]
+        public var vendorProject: (URL, URL, Vendoring.ReadManifestFacts) throws -> [Vendoring.Copied]
         public var facts: () throws -> ToolchainFacts
 
         public init(summarize: @escaping (URL) throws -> PackageSummary,
-                    vendor: @escaping ([URL], URL, Vendoring.ManifestChecksums) throws -> [Vendoring.Copied],
-                    vendorProject: @escaping (URL, URL, Vendoring.ManifestChecksums) throws -> [Vendoring.Copied] = { _, _, _ in [] },
+                    vendor: @escaping ([URL], URL, Vendoring.ReadManifestFacts) throws -> [Vendoring.Copied],
+                    vendorProject: @escaping (URL, URL, Vendoring.ReadManifestFacts) throws -> [Vendoring.Copied] = { _, _, _ in [] },
                     facts: @escaping () throws -> ToolchainFacts) {
             self.summarize     = summarize
             self.vendor        = vendor
@@ -326,8 +328,8 @@ public enum Preparation {
         }
 
         public static let live = Steps(summarize: PackageScan.summary(ofPackageAt:),
-                                       vendor: Vendoring.vendor(packageRoots:into:manifestChecksums:),
-                                       vendorProject: Vendoring.vendor(project:into:manifestChecksums:),
+                                       vendor: Vendoring.vendor(packageRoots:into:manifestFacts:),
+                                       vendorProject: Vendoring.vendor(project:into:manifestFacts:),
                                        facts: ToolchainFacts.fromMachine)
     }
 
@@ -362,10 +364,10 @@ public enum Preparation {
         // for the checksums its lock should record (B-138), and kept by folder: a copy left
         // as it was is the copy summarised below, so it is read once.
         var summariesReadWhileVendoring: [String: PackageSummary] = [:]
-        let manifestChecksums: Vendoring.ManifestChecksums = { copy in
+        let manifestFacts: Vendoring.ReadManifestFacts = { copy in
             let summary = try steps.summarize(copy)
             summariesReadWhileVendoring[copy.standardizedFileURL.path] = summary
-            return checksums(of: summary)
+            return Self.facts(of: summary)
         }
         let summarizeVendored: (URL) throws -> PackageSummary = { folder in
             try summariesReadWhileVendoring[folder.standardizedFileURL.path] ?? steps.summarize(folder)
@@ -383,7 +385,7 @@ public enum Preparation {
         // namespaces the formula's converters read, and no other.
         if let project = projectFile {
             report.project = project.lastPathComponent
-            report.vendored = try steps.vendorProject(project, dependencies, manifestChecksums)
+            report.vendored = try steps.vendorProject(project, dependencies, manifestFacts)
             forgetReplacedCopies()
             // Before the project is read for its deployment target: an xcconfig is a
             // layer of the settings that reading evaluates.
@@ -424,7 +426,7 @@ public enum Preparation {
             }
             let summaries = try manifestFolders.map(steps.summarize)
             report.roots = PackageScan.roots(of: summaries)
-            report.vendored = try steps.vendor(report.roots.map(\.folder), dependencies, manifestChecksums)
+            report.vendored = try steps.vendor(report.roots.map(\.folder), dependencies, manifestFacts)
             forgetReplacedCopies()
             declaredVersion = GeneratedFiles.deploymentVersion(for: platform, in: summaries)
             formula = GeneratedFiles.formula(rootPaths: report.roots.map { relativePath(of: $0.folder, under: folder) })
@@ -561,7 +563,7 @@ public enum Preparation {
         try standingCopies(of: vendored).filter { $0.change != .unchanged }.map { copied in
             let destination = copied.destination.standardizedFileURL.path
             let summary = summaries.first { $0.folder.standardizedFileURL.path == destination }
-            return try Vendoring.writeLock(for: copied, artifacts: summary.map(checksums(of:)) ?? [:])
+            return try Vendoring.writeLock(for: copied, facts: summary.map(facts(of:)) ?? Vendoring.ManifestFacts())
         }
     }
 
@@ -577,14 +579,47 @@ public enum Preparation {
         return lastCopy.keys.sorted().compactMap { lastCopy[$0] }
     }
 
-    /// The `checksum:` of each of the package's binary targets that has one, by target:
-    /// what its lock records (B-77).
-    static func checksums(of summary: PackageSummary) -> [String: String] {
+    /// What the package's lock records from its manifest: the `checksum:` of each of its
+    /// binary targets that has one, by target (B-77), and the dot-named files its targets
+    /// declare as resources (B-143).
+    static func facts(of summary: PackageSummary) -> Vendoring.ManifestFacts {
         var checksums: [String: String] = [:]
         for binaryTarget in summary.binaryTargets {
             checksums[binaryTarget.name] = binaryTarget.checksum
         }
-        return checksums
+        return Vendoring.ManifestFacts(artifacts: checksums, hiddenFiles: hiddenResourceFiles(of: summary))
+    }
+
+    /// The dot-named files the package's targets declare as resources, relative to the
+    /// package's folder: what its lock names (`DependencyLock.hiddenFiles`), so that its
+    /// root covers them and a push of its folder sends them (B-143). A walk of the disk
+    /// takes no dot-name, so without the lock naming them the build would read a resource
+    /// the lock does not lock.
+    ///
+    /// Only a file, in no dot-named folder, as a push takes a dot-name: by its name, in a
+    /// folder it walks. A declared dot-named folder cannot be pushed, and is not named
+    /// here; the converter asks for it by its path, nobody can push it, and the build stops
+    /// on it, naming it.
+    static func hiddenResourceFiles(of summary: PackageSummary) -> [String] {
+        let packagePath = summary.folder.standardizedFileURL.path
+        let lister = ExternalFileSystemLister(rootDirectoryPath: packagePath)
+        var found: Set<String> = []
+        for target in summary.targets {
+            for resource in target.resources {
+                let full = target.folder.appendingPathComponent(resource).standardizedFileURL
+                guard full.path.hasPrefix(packagePath + "/") else {
+                    continue
+                }
+                let relative = String(full.path.dropFirst(packagePath.count + 1))
+                guard DependencyLock.isHiddenFilePath(relative),
+                      lister.hiddenFile(named: full.lastPathComponent,
+                                        inDirectoryPath: full.deletingLastPathComponent().path) != nil else {
+                    continue
+                }
+                found.insert(relative)
+            }
+        }
+        return found.sorted()
     }
 
     /// Unzips every binary target's `path:` zip into its package's `semel-artifacts`, as

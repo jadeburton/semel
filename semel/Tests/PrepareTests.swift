@@ -209,6 +209,32 @@ final class PrepareTests: XCTestCase {
                                                                exclude: ["Tools/CrashViewer/"])])
     }
 
+    /// B-143. The dot-named files a package's targets declare as resources are what its
+    /// lock names: each a file on disk, in no dot-named folder, by its path from the
+    /// package, found where SwiftPM finds a target with no `path:` (here under `src`) and
+    /// with its dot segments resolved. A dot-named folder, a name the folder lacks and a
+    /// plain resource are not named.
+    func test_theDotNamedFilesATargetDeclaresAreWhatItsLockNames() throws {
+        try write("Kit/src/Kit/Kit.swift", "")
+        try write("Kit/src/Kit/Resources/.config.json", "{}")
+        try write("Kit/src/Kit/Resources/data.json", "{}")
+        try write("Kit/src/.env", "shared")
+        try write("Kit/src/Kit/.res/inside.txt", "a folder")
+        let json = """
+        {"name": "Kit", "dependencies": [], "platforms": [], "products": [],
+         "targets": [{"name": "Kit", "type": "regular",
+                      "resources": [{"path": "Resources/.config.json", "rule": {"copy": {}}},
+                                    {"path": "Resources/data.json", "rule": {"process": {}}},
+                                    {"path": "../.env", "rule": {"copy": {}}},
+                                    {"path": ".res", "rule": {"copy": {}}},
+                                    {"path": ".gone", "rule": {"copy": {}}}]}]}
+        """
+        let summary = try PackageScan.summary(fromDumpPackageJSON: Data(json.utf8), folder: folder("Kit"))
+
+        XCTAssertEqual(summary.targets.map(\.folder), [folder("Kit/src/Kit")])
+        XCTAssertEqual(Preparation.facts(of: summary).hiddenFiles, ["src/.env", "src/Kit/Resources/.config.json"])
+    }
+
     // MARK: - Roots
 
     /// IceCubes' shape: five packages nothing depends on, reached through which the rest
@@ -632,7 +658,7 @@ final class PrepareTests: XCTestCase {
     /// is handed the manifest reader too, for a fake that runs the real copy step over
     /// checkouts it laid out itself.
     private func steps(vendored: @escaping ([URL], URL) throws -> [Vendoring.Copied] = { _, _ in [] },
-                       vendoredChecking: (([URL], URL, Vendoring.ManifestChecksums) throws -> [Vendoring.Copied])? = nil,
+                       vendoredChecking: (([URL], URL, Vendoring.ReadManifestFacts) throws -> [Vendoring.Copied])? = nil,
                        facts: ToolchainFacts? = nil,
                        binaryTargets: [String: [PackageSummary.BinaryTarget]] = [:]) -> Preparation.Steps {
         let vendor = vendoredChecking ?? { roots, into, _ in try vendored(roots, into) }
@@ -1257,8 +1283,8 @@ final class PrepareTests: XCTestCase {
     /// and the pins — and the real copy step run over it, so what is left and what is
     /// copied is decided as `prepare` decides it.
     private func resolving(_ checkouts: [String: [String: String]],
-                           pins: [String: Vendoring.Pin]) -> ([URL], URL, Vendoring.ManifestChecksums) throws -> [Vendoring.Copied] {
-        { _, into, manifestChecksums in
+                           pins: [String: Vendoring.Pin]) -> ([URL], URL, Vendoring.ReadManifestFacts) throws -> [Vendoring.Copied] {
+        { _, into, manifestFacts in
             let resolved = self.folder("resolved")
             try? FileManager.default.removeItem(at: resolved)
             for (name, files) in checkouts {
@@ -1267,7 +1293,7 @@ final class PrepareTests: XCTestCase {
                 }
             }
             return try Vendoring.copyCheckouts(from: resolved.appendingPathComponent("checkouts", isDirectory: true), into: into,
-                                               pins: pins, manifestChecksums: manifestChecksums)
+                                               pins: pins, manifestFacts: manifestFacts)
         }
     }
 
@@ -1434,7 +1460,7 @@ final class PrepareTests: XCTestCase {
         try write("resolved/artifacts/zip/Zip/Zip.xcframework/Info.plist", "<plist/>\n")
 
         let copied = try Vendoring.copyCheckouts(from: folder("resolved/checkouts"), into: folder("Dependencies"),
-                                                 artifacts: folder("resolved/artifacts"), manifestChecksums: { _ in [:] })
+                                                 artifacts: folder("resolved/artifacts"), manifestFacts: { _ in Vendoring.ManifestFacts() })
 
         XCTAssertEqual(copied.map(\.name), ["Sparkle"])
         XCTAssertTrue(FileManager.default.fileExists(
@@ -1454,7 +1480,7 @@ final class PrepareTests: XCTestCase {
         }
 
         let copied = try Vendoring.copyCheckouts(from: folder("resolved/checkouts"), into: folder("Dependencies"),
-                                                 artifacts: folder("resolved/artifacts"), manifestChecksums: { _ in [:] })
+                                                 artifacts: folder("resolved/artifacts"), manifestFacts: { _ in Vendoring.ManifestFacts() })
         let lock = try DependencyLock.parse(try String(contentsOf: try Vendoring.writeLock(for: try XCTUnwrap(copied.first)), encoding: .utf8))
 
         let artifact = folder("Dependencies/Sparkle/semel-artifacts/Sparkle")

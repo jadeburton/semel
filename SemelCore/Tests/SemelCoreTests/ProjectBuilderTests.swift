@@ -189,6 +189,66 @@ final class ProjectBuilderTests: SemelCoreTestCase {
         XCTAssertTrue(spec.contains("OutputFile(path: 'output:/repo/x', input: ["), spec)
     }
 
+    // MARK: - The formula's folder, filled in (B-143)
+
+    /// A node that reads something from beside the formula naming it, as
+    /// `SwiftFormulaConverter` reads `semel.config` from its `root`.
+    private struct FormulaFolderReader: Node {
+        static let kind: UInt = 987_121
+
+        static let descriptor = NodeDescriptor(inputPorts: [.dynamic("files")], outputPorts: ["formula"],
+                                               formulaFolderProperty: "root")
+
+        var thisNode: NodeRecord
+
+        init(thisNode: NodeRecord) throws {
+            self.thisNode = thisNode
+        }
+
+        func process(input: ProcessInput) throws -> ProcessOutput {
+            ProcessOutput(outputValues: [:], inputWireSpecs: [:])
+        }
+    }
+
+    /// The `root` of the one `FormulaFolderReader` among the included nodes.
+    private func includedRoots(of output: ProcessOutput) throws -> [String?] {
+        try XCTUnwrap(output.inputWireSpecs[ProjectBuilder.includesInputPort]).values
+            .filter { $0.typeName == "FormulaFolderReader" }
+            .map { spec in spec.properties.first { $0.key == "root" }?.value }
+    }
+
+    /// A formula naming a vendored package by its path, with no `root`, gives the node the
+    /// formula's own folder there, never the package's.
+    func test_anIncludedNodeIsGivenTheFormulasFolderWhereTheFormulaLeavesItOut() throws {
+        try TypeRegistry.register(types: [FormulaFolderReader.self])
+
+        let output = try process(formula: "include FormulaFolderReader(path: <Dependencies/X>).formula")
+
+        XCTAssertEqual(try includedRoots(of: output), ["input:/repo"])
+    }
+
+    /// A `root` the formula gives is the formula's, and stands.
+    func test_aFolderTheFormulaGivesIsKept() throws {
+        try TypeRegistry.register(types: [FormulaFolderReader.self])
+
+        let output = try process(formula: "include FormulaFolderReader(path: <Dependencies/X>, root: <Dependencies>).formula")
+
+        XCTAssertEqual(try includedRoots(of: output), ["input:/repo/Dependencies"])
+    }
+
+    /// Inside a product the node is filled where it sits, at any depth; a type that declares
+    /// no such property is left as the formula wrote it.
+    func test_aNodeInsideAProductIsGivenTheFormulasFolder() throws {
+        try TypeRegistry.register(types: [FormulaFolderReader.self])
+
+        let output = try process(formula:
+            "product 'x' = SampleTool(configuration: ['c': FormulaFolderReader(path: <a>).formula]).output")
+
+        let spec = try XCTUnwrap(output.inputWireSpecs[ProjectBuilder.productInputPort]?["output:/repo/x"]).asString(omitOutputPort: false)
+        XCTAssertTrue(spec.contains("FormulaFolderReader(path: 'input:/repo/a', root: 'input:/repo')"), spec)
+        XCTAssertEqual(spec.components(separatedBy: "root: ").count, 2, "one node is given a root: \(spec)")
+    }
+
     // MARK: - Nested source folders (B-108, B-135)
 
     private func entries(files: [String] = [], folders: [String] = []) -> [FolderManifestEntry] {
