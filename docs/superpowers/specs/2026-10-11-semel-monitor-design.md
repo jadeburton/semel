@@ -138,12 +138,14 @@ will state what it needs when the first has shown what people look at.
 
 ## Open for review
 
-- Whether an error card stays until clicked (proposed) or also goes after a longer delay.
 - The name: `semel-monitor` is proposed; `semel-notify` says less, `semel-view` says more
   than the first version does.
 
 ## Decided on review (2026-10-11)
 
+- An error card stays until dismissed: a click, or the next settle that leaves the
+  product with a value, which replaces it. A result card goes after eight seconds. An
+  error is something to act on; a product that changed is something to know.
 - No *Reveal in Finder*, and no knowledge of external locations at all. The app is a
   client of the private file system: it lists `output:` and exports to a destination the
   person chooses, through the prompt's own export code, and that is its only relation to
