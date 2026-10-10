@@ -356,6 +356,28 @@ skipped; creating each with its final mode in one `open` would take the reopen a
 folder is pinned with and the metadata document files share, each a `setAttributes` per
 use. `selectPath` decoding whole nodes is now the push queue's largest single cost.
 
+Measured 2026-10-10, before and after B-149: NetNewsWire's Mac app (`netnewswire-mac` with
+its overlay, `prepare --platform macos`), debug binaries, a cold build into a fresh home and
+then `rm netnewswire-mac` and `wait`; before is `main` at `57e49e0`. The settle's counts are
+its summary line, the `process` runs those a debug `semelserv` logs, the entries the rows
+the cache gained.
+
+| `rm netnewswire-mac` | before | after |
+|---|---|---|
+| the request | 7.0 s | 1.5 s |
+| the settle | 15.2 s | 3.5 s |
+| nodes scheduled / computed / from cache | 843 / 842 / 1 | 10 / 1 / 0 |
+| `process` entered | 842 | 2 (the finder, twice) |
+| cache entries written | 252 | 0 |
+| nodes collected | 4,508, at idle | 4,508, in the settle |
+
+The request is one transaction where it was a commit per write, and so is each pass of the
+collector; the finder lets go of the project first, the collector takes everything only it
+held before the pass starts anything else, and a node whose static input is a removed
+source publishes the state without running. What is left of the settle is the 4,508
+deletions and the idle reports. A cold build was unchanged: 94.5 s before, 95.1 s after,
+852 nodes computed and 430 entries both times.
+
 
 ## Design, correctness and code quality
 

@@ -384,7 +384,7 @@ Push file: hello/src/hello.h [no change]
 Push file: hello/src/hello2.c
 Push file: hello/src/main.c [no change]
 Settled.
-✅ 9 nodes scheduled, 8 computed, 1 from cache, 0 errors
+✅ 8 nodes scheduled, 7 computed, 1 from cache, 0 errors
    changed: output:/hello/hello
    changed: output:/hello/hello.dylib
 No errors.
@@ -392,31 +392,30 @@ Exported 3 files into /Users/you/semel-playground/out
 ```
 
 One file pushed without `[no change]`; two of the three products republished, and
-`config.txt` not. Nine nodes woken out of the forty in this graph, and eight ran: the
-project finder and the include finder, then one preprocessor and one compiler —
-`hello.c` and `main.c` were not touched, so two of each stayed asleep — then both linkers,
-because both products take that object, then the two output files. The ninth is the node
-that reads `hello.fmla`, which did not change: it was woken, asked the cache with the
-inputs it had last time, and got the answer it had stored then.
+`config.txt` not. Eight nodes woken out of the forty in this graph, and seven ran: the
+include finder, then one preprocessor and one compiler — `hello.c` and `main.c` were not
+touched, so two of each stayed asleep — then both linkers, because both products take that
+object, then the two output files. The eighth is the node that reads `hello.fmla`, which
+did not change: it was woken, asked the cache with the inputs it had last time, and got the
+answer it had stored then.
 
 **3. Put it back.** Undo the edit and build. The prompt prints exactly what it printed
 last time, line for line — the same file pushed, the same two products republished — with
 one line different:
 
 ```
-✅ 9 nodes scheduled, 3 computed, 6 from cache, 0 errors
+✅ 8 nodes scheduled, 2 computed, 6 from cache, 0 errors
 ```
 
-The same nine nodes were woken. Three ran; six did not, and those six are the include
+The same eight nodes were woken. Two ran; six did not, and those six are the include
 finder, the preprocessor, the compiler, both linkers and the node reading the formula — the
 entire chain that had just been rebuilt, cache hits from end to end. A *cache entry* is
 keyed on the node's type, its properties and the name and content of everything wired to
 it; time appears nowhere, so a file restored to what it was asks the same question as
-before and gets the stored answer. The three that ran never store one: the project finder
-asks for every input it has itself, and the engine keeps no entry for a node like that;
+before and gets the stored answer. The two that ran, the output files, never store one:
 `OutputFile` declares that it caches nothing, because its work costs less than a lookup —
 Part 4 comes back to that. `scheduled` did not move and `computed`
-fell from eight to three: that gap is the whole idea.
+fell from seven to two: that gap is the whole idea.
 
 **4. Change a setting only the linker reads.** Add a line to
 `~/semel-playground/hello/semel.config`:
@@ -439,15 +438,15 @@ Push file: hello/src/hello.h [no change]
 Push file: hello/src/hello2.c [no change]
 Push file: hello/src/main.c [no change]
 Settled.
-✅ 18 nodes scheduled, 11 computed, 7 from cache, 0 errors
+✅ 17 nodes scheduled, 10 computed, 7 from cache, 0 errors
 No errors.
 Exported 3 files into /Users/you/semel-playground/out
 ```
 
 Not one C file changed, and both programs were relinked — the linkers' settings really did
 change, even if the linker reads no such key, and the same bytes came out, which is why no
-`changed:` line follows. What did not happen is the interesting part. Eighteen nodes woken,
-against nine for a one-character edit to a source file: the settings feed every tool in the
+`changed:` line follows. What did not happen is the interesting part. Seventeen nodes woken,
+against eight for a one-character edit to a source file: the settings feed every tool in the
 build, so touching them wakes nearly the whole graph. Seven of those were answered from the
 cache: all six preprocessors and compilers, and the node reading the formula.
 
@@ -630,7 +629,7 @@ Push file: hello/src/hello.h [no change]
 Push file: hello/src/hello2.c [no change]
 Push file: hello/src/main.c [no change]
 Settled.
-✅ 4 nodes scheduled, 4 computed, 0 from cache, 0 errors
+✅ 3 nodes scheduled, 3 computed, 0 from cache, 0 errors
    appeared: output:/hello/lines.txt
 No errors.
 Exported 4 files into /Users/you/semel-playground/out
@@ -691,7 +690,7 @@ Push file: hello/src/hello.h [no change]
 Push file: hello/src/hello2.c [no change]
 Push file: hello/src/main.c [no change]
 Settled.
-✅ 2 nodes scheduled, 2 computed, 0 from cache, 0 errors
+✅ 1 node scheduled, 1 computed, 0 from cache, 0 errors
    disappeared: output:/hello/lines.txt
 No errors.
 Exported 3 files into /Users/you/semel-playground/out

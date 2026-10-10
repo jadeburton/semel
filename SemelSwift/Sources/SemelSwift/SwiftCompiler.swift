@@ -230,7 +230,10 @@ struct SwiftCompiler: Node {
     /// configuration was compiled with (B-141).
     /// 6: a failure is published as an `ErrorDocument`, the typed value a client renders,
     /// where it was a sentence (B-145).
-    public static let implementationVersion = 6
+    /// 7: a source removed from the target's folder is let go of by the walk, which
+    /// publishes its demands without it, where the removed file stopped the run before the
+    /// walk and the compile held it for good (B-149).
+    public static let implementationVersion = 7
 
     // MARK: Ports
 
@@ -355,6 +358,12 @@ struct SwiftCompiler: Node {
         let wiredSourceFiles: Set<String>
         let wiredFolderTrees: Set<String>
         let wiredModuleMapFiles: Set<String>
+        /// The wires on the dynamic file ports whose source has been removed, left out of
+        /// `sourceFiles` and `moduleMapFiles`. Read where the others are, a removed file
+        /// would stop the run before the walk that lets go of it, and the compile would
+        /// demand it for good; left for the walk, it is dropped from the demands, and a
+        /// compile that still has one is stopped by it (`compile`).
+        let removedFiles: [String]
 
         init(input: ProcessInput) throws {
             wiredSourceFiles    = Set((input.inputValues[SwiftCompiler.inputSourceFiles] ?? [:]).keys)
@@ -366,9 +375,14 @@ struct SwiftCompiler: Node {
 
             configuration = try .init(properties: [String: String](plainText: configString))
 
+            var removed: [String] = []
             let discovered = try (input.inputValues[SwiftCompiler.inputSourceFiles] ?? [:])
-                .map { fileName, nodeValue in
-                    FileNameAndContent(filePath: fileName, hash: try nodeValue.expectValue())
+                .compactMap { fileName, nodeValue -> FileNameAndContent? in
+                    if case .noValue(.deleted) = nodeValue {
+                        removed.append(fileName)
+                        return nil
+                    }
+                    return FileNameAndContent(filePath: fileName, hash: try nodeValue.expectValue())
                 }
             let extra = try (input.inputValues[SwiftCompiler.inputExtraSourceFiles] ?? [:])
                 .map { fileName, nodeValue in
@@ -414,10 +428,15 @@ struct SwiftCompiler: Node {
 
             // Module map files: wire key is already "<dirName>/<filename>".
             moduleMapFiles = try (input.inputValues[SwiftCompiler.inputModuleMapFiles] ?? [:])
-                .map { wireKey, nodeValue in
-                    FileNameAndContent(filePath: wireKey, hash: try nodeValue.expectValue())
+                .compactMap { wireKey, nodeValue -> FileNameAndContent? in
+                    if case .noValue(.deleted) = nodeValue {
+                        removed.append(wireKey)
+                        return nil
+                    }
+                    return FileNameAndContent(filePath: wireKey, hash: try nodeValue.expectValue())
                 }
                 .sorted { $0.filePath < $1.filePath }
+            removedFiles = removed.sorted()
 
             inputFolderManifests = try SwiftCompiler.decodeFolderManifests(
                 input: input, port: SwiftCompiler.inputFolder)
@@ -508,6 +527,12 @@ struct SwiftCompiler: Node {
                          inputSourceFilesSpecs: [String: GraphSpecNode],
                          inputFolderTreesSpecs: [String: GraphSpecNode],
                          inputModuleMapFilesSpecs: [String: GraphSpecNode]) throws -> SwiftCompilerOutputs {
+
+        // A removed file the walk still demands stops the compile as a removed input stops
+        // any node: never a compile of what is left.
+        guard inputs.removedFiles.isEmpty else {
+            throw NodeError.inputValueInError
+        }
 
         guard !inputs.sourceFiles.isEmpty else {
             let error = try ErrorDocument.engine(.noSources, subject: .target(name: inputs.configuration.moduleName)).published()

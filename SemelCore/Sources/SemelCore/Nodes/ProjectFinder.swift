@@ -52,7 +52,11 @@ public struct ProjectFinder: Node {
             .dynamic(inputTreeInputPort),
             .dynamic(projectBuildersInputPort),
         ],
-        outputPorts: [includableProjectsOutputPort]
+        outputPorts: [includableProjectsOutputPort],
+        // Held, not read: which builders there are follows from the listings alone, so a
+        // removed project's builder is let go of at once rather than once everything below
+        // it has settled (B-149).
+        holdingInputPorts: [projectBuildersInputPort]
     )
 
     public var thisNode: NodeRecord

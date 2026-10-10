@@ -193,8 +193,9 @@ final class CheckpointTests: XCTestCase {
 
     /// The nodes that cache are answered from the cache: the counter, whose restored file is
     /// the value its entry was keyed on, and the project builder reading the formula. The
-    /// project finder and the product's own `OutputFile`, which store no entry, run again,
-    /// as they do on every settle that reaches them.
+    /// product's own `OutputFile`, which stores no entry, runs again, as it does on every
+    /// settle that reaches it; the project finder only holds the builder and is not woken
+    /// by what the builder publishes (B-149).
     func test_aRestoreIsAnsweredFromTheCache() throws {
         try write(#"product "lines.txt" = CountingLineCounter(input: ["main.c": StaticFile(path: <main.c>)])"#,
                   to: "src/semel.fmla")
@@ -208,7 +209,7 @@ final class CheckpointTests: XCTestCase {
 
         let printed = run("restore first")
         let settled = try XCTUnwrap(printed.first { $0.contains("scheduled") }, "\(printed)")
-        XCTAssertTrue(settled.contains(" 2 computed, 2 from cache"), settled)
+        XCTAssertTrue(settled.contains(" 1 computed, 2 from cache"), settled)
         XCTAssertEqual(CountingLineCounter.processed.value, processedBefore, "the counter did not run")
     }
 }

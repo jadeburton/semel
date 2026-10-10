@@ -174,7 +174,7 @@ public final class BuildEngine {
                 Debug.warn("error during processAllNodes: \(error)")
             }
 
-            try cleanUpAllPendingDeletions()
+            cleanUpAllPendingDeletions()
 
             // If a signal arrived while we were processing, drain again immediately
             if await workSignal.isPending {
@@ -262,10 +262,11 @@ public final class BuildEngine {
         done.wait()
     }
 
-    private func cleanUpAllPendingDeletions() throws {
-        // Clean up all pending deletions, which are not safe to delete while Nodes are being
-        // processed. A pass that fails is logged and retried on the next idle — unless the
-        // failure is the machine's, which reaches the fatal handler first.
+    private func cleanUpAllPendingDeletions() {
+        // Every node marked for deletion, and what only it held. Runs at idle, and inside a
+        // pass after a write that let go of a node (`collectReleasedNodes`). A pass that
+        // fails is logged and retried on the next idle — unless the failure is the
+        // machine's, which reaches the fatal handler first.
         do {
             while try processPendingDeletions() > 0 {
             }
@@ -640,13 +641,22 @@ public final class BuildEngine {
             scheduledNodeIDs.formUnion(nodeIDs)
         }
 
-        mutating func noteResult(nodeID: ObjectID, fromCache: Bool) {
+        /// What a node's latest result was.
+        enum Outcome {
+            case computed
+            case fromCache
+            /// The state an input stood in, published without a run (B-149). Neither a
+            /// run nor a hit: the node is counted as scheduled and in neither of the two.
+            case stopped
+        }
+
+        mutating func noteResult(nodeID: ObjectID, outcome: Outcome) {
             computedNodeIDs.remove(nodeID)
             fromCacheNodeIDs.remove(nodeID)
-            if fromCache {
-                fromCacheNodeIDs.insert(nodeID)
-            } else {
-                computedNodeIDs.insert(nodeID)
+            switch outcome {
+            case .computed:  computedNodeIDs.insert(nodeID)
+            case .fromCache: fromCacheNodeIDs.insert(nodeID)
+            case .stopped:   break
             }
         }
 
@@ -696,6 +706,34 @@ public final class BuildEngine {
     /// started. Not persisted: a restart forgets it, and `explain` says so.
     public var lastSettleRecord: SettleRecord? {
         settleRecorder.last
+    }
+
+    // MARK: - Collecting what a write let go of
+
+    /// How many nodes have lost their last consumer since the collector last ran. Under
+    /// `batchLock`: the loop's writes mark them, and so does the collector itself.
+    private var nodesReleasedCount = 0
+
+    /// Called where a node is marked for collection because nothing consumes it any more.
+    func noteNodeReleased() {
+        batchLock.withLock { nodesReleasedCount += 1 }
+    }
+
+    /// Runs the collector when a write since the last run let go of a node, so that a pass
+    /// starts nothing that nothing holds (B-149).
+    ///
+    /// A node collected while it computes is not harmed: its result finds no row to be
+    /// written to and is dropped (`write`). A node let go of and demanded again later in
+    /// the same settle is made again from its spec, and answered from the cache when its
+    /// type caches. Collecting only at idle would keep such a node alive across the gap,
+    /// at the price of running everything below a removed project before deleting it.
+    func collectReleasedNodes() {
+        let released = batchLock.withLock { nodesReleasedCount > 0 }
+        guard released else {
+            return
+        }
+        cleanUpAllPendingDeletions()
+        batchLock.withLock { nodesReleasedCount = 0 }
     }
 
     // MARK: - Batch mode
@@ -792,11 +830,12 @@ public final class BuildEngine {
         let keyMaterial: CacheKeyMaterial?
         let computeStart: Date
 
-        var fromCache: Bool {
-            if case .cached = output {
-                return true
+        var outcome: SettleTally.Outcome {
+            switch output {
+            case .processed: return .computed
+            case .cached:    return .fromCache
+            case .stopped:   return .stopped
             }
-            return false
         }
     }
 
@@ -846,7 +885,7 @@ public final class BuildEngine {
                     // result, written here with the other results (B-130).
                     guard nodeRecord.linkedNodeType != nil else {
                         try nodeRecord.publishUnlinkedKindError()
-                        settleTally.noteResult(nodeID: nodeID, fromCache: false)
+                        settleTally.noteResult(nodeID: nodeID, outcome: .computed)
                         continue
                     }
                     running.insert(nodeID)
@@ -890,6 +929,10 @@ public final class BuildEngine {
                     if let result {
                         write(result)
                     }
+                    // What the write let go of goes before anything else starts: a
+                    // removed project's builder, dropped by the finder, takes every node
+                    // below it with it, and none of them is run (B-149).
+                    collectReleasedNodes()
                     // After the write: what it scheduled is in the pending count, and the
                     // tally has the result. The last of a settle has nothing running and
                     // nothing pending, and the summary follows it with the same totals.
@@ -988,20 +1031,22 @@ public final class BuildEngine {
         guard let nodeID = result.nodeRecord.id else {
             return
         }
-        // A cache hit is a node that was scheduled and did not run, which is the one
-        // distinction the summary exists to carry; counting it beside the nodes that ran
-        // would make a rebuild of an unchanged graph read as a full build.
-        settleTally.noteResult(nodeID: nodeID, fromCache: result.fromCache)
-        Debug.log("\(result.fromCache ? "from cache" : "computed"): node \(nodeID)")
 
         do {
-            // Skip a node an earlier write cascade-deleted. makeNode() constructs from the
-            // in-memory NodeRecord struct and does not re-query the DB, so this explicit
-            // existence check is required.
+            // Skip a node an earlier write cascade-deleted, or the collector took while it
+            // ran. makeNode() constructs from the in-memory NodeRecord struct and does not
+            // re-query the DB, so this explicit existence check is required. Not counted:
+            // what a node nothing holds computed is written nowhere.
             guard try database.node.find(nodeID: nodeID) != nil else {
-                Debug.warn("node \(nodeID) deleted during processing")
+                Debug.log("node \(nodeID) deleted during processing")
                 return
             }
+
+            // A cache hit is a node that was scheduled and did not run, which is the one
+            // distinction the summary exists to carry; counting it beside the nodes that ran
+            // would make a rebuild of an unchanged graph read as a full build.
+            settleTally.noteResult(nodeID: nodeID, outcome: result.outcome)
+            Debug.log("\(result.outcome == .fromCache ? "from cache" : "\(result.outcome)"): node \(nodeID)")
 
             let node = try result.nodeRecord.makeNode()
             guard type(of: node).descriptor.hasInputs else {
@@ -1010,6 +1055,9 @@ public final class BuildEngine {
 
             do {
                 switch result.output {
+                case .stopped(let stopped):
+                    try node.writeToOutputs(output: stopped)
+                    node.recordCacheKey(nil)
                 case .cached(let cached):
                     try node.writeToOutputs(output: cached)
                     node.recordCacheKey(result.keyMaterial)
@@ -1029,11 +1077,11 @@ public final class BuildEngine {
                     }
                 }
             } catch {
-                if result.fromCache {
+                if case .cached = result.output {
                     // Cached output is stale — fall back to a full sequential reprocess
                     // using the graph as it stands. The node ran after all, so the
                     // summary must not call it a hit.
-                    settleTally.noteResult(nodeID: nodeID, fromCache: false)
+                    settleTally.noteResult(nodeID: nodeID, outcome: .computed)
                     Debug.warn("writeToOutputs failed for cached output, reprocessing: \(error)")
                     try node.processWithPreCheck()
                 } else {
@@ -1069,9 +1117,11 @@ extension BuildEngine {
 
     /// Processes all nodes marked `pendingDeletion = true`.
     ///
-    /// Called at idle time (between drain passes) when no concurrent processing is
-    /// running, so structural graph mutations are safe.  Each pass may mark upstream
-    /// nodes for deletion (via `deleteWire`), so the caller loops until this returns 0.
+    /// Called at idle time, and inside a pass on the writer's sequence after a write that
+    /// let go of a node (`collectReleasedNodes`), so it never runs beside another graph
+    /// mutation; a node computing meanwhile has its result dropped. Each pass may mark
+    /// upstream nodes for deletion (via `deleteWire`), so the caller loops until this
+    /// returns 0.
     ///
     /// This replaces the old brute-force BFS over all nodes: only the explicitly
     /// marked set is visited, giving O(pending deletions) work instead of O(all nodes).
@@ -1083,70 +1133,84 @@ extension BuildEngine {
             return 0
         }
 
-        var deletedCount = 0
-
-        for nodeRecord in pendingNodes {
-
-            guard let nodeID = nodeRecord.id else {
-                continue
-            }
-
-            // Skip if already cascade-deleted by an earlier step in this pass.
-            guard try database.node.find(nodeID: nodeID) != nil else {
-                continue
-            }
-
-            guard nodeRecord.linkedNodeType != nil else {
-                if try nodeRecord.deleteUnlinked() {
-                    deletedCount += 1
+        // One transaction for the pass, each node a savepoint of it: a node's collection is
+        // several writes — its wires, the marks they leave upstream, its row, its folder's
+        // mark — and a removed project's thousands of nodes spent most of their collection
+        // committing them one by one (B-149). A node that cannot be collected keeps its
+        // mark, its writes undone, and the nodes beside it are still taken; the pass then
+        // throws the first such failure, once the rest is committed, so that the caller
+        // knows it did not complete. A machine failure stops the pass where it is.
+        var failure: (any Error)?
+        let deletedCount = try database.withTransactionPerStep {
+            var deletedCount = 0
+            for nodeRecord in pendingNodes {
+                do {
+                    if try database.withSavepoint({ try collect(nodeRecord) }) {
+                        deletedCount += 1
+                    }
+                } catch let error as any UnrecoverableError {
+                    throw error
+                } catch {
+                    failure = failure ?? error
                 }
-                continue
             }
-
-            guard let node = try? nodeRecord.makeNode() else {
-                continue
-            }
-
-            // If the node has been re-wired since being marked, clear the flag and skip.
-            // The mutations below throw: a mark that cannot be cleared or a row that cannot
-            // be deleted is a failed pass, not a skipped node — the caller logs it and the
-            // next idle retries, and a machine failure reaches the fatal handler.
-            guard (try? node.hasNoOutputWires()) == true else {
-                try database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
-                continue
-            }
-
-            guard (try? node.canBeDeleted()) == true else {
-                try database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
-                continue
-            }
-
-            // Delete each input wire; deleteWire will mark upstream nodes that lose
-            // their last consumer, so they'll be caught in the next pass.
-            for inputWire in try database.wire.select(goingToNodeID: nodeID) {
-                try inputWire.deleteWire(database: database)
-            }
-
-            if (try? node.hasNoOutputWires()) == true &&
-               (try? node.hasNoInputWires()) == true {
-                // Where an artifact disappears. The one event-shaped case of the settle
-                // diff: once the node is gone there is no value left to compare against
-                // the hash the reader was told, so the collection itself is the record.
-                // Said before the delete, because after it there is no record to read the
-                // path from; the report checks that the node did go before it says so.
-                if nodeRecord.kind == OutputFile.kind, let path = nodeRecord.properties["path"] {
-                    noteArtifactCollected(path: path, nodeID: nodeID)
-                }
-                try node.delete()
-                deletedCount += 1
-            }
+            return deletedCount
         }
 
         if deletedCount > 0 {
             Debug.log("removed \(deletedCount) node(s)")
         }
+        if let failure {
+            throw failure
+        }
 
         return deletedCount
+    }
+
+    /// Deletes one node marked for collection when nothing holds it, and returns whether it
+    /// went. Its input wires go with it, and `deleteWire` marks each node upstream that has
+    /// lost its last consumer, for the next pass.
+    private func collect(_ nodeRecord: NodeRecord) throws -> Bool {
+        guard let nodeID = nodeRecord.id else {
+            return false
+        }
+
+        // Skip if already cascade-deleted by an earlier step in this pass.
+        guard try database.node.find(nodeID: nodeID) != nil else {
+            return false
+        }
+
+        guard nodeRecord.linkedNodeType != nil else {
+            return try nodeRecord.deleteUnlinked()
+        }
+
+        guard let node = try? nodeRecord.makeNode() else {
+            return false
+        }
+
+        // If the node has been re-wired since being marked, clear the flag and skip.
+        guard (try? node.hasNoOutputWires()) == true, (try? node.canBeDeleted()) == true else {
+            try database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
+            return false
+        }
+
+        for inputWire in try database.wire.select(goingToNodeID: nodeID) {
+            try inputWire.deleteWire(database: database)
+        }
+
+        guard (try? node.hasNoOutputWires()) == true, (try? node.hasNoInputWires()) == true else {
+            return false
+        }
+        // Where an artifact disappears. The one event-shaped case of the settle diff: once
+        // the node is gone there is no value left to compare against the hash the reader
+        // was told, so the collection itself is the record. Said before the delete, because
+        // after it there is no record to read the path from; the report checks that the
+        // node did go before it says so.
+        if nodeRecord.kind == OutputFile.kind, let path = nodeRecord.properties["path"] {
+            noteArtifactCollected(path: path, nodeID: nodeID)
+        }
+        try node.delete()
+        return true
     }
 }
 
