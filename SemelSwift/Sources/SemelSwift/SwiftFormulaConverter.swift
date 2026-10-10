@@ -134,7 +134,12 @@ struct SwiftFormulaConverter: Node {
     /// named rather than asked for (B-143).
     /// 22: a failure is published as an `ErrorDocument`, the typed value a client renders,
     /// where it was a sentence (B-145).
-    public static let implementationVersion = 22
+    /// 23: a macro target is compiled and linked as an executable, `macroExecutable<Target>()`,
+    /// which every compile reaching it loads on `macroExecutables`; a walk for what a
+    /// product imports or links stops at a macro; and a manifest with a macro asks for the
+    /// platform, a macro reached in a build for another than the Mac being the conversion's
+    /// error (B-80).
+    public static let implementationVersion = 23
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -387,8 +392,9 @@ struct SwiftFormulaConverter: Node {
         // ── the platform, when a setting depends on it (B-55, B-77) ────────
         // Asked for with the target folders, so it arrives while they do.
         let everyManifest = [rootManifest] + availableManifests.sorted(by: { $0.key < $1.key }).map(\.value)
+        // A package macro asks too: it is built only in a build for the Mac (B-80).
         let asksForPlatform = everyManifest.contains { manifest in
-            manifest.targets.contains(where: \.hasPlatformConditionalSetting)
+            manifest.targets.contains { $0.hasPlatformConditionalSetting || $0.isMacro }
         }
         if asksForPlatform {
             demands.linkerConfiguration = [
@@ -777,10 +783,19 @@ struct SwiftFormulaConverter: Node {
         /// is run (B-77). Compiled anyway, it would reach `swiftc` with nothing to compile,
         /// and fail naming no cause; so the conversion names the target and its plugins.
         case sourcesOnlyFromPlugins([PluginOnlyTarget])
+        /// A product reaches a package macro in a build for another platform than the Mac
+        /// (B-80): the macro would have to be built for the Mac beside everything else, and
+        /// built for the platform it is an executable the compiler cannot run.
+        case macrosForAnotherPlatform([MacroForAnotherPlatform], platform: String?)
 
         /// A document per target, each under the target it names.
         var documents: [ErrorDocument] {
             switch self {
+            case .macrosForAnotherPlatform(let macros, let platform):
+                return macros.map { macro in
+                    .engine(.macroForAnotherPlatform(package: macro.package, target: macro.target, platform: platform),
+                            subject: .target(name: macro.target))
+                }
             case .sourcesOnlyFromPlugins(let targets):
                 return targets.map { target in
                     .engine(.sourcesOnlyFromPlugins(package: target.package, target: target.target, plugins: target.plugins),
@@ -1266,10 +1281,15 @@ struct SwiftFormulaConverter: Node {
         }
 
         /// Whether a build compiles this target at all: not a test, a system library, a
-        /// plugin, a macro or a binary target.
+        /// plugin or a binary target. A macro is compiled, and linked as the executable its
+        /// users' compiles load (B-80).
         var isCompilable: Bool {
-            !isSystemLibrary && !isBinary && !["test", "plugin", "macro"].contains(type ?? "")
+            !isSystemLibrary && !isBinary && !["test", "plugin"].contains(type ?? "")
         }
+
+        /// A `.macro` target: compiled and linked for the machine that builds, and run by
+        /// the compiler of every target that reaches it rather than linked into any (B-80).
+        var isMacro: Bool { type == "macro" }
 
         /// A `.binaryTarget`: an artifact built elsewhere, with nothing here to compile and
         /// no source folder to ask for — a remote one has no folder in the package at all.
@@ -1873,6 +1893,9 @@ struct SwiftFormulaConverter: Node {
         // Every Swift target a product reaches whose sources only its plugins would make, by
         // `<package folder>/<target>`.
         var pluginOnlyTargets: [String: PluginOnlyTarget] = [:]
+        // Every package macro a product reaches that this build's platform cannot run, by
+        // `<package folder>/<target>` (B-80).
+        var macrosForAnotherPlatform: [String: MacroForAnotherPlatform] = [:]
 
         // A binary target's `.xcframework`, when it is one that is there (B-77).
         func binaryKey(_ target: SPMTarget) -> String {
@@ -1969,6 +1992,12 @@ struct SwiftFormulaConverter: Node {
                     PluginOnlyTarget(package: target.packageName ?? rootManifest.name, target: target.name,
                                      plugins: target.pluginUsages.map(\.description))
             }
+
+            // Every package macro the product's targets use, built before the compiles that
+            // load it (B-80).
+            blocks += try macroExecutableFuncDefs(reachedFrom: allTargets, packageFolder: rootPackageFolder, platform: platform,
+                                                  lookupAll: allTargetsNamed, emittedFuncs: &emittedFuncs,
+                                                  unbuilt: &macrosForAnotherPlatform)
 
             // Emit one func definition per unique target (shared across products).
             for target in allTargets {
@@ -2198,6 +2227,10 @@ struct SwiftFormulaConverter: Node {
         guard pluginOnlyTargets.isEmpty else {
             throw SwiftPackageConversionError.sourcesOnlyFromPlugins(pluginOnlyTargets.sorted { $0.key < $1.key }.map(\.value))
         }
+        guard macrosForAnotherPlatform.isEmpty else {
+            throw SwiftPackageConversionError.macrosForAnotherPlatform(macrosForAnotherPlatform.sorted { $0.key < $1.key }.map(\.value),
+                                                                       platform: platform)
+        }
         return blocks.joined(separator: "\n\n")
     }
 
@@ -2245,8 +2278,13 @@ struct SwiftFormulaConverter: Node {
             // inputModuleMapFolders when they appear as a dependency. A C target has
             // none either: its objects come through the clang nodes and its headers
             // reach Swift as a tree on moduleTrees. Nor has a binary target, whose slice
-            // reaches the compile and the link as trees of its own (B-77).
+            // reaches the compile and the link as trees of its own (B-77). Nor is a macro
+            // a dependency's: it is run by the compile, not imported or linked, so the walk
+            // stops at one unless it starts there (B-80).
             guard !target.isSystemLibrary, !target.isClangTarget, !target.isBinary else {
+                return
+            }
+            guard !target.isMacro || target.name == root.name else {
                 return
             }
 
@@ -2287,7 +2325,7 @@ struct SwiftFormulaConverter: Node {
                     continue
                 }
 
-                for depTarget in lookupAll(depName) {
+                for depTarget in lookupAll(depName) where !depTarget.isMacro {
                     guard depTarget.isSystemLibrary else {
                         visit(depTarget)
                         continue
@@ -2317,7 +2355,7 @@ struct SwiftFormulaConverter: Node {
                 ordered.append(target)
             }
             for dependency in target.dependencies {
-                for dependencyTarget in dependency.targetName.map(lookupAll) ?? [] {
+                for dependencyTarget in dependency.targetName.map(lookupAll) ?? [] where !dependencyTarget.isMacro {
                     visit(dependencyTarget)
                 }
             }
@@ -2342,7 +2380,7 @@ struct SwiftFormulaConverter: Node {
                 guard let depName = dep.targetName else {
                     continue
                 }
-                for depTarget in lookupAll(depName) where !depTarget.isSystemLibrary {
+                for depTarget in lookupAll(depName) where !depTarget.isSystemLibrary && !depTarget.isMacro {
                     if depTarget.isClangTarget, !ordered.contains(where: { $0.name == depTarget.name }) {
                         ordered.append(depTarget)
                     }
@@ -2353,6 +2391,148 @@ struct SwiftFormulaConverter: Node {
 
         visit(root)
         return ordered
+    }
+
+    // MARK: - Macros (B-80)
+
+    /// The platform a package macro is built in, as SwiftPM names it: the Mac that builds,
+    /// since the compiler runs the macro.
+    static let macroPlatform = "macos"
+
+    /// Every package macro `root` uses: each macro target among its dependencies, and among
+    /// theirs through any chain of other targets, as SwiftPM hands a target every macro in
+    /// its recursive dependencies — a module declaring a macro is no use to an importer that
+    /// cannot expand it. Not through a macro: what a macro depends on is linked into its
+    /// executable and runs there. Encounter order, each once.
+    private func collectReachableMacroTargets(root: SPMTarget, lookupAll: (String) -> [SPMTarget]) -> [SPMTarget] {
+        var ordered: [SPMTarget] = []
+        var visited = Set<String>([root.name])
+
+        func visit(_ target: SPMTarget) {
+            for dependency in target.dependencies {
+                for dependencyTarget in dependency.targetName.map(lookupAll) ?? []
+                where visited.insert(dependencyTarget.name).inserted {
+                    if dependencyTarget.isMacro {
+                        ordered.append(dependencyTarget)
+                        continue
+                    }
+                    visit(dependencyTarget)
+                }
+            }
+        }
+
+        visit(root)
+        return ordered
+    }
+
+    /// `macroExecutable<Target>()`: one macro's executable, what each compile using it loads.
+    private func macroExecutableFuncName(for targetName: String) -> String {
+        "macroExecutable\(sanitizedIdentifier(targetName))"
+    }
+
+    /// The executable wire a compile of `target` takes for every macro it uses, keyed by
+    /// the macro's module, which is the name the compiler asks the executable for.
+    private func macroExecutableWires(target: SPMTarget, lookupAll: (String) -> [SPMTarget]) -> [String] {
+        collectReachableMacroTargets(root: target, lookupAll: lookupAll).map {
+            "            '\($0.moduleName)': \(macroExecutableFuncName(for: $0.name))().output"
+        }
+    }
+
+    /// The funcs building every macro `targets` use, each func once across the formula,
+    /// in an order that defines each before what names it. A macro in a build for another
+    /// platform than the Mac is not built and is collected in `unbuilt` instead, by
+    /// `<package folder>/<target>`, for the conversion to name.
+    private func macroExecutableFuncDefs(reachedFrom targets: [SPMTarget],
+                                         packageFolder: String,
+                                         platform: String?,
+                                         lookupAll: (String) -> [SPMTarget],
+                                         emittedFuncs: inout Set<String>,
+                                         unbuilt: inout [String: MacroForAnotherPlatform]) throws -> [String] {
+        var blocks: [String] = []
+        for target in targets {
+            for macro in collectReachableMacroTargets(root: target, lookupAll: lookupAll) {
+                guard platform == Self.macroPlatform else {
+                    let package = macro.packageName ?? ""
+                    unbuilt["\(macro.overridePackageFolder ?? packageFolder)/\(macro.name)"] =
+                        MacroForAnotherPlatform(package: package, target: macro.name)
+                    continue
+                }
+                blocks += try macroExecutableFuncDefs(macro: macro, packageFolder: packageFolder, platform: platform,
+                                                      lookupAll: lookupAll, emittedFuncs: &emittedFuncs)
+            }
+        }
+        return blocks
+    }
+
+    /// The funcs building one macro: the compile of every Swift target it reaches, its own
+    /// included, which is compiled as a library is — `-parse-as-library`, its `@main` the
+    /// compiler plugin's entry; the C targets among them through the clang nodes, as a
+    /// product's are; and the link of all their objects into an executable,
+    /// `macroExecutable<Target>()`. The executable is a value of the graph, not a product:
+    /// nothing publishes it, and a changed macro reaches the compiles that load it and
+    /// nothing else. swift-syntax, which a macro links, is an ordinary dependency here,
+    /// compiled as its targets are for anything else.
+    ///
+    /// Linked with the build's own linker settings, which are the Mac's in a build for
+    /// macOS, the only one a macro is built in (`macroPlatform`).
+    private func macroExecutableFuncDefs(macro: SPMTarget,
+                                         packageFolder: String,
+                                         platform: String?,
+                                         lookupAll: (String) -> [SPMTarget],
+                                         emittedFuncs: inout Set<String>) throws -> [String] {
+        let executableFunc = macroExecutableFuncName(for: macro.name)
+        guard emittedFuncs.insert(executableFunc).inserted else {
+            return []
+        }
+        let swiftTargets    = collectTransitiveTargets(root: macro, lookupAll: lookupAll)
+        let clangTargets    = collectTransitiveClangTargets(root: macro, lookupAll: lookupAll)
+        let systemLibraries = collectTransitiveSystemLibraries(root: macro, lookupAll: lookupAll)
+
+        var blocks: [String] = []
+        for target in clangTargets where emittedFuncs.insert(headerTreeFuncName(for: target.name)).inserted {
+            blocks.append(headerTreeFuncDef(target: target, packageFolder: packageFolder))
+        }
+        for target in swiftTargets where emittedFuncs.insert(compilerFuncName(for: target.name)).inserted {
+            blocks.append(try buildFuncDef(target: target, packageFolder: packageFolder, platform: platform, lookupAll: lookupAll))
+        }
+        for target in clangTargets where emittedFuncs.insert(preprocessorFuncName(for: target.name)).inserted {
+            blocks.append(buildPreprocessorFuncDef(target: target, packageFolder: packageFolder, lookupAll: lookupAll))
+        }
+
+        let linkerConfig = Self.configurationExpression(
+            namespace: SwiftLinkerConfiguration.settingNamespace,
+            packageFolder: buildRoot(defaultingTo: packageFolder),
+            literals: ["linkage": SwiftLinkage.executable.rawValue, "outputName": macro.moduleName])
+        let objectWires = swiftTargets.map {
+            "        '\($0.name).o': \(compilerFuncName(for: $0.name))().object"
+        } + clangTargets.flatMap { clangObjectEntries(target: $0, packageFolder: packageFolder) }
+        var linkerArgs =
+            "        configuration: ['config': \(linkerConfig)],\n" +
+            "        input: [\n" + objectWires.joined(separator: ",\n") + "\n        ]"
+        if !systemLibraries.isEmpty {
+            let folderWires = systemLibraries.map { systemLibrary in
+                let folder = systemLibrary.folder(in: systemLibrary.overridePackageFolder ?? packageFolder)
+                return "            '\(systemLibrary.name)': Folder(path: '\(folder)').manifest"
+            }
+            linkerArgs += ",\n        libraryFolders: [\n" + folderWires.joined(separator: ",\n") + "\n        ]"
+        }
+        let requirements = (swiftTargets + clangTargets).reduce(LinkRequirements.none) { union, target in
+            union.union(target.linkRequirements(platform: platform))
+        }
+        if !requirements.isEmpty {
+            let literals = requirements.properties.sorted { $0.key < $1.key }
+                                                  .map { "\($0.key): '\($0.value)'" }
+                                                  .joined(separator: ", ")
+            linkerArgs += ",\n        linkRequirements: ['\(macro.name)': SettingsLiteral(\(literals)).output]"
+        }
+        blocks.append("func \(executableFunc)() =\n    SwiftLinker(\n" + linkerArgs + "\n    )")
+        return blocks
+    }
+
+    /// A package macro a product reaches in a build for another platform than the Mac.
+    struct MacroForAnotherPlatform: Equatable {
+        let package: String
+        let target:  String
     }
 
     /// SwiftPM's `c99name`: `semel-clang` is the module `semel_clang`, `3d-kit` is `_3d_kit`.
@@ -2687,6 +2867,10 @@ struct SwiftFormulaConverter: Node {
         }
         if !moduleMapFolderWires.isEmpty {
             args += ",\n    inputModuleMapFolders: [\n" + moduleMapFolderWires.joined(separator: ",\n") + "\n    ]"
+        }
+        let macroWires = macroExecutableWires(target: target, lookupAll: lookupAll)
+        if !macroWires.isEmpty {
+            args += ",\n    macroExecutables: [\n" + macroWires.joined(separator: ",\n") + "\n    ]"
         }
         return "func \(compilerFuncName(for: target.name))() =\n    SwiftCompiler(\n\(args)\n    )"
     }

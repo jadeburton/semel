@@ -213,6 +213,21 @@ waits about a tenth of the push for the client, which reads a batch's files befo
 them and sends the next only after the answer; a client that read the next batch while the
 server records this one would take most of that.
 
+Measured 2026-10-10, swift-syntax as the benchmark B-80 names: 603.0.2, built through a
+wrapper package whose one target depends on its seventeen library products (the test-support
+ones left out), `prepare --platform macos` and debug binaries into a fresh home on an M4
+shared with other builds (load average 6–9). A cold build took 37 s — 70 nodes, the push
+and the converter's passes included — and a build with nothing changed under a second;
+`swift build` of the same wrapper, packages resolved, took 17 s. A compile here is a module
+at a time with `-whole-module-optimization`, where SwiftPM's debug build compiles a module's
+files in batches across the cores, which is most of the gap on a package whose two largest
+modules, `SwiftSyntax` and `SwiftParser`, are most of its source. swift-syntax at its own
+root does not convert: `prepare` takes its nested `SwiftParserCLI` package for a root, whose
+manifest depends on `..` by path and names that package `swift-syntax`, and `dump-package`
+in the reader's sandbox, which holds the one manifest, names `..` for the sandbox's own
+folder and refuses the product. swift-dependencies 1.17.0, its macro built from swift-syntax, took 44 s
+cold under the same conditions.
+
 Measured 2026-10-01 again, on the same four trees assembled afresh — 4,530 files in 1,345
 folders, 166 MB: this repository as `git archive` exports it at `2957914`, the other three
 less `.git` — release binaries, a fresh home per push, `main` at `dcf606f`. A `sample` of

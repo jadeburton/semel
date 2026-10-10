@@ -416,6 +416,42 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
                        ["objc/Mac/App-Bridging-Header.h", "objc/Mac/NSOpenPanel+Extras.h", "objc/Mac/Private/WKPreferencesPrivate.h"])
     }
 
+    // MARK: - Package macros (B-80)
+
+    /// Each macro executable is laid in the sandbox under `macros/` at its module's name,
+    /// executable, and loaded by that relative path for the module it implements — never
+    /// an absolute one, which would name the sandbox — ordered by module however the wires
+    /// arrive.
+    func test_eachMacroExecutableIsLaidUnderMacrosAndLoadedForItsModule() throws {
+        var input = try makeInput(folder: try manifest("input:/pkg/Sources/App", [file("App.swift")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/pkg/Sources/App/App.swift": .value(try "let x = 1".intern())]
+        input[SwiftCompiler.macroExecutables] = ["StringifyMacros":  .value(try "stringify".intern()),
+                                                 "DependencyMacros": .value(try "dependency".intern())]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        let arguments = executor.lastArguments
+        let loaded = arguments.indices.filter { arguments[$0] == "-load-plugin-executable" }.map { arguments[$0 + 1] }
+        XCTAssertEqual(loaded, ["macros/DependencyMacros#DependencyMacros", "macros/StringifyMacros#StringifyMacros"])
+        XCTAssertFalse(arguments.contains("-external-plugin-path"), "\(arguments)")
+        let invocation = try XCTUnwrap(executor.invocations.last)
+        XCTAssertEqual(invocation.inputFileNames.filter { $0.hasPrefix("macros/") }.sorted(),
+                       ["macros/DependencyMacros", "macros/StringifyMacros"])
+        XCTAssertEqual(invocation.inputFileModes["macros/StringifyMacros"], FileMetadata.executableMode)
+    }
+
+    /// A target that uses no package macro loads none: a toolchain's macros are found by
+    /// the driver's own plugin paths.
+    func test_aTargetUsingNoPackageMacroLoadsNone() throws {
+        var input = try makeInput(folder: try manifest("input:/pkg/Sources/App", [file("App.swift")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/pkg/Sources/App/App.swift": .value(try "let x = 1".intern())]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        XCTAssertFalse(executor.lastArguments.contains("-load-plugin-executable"), "\(executor.lastArguments)")
+        XCTAssertFalse(executor.lastArguments.contains("-plugin-path"), "\(executor.lastArguments)")
+    }
+
     func test_aTargetWithoutABridgingHeaderImportsNoObjectiveC() throws {
         var input = try makeInput(folder: try manifest("input:/app/Sources", [file("App.swift")])).inputValues
         input[SwiftCompiler.inputSourceFiles] = ["input:/app/Sources/App.swift": .value(try "let x = 1".intern())]

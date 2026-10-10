@@ -63,6 +63,20 @@ final class ToolDiscoveryTests: SemelCoreTestCase {
         XCTAssertNotNil(tool.recursiveHash)
     }
 
+    /// B-80. What a tool runs beside its binary — a compiler's macro plugins — is folded
+    /// into the fingerprint when its finder names it, and a tool with nothing beside it
+    /// keeps its binary's fingerprint as it stands.
+    func test_theDescriptorFoldsInWhatTheToolRunsBesideItsBinary() throws {
+        let registry = try discover([ToolFinder(name: "pluggedtool", locate: { "/usr/bin/true" }, version: { _ in "1.0" },
+                                                companionFingerprint: { _ in "plugins" })])
+
+        let tool = try XCTUnwrap(descriptor(named: "pluggedtool", in: registry))
+        let binary = try XCTUnwrap(toolBinaryFingerprint(ofFileAt: "/usr/bin/true"))
+        XCTAssertEqual(tool.recursiveHash, toolFingerprint(binary: binary, companions: "plugins"))
+        XCTAssertNotEqual(tool.recursiveHash, binary)
+        XCTAssertNotEqual(toolFingerprint(binary: binary, companions: "other plugins"), tool.recursiveHash)
+    }
+
     func test_theDescriptorNamesTheHost() throws {
         let registry = try discover([finder("hosttool")])
 

@@ -124,6 +124,30 @@ enum Projects {
         materialised: BinaryTargetFixture.buildXCFramework(in:),
         exported: BinaryTargetFixture.checkApp(in:))
 
+    /// Macros (B-80): a package's own, `#stringify`, built as an executable and loaded by
+    /// the compile of the library declaring it and of the app expanding it through that
+    /// library; and the toolchain's `@Observable` and the macOS platform's `@Model`, which
+    /// the compiler finds by itself. The macro speaks the plugin protocol without
+    /// swift-syntax, so the fixture is offline and seconds long; swift-dependencies builds
+    /// one from swift-syntax. The fixture's formula also publishes the macro's executable,
+    /// which no package product is, so that the four builds compare its bytes with the
+    /// app's: one that named its sandbox would differ at the second mount and under the
+    /// perturbed environment. The exported app is run.
+    static let swiftMacroApp = Project(
+        name: "swift-macro-app",
+        source: .fixture(folder: "."),
+        buildFolder: "swift/MacroApp",
+        platform: "macos",
+        expectedProducts: ["MacroApp", "macros/StringifyMacros"],
+        buildTimeout: fixtureTimeout,
+        executables: ["MacroApp", "macros/StringifyMacros"],
+        exported: { out in
+            let printed = try AppInspection.run([out.appendingPathComponent("MacroApp").path], viaXcrun: false)
+            guard printed == "1 + counter.count = 3\nBird is a persistent model: true\n" else {
+                throw EndToEndFailure(step: "run the app", message: "MacroApp printed:\n\(printed)")
+            }
+        })
+
     static let icecubes = Project(
         name: "icecubes",
         source: .git(url: "https://github.com/Dimillian/IceCubesApp.git",
@@ -501,8 +525,27 @@ enum Projects {
             }
         })
 
-    static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftCPackage, swiftHelloApp, swiftBinaryTargetApp]
+    /// Point-Free's swift-dependencies (B-80 item 3) at the commit its `1.17.0` tag names,
+    /// the last whose `Package.swift` a Swift 6.3 toolchain reads (1.17.1's asks for tools
+    /// 6.4). Its `DependenciesMacrosPlugin` is a package macro built from swift-syntax — every
+    /// swift-syntax target it reaches, the C shims among them, compiled and linked into the
+    /// macro's executable — and `DependenciesMacros` loads it. `prepare` vendors swift-syntax
+    /// and the rest; the products are the three libraries, as archives. A cold build takes
+    /// 44 s with debug binaries on an M4 and the whole test, clone, `prepare` and the four
+    /// hermeticity builds, 231 s on a loaded machine; the budget is per step.
+    static let swiftDependencies = Project(
+        name: "swift-dependencies",
+        source: .git(url: "https://github.com/pointfreeco/swift-dependencies.git",
+                     commit: "5e0815746534ccaa9e20588ea35d3bb2cb27bab8",
+                     subfolder: "."),
+        buildFolder: "swift-dependencies",
+        platform: "macos",
+        expectedProducts: ["libDependencies.a", "libDependenciesMacros.a", "libDependenciesTestSupport.a"],
+        buildTimeout: 5 * 60)
+
+    static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftCPackage, swiftHelloApp, swiftBinaryTargetApp,
+                                      swiftMacroApp]
     static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, simdjson, foodTruck, foodTruckMac, netNewsWireMac, netNewsWireIOS,
-                                      codeEdit]
+                                      codeEdit, swiftDependencies]
     static let all: [Project] = fixtures + external
 }

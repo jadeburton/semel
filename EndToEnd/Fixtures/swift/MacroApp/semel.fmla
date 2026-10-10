@@ -1,0 +1,7 @@
+// MacroApp is the deliverable; its macro is built for the compiles that expand it.
+include SwiftFormulaConverter(path: <.>).formula
+
+// The macro's executable is no product of the package, and published here only so that
+// the roster's four builds compare its bytes: a macro that recorded its sandbox would
+// differ between them (B-80).
+product 'macros/StringifyMacros' = macroExecutableStringifyMacros().output

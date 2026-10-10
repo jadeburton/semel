@@ -48,6 +48,8 @@ final class RecordingToolRunner: ToolRunner {
         let arguments: [String]
         let environment: [String: String]
         let inputFileNames: [String]
+        /// The mode each input that states one is laid with, by its path.
+        let inputFileModes: [String: UInt16]
         let expectedOutputFileNames: [String]
         let expectedOutputFolders: [String]
     }
@@ -75,6 +77,9 @@ final class RecordingToolRunner: ToolRunner {
         invocations.append(.init(arguments: arguments,
                                  environment: environment,
                                  inputFileNames: inputFiles.map(\.filePath),
+                                 inputFileModes: Dictionary(uniqueKeysWithValues: inputFiles.compactMap { file in
+                                     file.mode.map { (file.filePath, $0) }
+                                 }),
                                  expectedOutputFileNames: expectedOutputFileNames,
                                  expectedOutputFolders: expectedOutputFolders))
 

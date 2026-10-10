@@ -233,6 +233,12 @@ public enum ErrorCondition: Codable, Hashable, Sendable, Error, ErrorConditionCo
     /// A target whose only sources are what its build-tool plugins would make, and no
     /// plugin is run (B-77). `package` is nil for an Xcode project's target.
     case sourcesOnlyFromPlugins(package: String?, target: String, plugins: [String])
+    /// A package macro a product reaches, in a build for a platform other than the Mac that
+    /// builds it (B-80). The compiler runs a macro, so its executable and the swift-syntax
+    /// it links are compiled for the host, beside the target's own build for the platform;
+    /// that second build is not made. `platform` is SwiftPM's name for the platform being
+    /// built, nil for an SDK it has no name for.
+    case macroForAnotherPlatform(package: String, target: String, platform: String?)
 
     // MARK: - Xcode projects
 
