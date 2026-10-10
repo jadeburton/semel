@@ -49,7 +49,8 @@ enum TestGlobals {
         // the same reason the engine's own types are: GraphSpecNode.parse resolves a type
         // name through the factory.
         try TypeRegistry.register(types: [SampleTool.self, OtherSampleTool.self, DemandingSampleTool.self,
-                                                 UncachedSampleTool.self, LabellingSampleTool.self])
+                                                 UncachedSampleTool.self, LabellingSampleTool.self,
+                                                 CompilingSampleTool.self])
     }
 
     private static func makeTemporaryStoreRoot() -> URL {

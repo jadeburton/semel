@@ -132,6 +132,8 @@ final class DictionaryOrderTests: XCTestCase {
             "lays the node's environment over the sandbox's, by name",
         "SemelCore/Sources/SemelCore/Node.swift: outputValues":
             "writes each value to the port it is keyed by",
+        "SemelCore/Sources/SemelCore/Node.swift: (input.inputValues[inputPort] ?? [:]).values":
+            "asks whether any wire carries a state that stops a consumer, and every stop is published as one state",
         "SemelNodeKit/Sources/SemelNodeKit/TypeRegistry.swift: kindCache.values":
             "hands the registered types to a caller with a question to ask of each; the one caller collects the kinds that answer it into an `IN (…)` list, which has no order",
         "SemelCore/Sources/SemelCore/ErrorReport.swift: byNode.values":
@@ -158,8 +160,6 @@ final class DictionaryOrderTests: XCTestCase {
             "appends the borrowed files, which each target sorts once every group is read",
         "SemelSwift/Sources/SemelSwift/SwiftCompiler.swift: { fileName, nodeValue in":
             "the discovered and extra sources are sorted by path once the two halves are joined",
-        "SemelSwift/Sources/SemelSwift/SwiftCompiler.swift: { wireKey, nodeValue in":
-            "the module maps are sorted by path two lines below",
 
         // ── a set turned into a sequence: order-free at the far end ─────────────
         "SemelCore/Sources/SemelCore/ErrorReport.swift: Set(upstream)":

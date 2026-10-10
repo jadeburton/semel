@@ -195,3 +195,45 @@ public struct SampleSourceNode: Node {
         throw NodeError.sourceCannotProcess(type: "\(Self.self)")
     }
 }
+
+/// A tool that is started before it reads its sources, as a compiler handed paths is: what
+/// reaches `process` reaches the tool. The runner it is handed is the test's, so a test of
+/// a removal can hold the engine to never starting one over a source that is not there
+/// (B-149).
+public struct CompilingSampleTool: Node {
+    public static let kind: UInt = 987_107
+
+    static let input  = "input"
+    static let output = "output"
+
+    /// The runner each run is handed; nil runs nothing. A test installs a recording one.
+    static var runner: ToolRunner?
+
+    public var thisNode: NodeRecord
+
+    public init(thisNode: NodeRecord) throws {
+        self.thisNode = thisNode
+    }
+
+    public static let descriptor = NodeDescriptor(
+        inputPorts: [.required(input, .many)],
+        outputPorts: [output]
+    )
+
+    public func process(input: ProcessInput) throws -> ProcessOutput {
+        let wires = try input.wires(on: Self.input).sorted { $0.key < $1.key }
+        _ = try Self.runner?.execute(arguments:               wires.map(\.key),
+                                     environment:             [:],
+                                     inputFiles:              [],
+                                     expectedOutputFileNames: [],
+                                     expectedOutputFolders:   [],
+                                     output:                  ToolOutput(logError: { _ in },
+                                                                         logMessage: { _ in },
+                                                                         write: { _, _ in }))
+        var text = ""
+        for wire in wires {
+            text += try wire.value.expectValue().resolveAsString()
+        }
+        return .init(outputValues: [Self.output: .value(try text.intern())], inputWireSpecs: [:])
+    }
+}

@@ -81,7 +81,7 @@ cd -i sources/
 | Command | Description |
 |---------|-------------|
 | `push <path> ...` | Push files or directories from disk into the input file system: several paths are one push and one report. A push only adds — a file gone from disk stays in `input:` until `rm` removes it; wrap the two in `begin` … `commit` to settle once. A push is a batch of its own, so one that changes a locked folder without its lock is refused whole — see [locked folders](#locked-folders) |
-| `rm <path> ...` (`remove`) | Remove files or directories from the input file system: the one way a source leaves it |
+| `rm <path> ...` (`remove`) | Remove files or directories from the input file system: the one way a source leaves it. One batch and one settle, however many files: nothing that reads a removed file runs a tool over it — a node a formula still names says the file `has been removed` — and what only the removed files held is deleted in that settle |
 | `cp [-i\|-o] <src> [dest]` (`copy`) | Copy a file out of the internal file system to disk |
 | `export <folder> --into <dir>` | Copy every product under `<folder>` of the output file system into `<dir>`, keeping the tree below it |
 

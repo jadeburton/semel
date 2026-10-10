@@ -51,8 +51,9 @@ extension Node {
         }
 
         // Dynamic ports (e.g. source files) with pending values also block processing —
-        // a file mid-upload would give the compiler an incomplete input set.
-        for inputPort in descriptor.dynamicInputPorts {
+        // a file mid-upload would give the compiler an incomplete input set. A port the
+        // node only holds is not waited for: nothing on it is read.
+        for inputPort in descriptor.dynamicInputPorts where !descriptor.holdingInputPorts.contains(inputPort) {
             guard let values = input.inputValues[inputPort], !values.isEmpty else { continue }
             if values.contains(where: { $0.value.isPending }) {
                 return false
@@ -60,6 +61,48 @@ extension Node {
         }
 
         return true
+    }
+
+    /// The state this node publishes without running, or nil when it is to run.
+    ///
+    /// A wire on a static port carrying a removed source, or the state of a node a removal
+    /// or a failure stopped, is a value the node cannot have and says nothing the report
+    /// does not already name. Every node meets it the same way: `expectValue` throws, and
+    /// the engine publishes the state `NoValueReason.thrownByAConsumer` names. Asked here,
+    /// before `process` is entered, the answer is the same and costs no run: no tool is
+    /// started against an input that is not there, no key is taken and nothing is stored
+    /// (B-149).
+    ///
+    /// Not a failure's own document. A node below one may have a failure of its own to
+    /// say — a compiler and a linker missing their settings beside the preprocessor that
+    /// misses its own — and a report that names all of them at once saves a build per
+    /// tool; a node that has none meets the document in `expectValue` without starting
+    /// its tool, as it always has.
+    ///
+    /// Static ports only, and of those not the ones the node reads an absent value on
+    /// (`inputPortsToleratingAbsentValue`). A dynamic port holds what the node demanded of
+    /// itself, and the node has to run to let go of a demand: a compile whose source was
+    /// removed from its folder is told so by the walk it makes, and demands the folder's
+    /// files without it. A port with no value yet produced (`initializing`, or a node
+    /// downstream of one) is not a stop either: a node reading it runs and makes of it
+    /// what it can, which is what lets a configuration file nobody wrote mean nothing to
+    /// add.
+    func stateStoppingProcess(input: ProcessInput) -> NoValueReason? {
+        let tolerated = descriptor.inputPortsToleratingAbsentValue
+        for inputPort in descriptor.staticInputPorts where !tolerated.contains(inputPort) {
+            for value in (input.inputValues[inputPort] ?? [:]).values {
+                guard case .noValue(let reason) = value else {
+                    continue
+                }
+                switch reason {
+                case .deleted, .inputInError:
+                    return reason.thrownByAConsumer.publishedState
+                case .pending, .initializing, .inputNotProduced, .error:
+                    continue
+                }
+            }
+        }
+        return nil
     }
 
     /// Runs `process` and turns any thrown error into an error result on the node's
@@ -88,6 +131,12 @@ extension Node {
 
         guard try allInputsAreSatisfied(input: input) else {
             //print("Not all inputs are satisfied.")
+            return
+        }
+
+        if let state = stateStoppingProcess(input: input) {
+            try writeToOutputs(output: buildOutput(reason: state))
+            recordCacheKey(nil)
             return
         }
 
@@ -167,6 +216,10 @@ extension Node {
         } catch {
             Debug.warn("\(type(of: self)) nodeID \(thisNode.id ?? -1) has an inconsistent input: \(error)")
             return nil
+        }
+
+        if let state = stateStoppingProcess(input: input) {
+            return (.stopped(buildOutput(reason: state)), nil, .now)
         }
 
         // A type that does not cache takes no key: nothing would look it up or store under it.

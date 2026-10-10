@@ -187,6 +187,47 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
                        ["input:/pkg/GRDB/Core/Database.swift", "input:/pkg/GRDB/Fixits.swift"])
     }
 
+    // MARK: - A source removed from the folder (B-149)
+
+    /// The removed file is still wired, holding the removed state, and the folder's tree
+    /// lists it unpinned. The run lets go of it — its demands are the folder's files
+    /// without it — and compiles nothing, so that the run after compiles what is left.
+    func test_aRemovedSourceIsLetGoOfByTheWalkAndNothingIsCompiled() throws {
+        var input = try makeInput(folder: try manifest("input:/pkg/GRDB", [
+            file("Fixits.swift"),
+            .init(name: "Gone.swift", isFolder: false, isPinned: false),
+        ])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/pkg/GRDB/Fixits.swift": .value(try "// fixits".intern()),
+                                                 "input:/pkg/GRDB/Gone.swift":   .noValue(reason: .deleted)]
+
+        let output = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        XCTAssertTrue(executor.invocations.isEmpty, "swiftc ran with a source removed")
+        XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/GRDB/Fixits.swift"])
+        for port in [SwiftCompiler.outputObject, SwiftCompiler.outputModule] {
+            XCTAssertTrue(output.outputValues[port]?.isPending == true, port)
+        }
+    }
+
+    /// A removed file the walk still asks for — wired from a path the tree lists pinned —
+    /// stops the compile as a removed input stops any node, and never leaves a compile of
+    /// the rest.
+    func test_aRemovedSourceTheWalkStillAsksForStopsTheCompile() throws {
+        var input = try makeInput(folder: try manifest("input:/pkg/GRDB", [file("Fixits.swift"), file("Gone.swift")]))
+            .inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/pkg/GRDB/Fixits.swift": .value(try "// fixits".intern()),
+                                                 "input:/pkg/GRDB/Gone.swift":   .noValue(reason: .deleted)]
+
+        let output = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        XCTAssertTrue(executor.invocations.isEmpty)
+        for port in [SwiftCompiler.outputObject, SwiftCompiler.outputModule] {
+            guard case .noValue(.inputInError)? = output.outputValues[port] else {
+                return XCTFail("\(port): \(String(describing: output.outputValues[port]))")
+            }
+        }
+    }
+
     // MARK: - Explicit source lists
 
     /// SPM lets one target's directory contain another's, kept apart by `sources:`.

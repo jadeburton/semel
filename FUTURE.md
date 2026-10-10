@@ -1040,6 +1040,82 @@ nothing evictable is said only by the trim that got it there and by `cache`. And
 `rm` above woke 842 of NetNewsWire's nodes, which ran over their removed inputs and wrote
 252 entries of errors before the collector took the nodes: a removal settles its
 downstream before it deletes it, which costs a settle and entries no build will hit.
+Closed by B-149 (2026-10-10): the removal runs the finder alone and writes no entry.
+
+**B-149** `done` — **A removal ran everything below what it removed.**
+`rm netnewswire-mac` after a cold build re-ran 842 of the project's nodes over the inputs
+it had just removed and wrote 252 entries into the process cache, and only then deleted
+them. A removal should delete what is removed, give everything downstream the state its
+inputs stand in without running anything, delete what nothing holds, and settle once.
+
+Measured first, debug binaries, NetNewsWire's Mac app (the end-to-end clone with its
+overlay, `prepare --platform macos`) built cold into a fresh home, then `rm netnewswire-mac`
+and `wait`: 22.6 s, of which the request was 7.0 s and the settle 15.2 s (a second run,
+split); 843 nodes scheduled, 842 computed, 1 from the cache; `process` entered 842 times —
+71 preprocessors, 71 compiles, 37 `ibtool`s, 23 Swift compiles, 21 package readers, 14
+string catalogs, 213 `TreeFile`s and 213 `OutputFile`s among them — and 252 entries written,
+every one of them the state a removed input stood in, before the collector took 4,508
+nodes at idle. Four causes, each fixed:
+
+- **The finder waited for what it holds.** `ProjectFinder` holds a builder for every
+  formula on a dynamic port and never reads what a builder publishes, but a node waits for
+  every port: the removal's cascade set the builder `pending`, so the finder that would let
+  go of the removed project ran last, once everything below the builder had run.
+  `NodeDescriptor.holdingInputPorts` names such a port; the engine neither waits for it nor
+  wakes the node when it changes, and the finder declares `projectBuilders`. It was woken
+  on every settle that reached a builder, for 50 to 200 ms a run on NetNewsWire, and is now
+  woken only by the listings it reads: the tutorial's edit and undo each count one node
+  fewer.
+- **What a write let go of waited for idle.** The collector ran between passes only, so a
+  builder the finder dropped was deleted after its downstream had settled.
+  `collectReleasedNodes` runs it after any write that left a node with no consumer, before
+  the pass starts anything else; a node collected while it computes has its result
+  dropped. A cold build collects nothing this way: on NetNewsWire no node is let go of
+  before idle.
+- **A node ran over an input it could not have.** Every tool met a removed source through
+  `expectValue`, inside `process`, after whatever it did first. The engine now asks first
+  (`stateStoppingProcess`): a wire on a static port carrying `deleted` or `inputInError`
+  gives the node the state `NoValueReason.thrownByAConsumer` names, written without a run,
+  a key or an entry, and counted neither computed nor from the cache. A port that tolerates
+  an absent value, a dynamic port — which the node has to run to let go of — and a value
+  nobody has produced yet still run, and so does a node below a failure's own document: it
+  may have a failure of its own to say, and the tutorial's first build names the compiler's
+  and the linker's missing settings beside the preprocessor's in one report. The state is `inputInError`, as
+  the table has always said for a removed source, rather than `inputNotProduced`: that one
+  says an input never had a value, which a removed source had, and a report folds both
+  onto the source it names as `has been removed`.
+- **The removal was a commit per write.** `rm` deleted file by file, each port write, mark
+  and journal row a transaction of its own; it is one transaction with a savepoint per
+  match, as a push is, and each pass of the collector is one with a savepoint per node.
+
+Two more it turned up. A Swift compile whose folder lost a source read the removed file's
+value before its walk, so it was stopped before it could let go of the file and held it for
+good: `rm` of one source broke its module until a `reset`. `SwiftCompiler` (7) leaves a
+removed file to the walk, which demands the folder's files without it. And error results
+were cached without distinction. Decided: a node's own failure stays cached — a compile
+error is a function of its inputs as much as an object file, and replaying it spares the
+run — while a result made only of carried states (`inputInError`, `inputNotProduced`) and a
+run whose key holds a removed source are not stored (`isWorthStoring`): the first costs
+nothing to say again, and the second names a state of the input file system that the next
+push or collection leaves.
+
+After, same machine and method:
+
+| NetNewsWire Mac | before | after |
+|---|---|---|
+| `rm netnewswire-mac`, request | 7.0 s | 1.5 s |
+| its settle | 15.2 s | 3.5 s |
+| nodes scheduled / computed / from cache | 843 / 842 / 1 | 10 / 1 / 0 |
+| `process` entered | 842 | 2 (the finder, twice) |
+| cache entries written | 252 | 0 |
+| `rm` of one Swift source (`ErrorLogNotification.swift`) | 2.9 s; 462 computed, 12 entries; the module held the removed file | 2.8 s; 12 computed, 2 entries (its compile's own error, the builder); the module compiles without it |
+| cold build | 94.5 s, 852 computed, 430 entries | 95.1 s, 852 computed, 430 entries |
+
+The finder runs twice in the removal's settle: once when the folder is unpinned, which
+drops the builder, and once when the collector has taken the folder's node and the root's
+listing loses its name. What is left of the settle's 3.5 s is the collector's 4,508
+deletions and the idle reports. `RemovalSettleTests` (SemelCore) and
+`RemovalEndToEndTests` (the C fixture through `semelserv`) hold it.
 
 **B-121** `done` — **A cache entry spells out its upstream tree, once per wire.**
 A `ProcessCacheEntry` holds the node's `inputWireSpecs` so that a hit can apply them

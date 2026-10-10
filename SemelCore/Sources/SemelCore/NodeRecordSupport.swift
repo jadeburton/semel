@@ -257,6 +257,17 @@ extension NodeRecord {
         return result
     }
 
+    /// Whether this node only holds what arrives at the input port `portSymbolID` and never
+    /// reads it (`NodeDescriptor.holdingInputPorts`): a write, a connection or a
+    /// disconnection there is not a change to anything the node computes, so it wakes
+    /// nothing.
+    func holdsWithoutReading(portSymbolID: ObjectID) -> Bool {
+        guard let holding = linkedNodeType?.descriptor.holdingInputPorts, !holding.isEmpty else {
+            return false
+        }
+        return holding.contains(portSymbolID.resolveSymbol())
+    }
+
     func writePendingToAllOutputsOfNode() throws {
         // Every way a node's inputs come to mean something else passes through here — a
         // port write cascading to its consumers, a wire connected, a wire disconnected —
@@ -295,6 +306,9 @@ extension NodeRecord {
 
         for wire in try database.wire.select(comingFromNodeID: nodeID, fromSymbolID: port.nameSymbolID) {
             let toNode = try database.node.select(nodeID: wire.toNodeID)
+            guard !toNode.holdsWithoutReading(portSymbolID: wire.toSymbolID) else {
+                continue
+            }
 
             try toNode.writePendingToAllOutputsOfNode()
 

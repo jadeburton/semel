@@ -94,18 +94,32 @@ public struct NodeDescriptor {
     /// computes is not worth sharing with another machine either. A tool node always caches.
     public let cachesOutputs: Bool
 
+    /// The dynamic ports whose wires only hold what they come from in the graph: the node
+    /// demands those nodes so that they exist, and never reads what they publish.
+    /// `ProjectFinder.projectBuilders` is the one: the finder holds a builder for every
+    /// formula, and what a builder publishes says nothing about which formulas there are.
+    ///
+    /// The engine neither waits for such a port nor wakes the node when a value on it
+    /// changes. A node that waited for what it holds could not let go of any of it until
+    /// all of it had settled: a removed project's builder would hold the finder back until
+    /// every node below the builder had run over the removed sources, which is the one
+    /// thing a removal must not cost (B-149).
+    public let holdingInputPorts: Set<String>
+
     public init(inputPorts: [InputPort] = [],
                 outputPorts: [String],
                 inputPortsToleratingAbsentValue: Set<String> = [],
                 fileMetadataInputPorts: [String: String] = [:],
                 formulaFolderProperty: String? = nil,
-                cachesOutputs: Bool = true) {
+                cachesOutputs: Bool = true,
+                holdingInputPorts: Set<String> = []) {
         self.inputPorts = inputPorts
         self.outputPorts = outputPorts
         self.inputPortsToleratingAbsentValue = inputPortsToleratingAbsentValue
         self.fileMetadataInputPorts = fileMetadataInputPorts
         self.formulaFolderProperty = formulaFolderProperty
         self.cachesOutputs = cachesOutputs
+        self.holdingInputPorts = holdingInputPorts
     }
 
     /// Whether a value that will never arrive on this port is something the node minds.

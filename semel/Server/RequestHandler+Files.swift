@@ -202,6 +202,12 @@ extension RequestHandler {
     ///
     /// Each match is recorded in the session's batch journal, with everything below it,
     /// before it is taken (B-146).
+    ///
+    /// One transaction for the whole removal, as for a push of many files: a removed
+    /// file's port write, its parent's mark and its journal row are otherwise commits of
+    /// their own, and a tree of thousands of files spent most of its removal committing
+    /// them (B-149). Each match keeps its own boundary as a savepoint, so a match the graph
+    /// refuses leaves what it found and the matches beside it are still taken.
     func remove(pattern: String, replyStream: any ReplyStream, session: Session) throws -> DaemonResponse {
         try inBatch(session) { journal in
             try remove(pattern: pattern, replyStream: replyStream, recordingInto: journal)
@@ -217,21 +223,32 @@ extension RequestHandler {
         let slicer = ReplySlicer<RemovedPath>(verb: "remove", stream: replyStream, makeResponse: RemovedPath.response)
         var failures: [String] = []
 
-        for match in matches {
-            guard let child = try root.childNode(path: match.path) else {
-                failures.append("Child not found: \(match.path)")
-                continue
-            }
-            guard let deletable = try child.nodeAsAny() as? UserDeletable else {
-                failures.append("Child not deletable: \(match.path)")
-                continue
-            }
-            try journal.recordSubtree(at: match.path)
-            try deletable.deleteInInputFileSystem()
-            if case .folder = match.kind {
-                try slicer.append(.folder(match.path.string))
-            } else {
-                try slicer.append(.file(match.path.string))
+        try database.withTransactionPerStep {
+            for match in matches {
+                guard let child = try root.childNode(path: match.path) else {
+                    failures.append("Child not found: \(match.path)")
+                    continue
+                }
+                guard let deletable = try child.nodeAsAny() as? UserDeletable else {
+                    failures.append("Child not deletable: \(match.path)")
+                    continue
+                }
+                try journal.recordSubtree(at: match.path)
+                do {
+                    try database.withSavepoint {
+                        try deletable.deleteInInputFileSystem()
+                    }
+                } catch let error as any UnrecoverableError {
+                    throw error
+                } catch {
+                    failures.append("\(match.path): \(error)")
+                    continue
+                }
+                if case .folder = match.kind {
+                    try slicer.append(.folder(match.path.string))
+                } else {
+                    try slicer.append(.file(match.path.string))
+                }
             }
         }
 

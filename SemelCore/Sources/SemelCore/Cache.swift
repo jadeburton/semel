@@ -170,10 +170,14 @@ extension Node {
     /// from, so a trim reads rows and never the store. Here the store is read — a stat
     /// per object, and the first bytes of each to see whether it is a document naming
     /// more — which is the price of the total, paid once per entry written.
+    ///
+    /// Not every result is worth an entry (`isWorthStoring`): a node's own failure is, and a
+    /// state carried from its inputs, or a run over a removed source, is not.
     func saveCacheForAllInputsAndOutputs(keyMaterial: CacheKeyMaterial?,
                                          processingDuration: TimeInterval,
                                          output: AppliedOutput) throws {
-        guard let keyMaterial, descriptor.cachesOutputs else {
+        guard let keyMaterial, descriptor.cachesOutputs,
+              Self.isWorthStoring(outputValues: output.outputValues, keyMaterial: keyMaterial) else {
             return
         }
         let cacheKey = try keyMaterial.cacheKey()
@@ -200,6 +204,46 @@ extension Node {
                                      content: cacheEntryData,
                                      objects: BuildEngine.heldObjects(outputValues: output.outputValues,
                                                                       in: DataObjectStore.shared))
+    }
+}
+
+extension Node {
+
+    /// Whether a run's result is one a later run with the same key should be answered with.
+    ///
+    /// A failure of the node's own is: a compile error is as much a function of the inputs
+    /// as an object file, and replaying it spares the run that would say it again. Two
+    /// results are not (B-149):
+    ///
+    /// - **Only carried states.** Every port saying the node did not produce because of an
+    ///   input — `inputInError`, `inputNotProduced` — says nothing its inputs do not, costs
+    ///   nothing to say again, and is what the engine publishes without a run when the
+    ///   input is on a static port (`stateStoppingProcess`).
+    /// - **A removed source among the inputs.** A removal is a state of the outside world
+    ///   that the graph leaves as soon as what demanded the source lets go of it, or the
+    ///   source is pushed back, which moves the key. A key over it names a moment of the
+    ///   input file system, and its entry would only take room from builds a settle can use.
+    ///
+    /// A `pending` output is stored: it is what a walk publishes with the demands it has
+    /// found so far, and a hit replays the walk without running it.
+    static func isWorthStoring(outputValues: [String: NodeValue], keyMaterial: CacheKeyMaterial) -> Bool {
+        let onlyCarried = !outputValues.isEmpty && outputValues.values.allSatisfy { value in
+            switch value {
+            case .noValue(.inputInError), .noValue(.inputNotProduced):
+                return true
+            case .value, .noValue(.pending), .noValue(.initializing), .noValue(.deleted), .noValue(.error):
+                return false
+            }
+        }
+        guard !onlyCarried else {
+            return false
+        }
+        return !keyMaterial.inputs.contains { entry in
+            if case .noValue(.deleted) = entry.value {
+                return true
+            }
+            return false
+        }
     }
 }
 
@@ -350,4 +394,7 @@ struct AppliedOutput {
 enum ComputedOutput {
     case processed(ProcessOutput)
     case cached(AppliedOutput)
+    /// The state an input stood in, published without a run (`stateStoppingProcess`):
+    /// no key, no lookup and nothing stored.
+    case stopped(ProcessOutput)
 }

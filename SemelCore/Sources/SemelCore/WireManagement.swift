@@ -117,6 +117,9 @@ extension Wire {
         try database.node.updatePendingDeletion(nodeID: fromNodeID, pendingDeletion: false)
 
         let toNode = try database.node.select(nodeID: toNodeID)
+        guard !toNode.holdsWithoutReading(portSymbolID: toSymbolID) else {
+            return
+        }
         try toNode.writePendingToAllOutputsOfNode()
         BuildEngine.shared?.settleRecorder.noteWake(consumerNodeID: toNodeID,
                                                     wire: Wire(fromNodeID: fromNodeID, fromSymbolID: fromSymbolID,
@@ -181,14 +184,19 @@ extension Wire {
         let deletable     = try fromRecord.linkedNodeType == nil || fromRecord.makeNode().canBeDeleted()
 
         if noOutputWires && deletable {
-            // fromNode has no remaining consumers — mark it for deferred deletion.
-            // Actual cascade and removal happen at idle time in processPendingDeletions(),
-            // keeping all structural graph mutations out of the processing path.
+            // fromNode has no remaining consumers — mark it for deferred deletion. The
+            // collector takes it, and what only it held, once the write that let go of it
+            // is finished (`BuildEngine.collectReleasedNodes`), before the pass starts
+            // anything else: nothing is run that nothing holds (B-149).
             try database.node.updatePendingDeletion(nodeID: fromNodeID, pendingDeletion: true)
+            BuildEngine.shared?.noteNodeReleased()
         } else {
             // fromNode still has other consumers or must be kept alive.
             // Notify the consumer that one of its inputs changed so it can re-evaluate.
             let toNode = try database.node.select(nodeID: toNodeID)
+            guard !toNode.holdsWithoutReading(portSymbolID: toSymbolID) else {
+                return
+            }
             try toNode.writePendingToAllOutputsOfNode()
             BuildEngine.shared?.settleRecorder.noteWake(consumerNodeID: toNodeID, wire: self, change: .disconnected)
             try toNode.setScheduled(true)
