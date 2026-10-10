@@ -50,13 +50,18 @@ save is a build, and nothing on screen says the product is there.
   card on `settled`. This is the seed of the second version: the same model, drawn larger.
 - **The status item shows the engine's state** with one glyph: no engine, idle, settling
   (with the pending count), errors held. Its menu: the last settle's summary line, *Pause
-  notifications*, *Show window* (greyed in the first version), *Quit*. Clicking a card
-  opens the menu's detail popover for that settle: every product by name, every error in
-  the report's lines, selectable for copying. Nothing more, because the engine does not
-  know where products were exported; that is the client's knowledge (`build --into`, the
-  watcher's `--into`), and a *Reveal in Finder* needs it, which is a protocol question for
-  later (an `exported` notice a client posts and the server relays, so every subscriber
-  learns where bytes landed).
+  notifications*, *Products…*, *Show window* (greyed in the first version), *Quit*.
+- **It is a client of the private file system, like the prompt.** Clicking a card, or
+  *Products…*, opens a window listing the products under `output:` as `ls` lists them —
+  by folder, with the ones this settle touched marked — and every error in the report's
+  lines, selectable for copying. From there a person exports: select products or a
+  folder, choose a destination in a standard save panel, and the app writes them exactly
+  as `export <folder> --into <dir>` does, through the same client code. That is the whole
+  of its relation to the disk. The app knows nothing about where another client exported
+  — the watcher's `--into`, a `build`'s `semel-out` — and offers no *Reveal in Finder*,
+  because such a location may or may not have been updated by whoever exported last, and
+  a button that opens a stale file would be a lie. The truth is in `output:`; the app
+  shows that and lets the person take a copy when they want one.
 - **Testable without a screen.** `SemelMonitor` is a library with a pure model:
   `NotificationPlanner` takes events in and yields cards out — the headline, the names,
   the counts, the in-place update of a running card, the folding, the pause — and a
@@ -123,6 +128,9 @@ will state what it needs when the first has shown what people look at.
   and replaced by the result; folding beyond five; pause swallowing cards and resuming;
   `--only` filtering; the clock driving dismissal.
 - `CardTextTests`: the lines `--print` writes, pinned.
+- `ProductsExportTests` (root package, in-process server): the products window's listing
+  equals `ls output:` by folder; exporting a selection into a temporary folder writes the
+  same bytes and modes `export <folder> --into <dir>` writes, through the same code.
 - `SemelEndToEndTests`: `semel-monitor --print` against a real `semelserv` over the C
   fixture: a push, a settle, the card's lines on standard output; the engine stopped and
   restarted, the monitor reconnecting and reporting the next settle.
@@ -130,8 +138,13 @@ will state what it needs when the first has shown what people look at.
 
 ## Open for review
 
-- Whether the first version offers *Reveal in Finder* for products the watcher or `build
-  --into` exported, which needs the `exported` relay in the protocol, or waits.
 - Whether an error card stays until clicked (proposed) or also goes after a longer delay.
 - The name: `semel-monitor` is proposed; `semel-notify` says less, `semel-view` says more
   than the first version does.
+
+## Decided on review (2026-10-11)
+
+- No *Reveal in Finder*, and no knowledge of external locations at all. The app is a
+  client of the private file system: it lists `output:` and exports to a destination the
+  person chooses, through the prompt's own export code, and that is its only relation to
+  the disk. Above, under "a client of the private file system".
