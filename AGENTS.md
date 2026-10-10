@@ -165,6 +165,14 @@ _ = try? database.wire.delete(comingFromNodeID: wire.fromNodeID,
   prose must be left alone while `\(interpolations)` must be renamed, so no single rule gets
   both right. Budget a reading pass, not a sweep.
 
+## Commits and pull requests
+
+A commit written by a Claude model ends with `Co-Authored-By: <the model that wrote the
+commit> <noreply@anthropic.com>`, naming the model by its own name as its harness gives
+it — never a name copied from an earlier commit or from a convention. A pull request's
+body has the sections `What`, `Why`, `Testing` and `Checklist`, and ends with
+`🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+
 ## Choosing a `kind`
 
 Every polymorphic type — every node type, and `FolderManifest` and `TreeManifest` beside
