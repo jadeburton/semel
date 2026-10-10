@@ -308,6 +308,29 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
 
     /// A file a target takes from another target's folder is named one by one on the
     /// compiler and compiled beside the folder's own, under `extra/`.
+    /// `objectiveCHeaderName` (B-77 item 4): the compiler writes the module's Objective-C
+    /// interface under that name, a relative path, and the file is published on its own
+    /// port; asked for nothing, the port carries the empty file.
+    func test_theObjectiveCInterfaceIsWrittenUnderItsNameAndPublished() throws {
+        var input = try makeInput(folder: try manifest("input:/app/Sources", [file("Main.swift")]),
+                                  extraConfiguration: ["objectiveCHeaderName=app-Swift.h"]).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/app/Sources/Main.swift": .value(try "// main".intern())]
+        executor.producedFiles["app-Swift.h"] = Array("// interface".utf8)
+
+        let output = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        let arguments = executor.lastArguments
+        let flag = try XCTUnwrap(arguments.firstIndex(of: "-emit-objc-header-path"))
+        XCTAssertEqual(arguments[flag + 1], "app-Swift.h")
+        XCTAssertEqual(try XCTUnwrap(output.outputValues[SwiftCompiler.outputObjectiveCHeader]).expectValue(), try "// interface".intern())
+
+        var plain = try makeInput(folder: try manifest("input:/app/Sources", [file("Main.swift")])).inputValues
+        plain[SwiftCompiler.inputSourceFiles] = input[SwiftCompiler.inputSourceFiles]
+        let plainOutput = try makeTool().process(input: ProcessInput(inputValues: plain))
+        XCTAssertFalse(executor.lastArguments.contains("-emit-objc-header-path"), "\(executor.lastArguments)")
+        XCTAssertEqual(try XCTUnwrap(plainOutput.outputValues[SwiftCompiler.outputObjectiveCHeader]).expectValue(), try "".intern())
+    }
+
     func test_extraSourceFilesAreCompiledBesideTheFoldersOwn() throws {
         var input = try makeInput(folder: try manifest("input:/ext/Sources", [file("Main.swift")])).inputValues
         input[SwiftCompiler.inputSourceFiles] = ["input:/ext/Sources/Main.swift": .value(try "// main".intern())]

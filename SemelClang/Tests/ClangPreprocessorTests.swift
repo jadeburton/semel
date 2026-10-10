@@ -541,4 +541,55 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         let includeFlags = zip(arguments, arguments.dropFirst()).filter { $0.0 == "-I" }.map(\.1)
         XCTAssertEqual(includeFlags, [".", "input:/pkg/src", "input:/pkg/src/include"], "got \(arguments)")
     }
+
+    // MARK: - A target's prefix header, header map and frameworks (B-77)
+
+    private func tree(_ paths: [String]) throws -> NodeValue {
+        let entries = try paths.sorted().map { path in
+            TreeManifestEntry(path: path, hash: try "// \(path)".intern(), mode: 0o644)
+        }
+        return .value(try TreeManifest(entries: entries).toJSON().intern())
+    }
+
+    private func makeTargetInput() throws -> ProcessInput {
+        var inputValues = try makeInput(sourcePath: "input:/app/Source/Main.m").inputValues
+        inputValues[ClangPreprocessor.prefixHeader] = ["input:/app/Source/App.pch": .value(try "#import <Cocoa/Cocoa.h>".intern())]
+        inputValues[ClangPreprocessor.quoteHeaderTrees] = ["input:/app": try tree(["Source/Main.h", "Source/Views/Cell.h", "Source/Main.m"])]
+        inputValues[ClangPreprocessor.headerTrees] = ["own": try tree(["App/Main.h"]),
+                                                      "generated": try tree(["App-Swift.h"])]
+        inputValues[ClangPreprocessor.frameworkTrees] = ["Kit": try tree(["Kit.framework/Headers/Kit.h"])]
+        return ProcessInput(inputValues: inputValues)
+    }
+
+    /// Xcode's header map, laid out: each folder of the target's header tree holding a file
+    /// is an `-iquote`, sorted, so `#import "Cell.h"` finds `Views/Cell.h` from anywhere;
+    /// a tree on `headerTrees` is an `-I` at its key, `<App/Main.h>` and the Swift
+    /// interface; the frameworks are one `-F`; the prefix header is forced in. Every file
+    /// is placed where its flag says, and a file placed twice is placed once.
+    func test_aTargetsHeaderMapFrameworksAndPrefixHeaderAreSearchPathsOverPlacedFiles() throws {
+        _ = try makeTool().process(input: try makeTargetInput())
+
+        let arguments = executor.lastArguments
+        let pairs = zip(arguments, arguments.dropFirst())
+        XCTAssertEqual(pairs.filter { $0.0 == "-iquote" }.map(\.1), ["input:/app/Source", "input:/app/Source/Views"], "got \(arguments)")
+        XCTAssertEqual(pairs.filter { $0.0 == "-I" }.map(\.1), ["generated", "own", "."], "got \(arguments)")
+        XCTAssertEqual(pairs.filter { $0.0 == "-F" }.map(\.1), ["frameworks"], "got \(arguments)")
+        XCTAssertEqual(pairs.filter { $0.0 == "-include" }.map(\.1), ["input:/app/Source/App.pch"], "got \(arguments)")
+        let placed = try XCTUnwrap(executor.invocations.last).inputFileNames
+        for path in ["input:/app/Source/App.pch", "input:/app/Source/Views/Cell.h", "own/App/Main.h", "generated/App-Swift.h",
+                     "frameworks/Kit.framework/Headers/Kit.h"] {
+            XCTAssertTrue(placed.contains(path), "\(path) is not placed: \(placed)")
+        }
+        XCTAssertEqual(placed.filter { $0 == "input:/app/Source/Main.m" }.count, 1, "the source is placed once: \(placed)")
+    }
+
+    /// With none of the four the command line is what it was.
+    func test_withoutTheTargetsHeadersNoSearchPathIsAdded() throws {
+        _ = try makeTool().process(input: try makeInput())
+
+        let arguments = executor.lastArguments
+        XCTAssertFalse(arguments.contains("-iquote"), "got \(arguments)")
+        XCTAssertFalse(arguments.contains("-F"), "got \(arguments)")
+        XCTAssertFalse(arguments.contains("-include"), "got \(arguments)")
+    }
 }

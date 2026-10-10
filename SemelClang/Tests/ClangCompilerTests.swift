@@ -340,4 +340,19 @@ final class ClangCompilerTests: SemelClangTestCase {
                           "should say what is available, got \(message)")
         }
     }
+
+    /// What the preprocessed text imports as a framework module — `#pragma clang module
+    /// import Kit` — the compiler loads from the framework, so the frameworks a target's
+    /// sources were preprocessed against are placed for it too and are its `-F` (B-77).
+    func test_theFrameworkTreesArePlacedAndAreTheFrameworkSearchPath() throws {
+        var inputValues = try makeInput(sourcePath: "src/Main.m.p", otherSettings: ["modules": "true", "sdkPath": "/sdk"]).inputValues
+        let tree = TreeManifest(entries: [TreeManifestEntry(path: "Kit.framework/Modules/module.modulemap",
+                                                            hash: try "framework module Kit {}".intern(), mode: 0o644)])
+        inputValues[ClangCompiler.frameworkTrees] = ["Kit": .value(try tree.toJSON().intern())]
+        _ = try makeTool().process(input: ProcessInput(inputValues: inputValues))
+
+        let arguments = executor.lastArguments
+        XCTAssertEqual(zip(arguments, arguments.dropFirst()).filter { $0.0 == "-F" }.map(\.1), ["frameworks"], "got \(arguments)")
+        XCTAssertTrue(try XCTUnwrap(executor.invocations.last).inputFileNames.contains("frameworks/Kit.framework/Modules/module.modulemap"))
+    }
 }

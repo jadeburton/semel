@@ -55,6 +55,10 @@ struct SwiftCompilerConfiguration {
     /// `Bundle.module` accessor that finds that bundle at run time. A formula literal from
     /// the converter, so it is part of the node's identity and of its key.
     let resourceBundleName: String?
+    /// `SWIFT_OBJC_INTERFACE_HEADER_NAME`, `sequel-ace-Swift.h` (B-77 item 4): set, the
+    /// compiler writes the Objective-C interface of the module's `@objc` declarations under
+    /// that name, which the target's Objective-C imports; a literal from the converter.
+    let objectiveCHeaderName: String?
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
@@ -81,6 +85,7 @@ struct SwiftCompilerConfiguration {
         sourcePaths = Self.pathList(properties["sourcePaths"])
         excludedPaths = Self.pathList(properties["excludedPaths"])
         resourceBundleName = properties["resourceBundleName"].flatMap { $0.isEmpty ? nil : $0 }
+        objectiveCHeaderName = properties["objectiveCHeaderName"].flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// The source SwiftPM generates for a target with resources, as this build lays the
@@ -233,7 +238,9 @@ struct SwiftCompiler: Node {
     /// 7: a source removed from the target's folder is let go of by the walk, which
     /// publishes its demands without it, where the removed file stopped the run before the
     /// walk and the compile held it for good (B-149).
-    public static let implementationVersion = 7
+    /// 8: `objectiveCHeaderName` writes the module's Objective-C interface, published on the
+    /// new `objectiveCHeader` port (B-77 item 4).
+    public static let implementationVersion = 8
 
     // MARK: Ports
 
@@ -296,6 +303,10 @@ struct SwiftCompiler: Node {
     static let macrosFolder          = "macros"
     static let outputObject          = "object"
     static let outputModule          = "swiftmodule"
+    /// The Objective-C interface `objectiveCHeaderName` asks for — what Xcode writes as
+    /// `<Module>-Swift.h` for a target's Objective-C to import (B-77 item 4) — and the empty
+    /// file when the configuration asks for none.
+    static let outputObjectiveCHeader = "objectiveCHeader"
     static let infoLog               = "infoLog"
 
     public var thisNode: NodeRecord
@@ -322,7 +333,7 @@ struct SwiftCompiler: Node {
             .dynamic(inputFolderTrees),
             .dynamic(inputModuleMapFiles),
         ],
-        outputPorts: [outputObject, outputModule, infoLog]
+        outputPorts: [outputObject, outputModule, outputObjectiveCHeader, infoLog]
     )
 
     // The SDK a build declares reaches this node the ordinary way: `swift.compiler.sdkVersion`
@@ -486,10 +497,14 @@ struct SwiftCompiler: Node {
         let inputSourceFilesSpecs:    [String: GraphSpecNode]
         let inputFolderTreesSpecs:    [String: GraphSpecNode]
         let inputModuleMapFilesSpecs: [String: GraphSpecNode]
+        /// Set by a compile that succeeded; otherwise the interface is in the state the
+        /// module is — waiting, or failed with it.
+        var objectiveCHeader: NodeValue?
 
         func asProcessOutput() -> ProcessOutput {
             .init(outputValues: [SwiftCompiler.outputObject: outputObject,
                                  SwiftCompiler.outputModule: outputModule,
+                                 SwiftCompiler.outputObjectiveCHeader: objectiveCHeader ?? outputModule,
                                  SwiftCompiler.infoLog:      infoLog],
                   inputWireSpecs: [
                       SwiftCompiler.inputSourceFiles:    inputSourceFilesSpecs,
@@ -598,6 +613,9 @@ struct SwiftCompiler: Node {
         arguments.append("-o");                              arguments.append(objectOutput)
         arguments.append("-emit-module")
         arguments.append("-emit-module-path");               arguments.append(moduleOutput)
+        if let objectiveCHeaderName = inputs.configuration.objectiveCHeaderName {
+            arguments.append("-emit-objc-header-path");      arguments.append(objectiveCHeaderName)
+        }
         // No module interface: SwiftPM writes one only with library evolution, which
         // nothing here builds, and swiftc warns that it wants that — an error under a
         // package's `-warnings-as-errors` (NetNewsWire's `RSWeb`, B-77). Every consumer
@@ -684,11 +702,13 @@ struct SwiftCompiler: Node {
             inputFiles: inputs.sourceFiles + inputs.moduleFiles + inputs.moduleTreeFiles + inputs.frameworkTreeFiles
                       + inputs.moduleMapFiles + inputs.objectiveCHeaderFiles + (inputs.bridgingHeader.map { [$0] } ?? [])
                       + inputs.macroExecutables.map(\.file),
-            expectedOutputFileNames: [objectOutput, moduleOutput])
+            expectedOutputFileNames: [objectOutput, moduleOutput] + (inputs.configuration.objectiveCHeaderName.map { [$0] } ?? []))
 
         // Stored by the runner; an output the tool did not write is the empty object.
         let objectHash = result.outputFiles[objectOutput] ?? ""
         let moduleHash = result.outputFiles[moduleOutput] ?? ""
+        let objectiveCHeader: NodeValue = .value(try inputs.configuration.objectiveCHeaderName
+            .map { result.outputFiles[$0] ?? "" } ?? "".intern())
 
         guard result.exitCode == 0 else {
             let error = try result.failureDocument(tool: "swiftc", subject: .target(name: moduleName), settings: settings).published()
@@ -705,7 +725,8 @@ struct SwiftCompiler: Node {
                      infoLog:      .value(try result.infoOutput.intern()),
                      inputSourceFilesSpecs: inputSourceFilesSpecs,
                      inputFolderTreesSpecs: inputFolderTreesSpecs,
-                     inputModuleMapFilesSpecs: inputModuleMapFilesSpecs)
+                     inputModuleMapFilesSpecs: inputModuleMapFilesSpecs,
+                     objectiveCHeader: objectiveCHeader)
     }
 
     private func process(inputs: SwiftCompilerInputs) throws -> SwiftCompilerOutputs {
