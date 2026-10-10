@@ -442,9 +442,9 @@ final class GraphCheckTests: SemelCoreTestCase {
     // MARK: - A cache entry whose key is not the shape a key has
 
     func test_findsACacheEntryWhoseKeyIsNotAHash() throws {
-        try database.cacheEntry.save(CacheEntry(hash: "not-a-hash", content: Data([1, 2, 3]), cost: 20, timestamp: Date()))
-        try database.cacheEntry.save(CacheEntry(hash: Sha256.hash(Array("well formed".utf8)),
-                                                  content: Data([4, 5, 6]), cost: 20, timestamp: Date()))
+        try database.cacheEntry.save(hash: "not-a-hash", nodeType: "SampleTool", cost: 20, content: Data([1, 2, 3]), objects: [])
+        try database.cacheEntry.save(hash: Sha256.hash(Array("well formed".utf8)), nodeType: "SampleTool", cost: 20,
+                                     content: Data([4, 5, 6]), objects: [])
 
         let findings = GraphCheck.run(database: database).findings
 

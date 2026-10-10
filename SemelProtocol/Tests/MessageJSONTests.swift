@@ -48,9 +48,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsTwentySix() {
-        XCTAssertEqual(ProtocolVersion.current, 26)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 26,
+    func test_currentProtocolVersionIsTwentySeven() {
+        XCTAssertEqual(ProtocolVersion.current, 27)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 27,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -154,6 +154,9 @@ final class MessageJSONTests: XCTestCase {
             .errors(product: "Packages/libModels.a"),
             .check,
             .collect,
+            .cache,
+            .cacheLimit(limit: nil),
+            .cacheLimit(limit: ByteCount.gibibytes(20)),
             .tools(platform: "macos"),
             .reset(clearCache: false),
             .reset(clearCache: true),
@@ -293,6 +296,12 @@ final class MessageJSONTests: XCTestCase {
             .check(scheduledNodes: 0),
             .check(scheduledNodes: 12),
             .collected(removed: 3, removedBytes: 4096, kept: 12),
+            .cache(summary: CacheSummary(entries: 432, bytes: ByteCount(bytes: 30_000_000), limit: ByteCount.gibibytes(10),
+                                         limitIsDefault: true, lastTrim: nil)),
+            .cache(summary: CacheSummary(entries: 2, bytes: ByteCount(bytes: 100), limit: ByteCount(bytes: 150),
+                                         limitIsDefault: false, lastTrim: Self.sampleTrim)),
+            .cacheLimit(limit: ByteCount.gibibytes(10), isDefault: true, trim: nil),
+            .cacheLimit(limit: ByteCount(bytes: 150), isDefault: false, trim: Self.sampleTrim),
             .explain(explanation: nil),
             .explain(explanation: Self.sampleExplanation),
             .checkpoint(name: "latest", contentRoot: "4d5d"),
@@ -303,6 +312,19 @@ final class MessageJSONTests: XCTestCase {
         for response in responses {
             XCTAssertEqual(try roundTrip(Response.daemon(response)), .daemon(response))
         }
+    }
+
+    /// B-148. A trim that evicted three entries of two types.
+    private static let sampleTrim = CacheTrimRecord(evicted: 3, freed: ByteCount(bytes: 4_096), bytesAfter: ByteCount(bytes: 100),
+                                                    limit: ByteCount(bytes: 150),
+                                                    evictedByType: [CacheEvictedType(nodeType: "SwiftCompiler", count: 2),
+                                                                    CacheEvictedType(nodeType: "ClangCompiler", count: 1)])
+
+    /// The entries `cache` lists travel in the body as records.
+    func test_encodesCacheEntryRecords() throws {
+        let records = [CacheEntryRecord(key: "4d5d", nodeType: "SwiftCompiler", bytes: ByteCount(bytes: 1_024), cost: 900,
+                                        usedByLastSettle: true, heldByNode: false)]
+        XCTAssertEqual(try MessageCoder.decode([CacheEntryRecord].self, from: try MessageCoder.encode(records)), records)
     }
 
     /// B-91. A linker woken by one changed object and one that republished its value, and

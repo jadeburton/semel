@@ -283,8 +283,8 @@ final class CacheTests: SemelCoreTestCase {
     private func storeEntry(demanding table: GraphSpecTable, material: CacheKeyMaterial) throws {
         let entry = ProcessCacheEntry(outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
                                       specTable: table, keyMaterial: material)
-        try engine.database.cacheEntry.save(.init(hash: try material.cacheKey(), content: Data(try entry.toJSON().utf8),
-                                                  cost: 100, timestamp: Date()))
+        try engine.database.cacheEntry.save(hash: try material.cacheKey(), nodeType: material.nodeType, cost: 100,
+                                            content: Data(try entry.toJSON().utf8), objects: [])
     }
 
     /// The common entry, which every spec of it names a linked type: it comes back.

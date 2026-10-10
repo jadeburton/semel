@@ -189,9 +189,12 @@ public final class BuildEngine {
             // against the totals above it, and a list of paths between the failures and
             // the line that counts them would separate the two halves of one report.
             reportArtifactChanges()
+            // The cache before the collector: an evicted entry's objects are what a
+            // collection right after it gives back.
+            let evicted = trimCacheAtIdle()
             // After the reports and before the idle mark: nothing computes, so the only
             // objects being interned are a client's pushes, which the age margin covers.
-            collectObjectsIfDue()
+            collectObjectsIfDue(force: evicted)
 
             await idle.markIdle(settledThrough: wakeUpsConsumed)
             await workSignal.wait()
@@ -360,6 +363,11 @@ public final class BuildEngine {
     /// `DataObjectStore.bytesStored` when the collector last ran; nil until it has (B-14).
     /// Read and written on the loop's task only.
     var bytesStoredAtLastCollection: Int?
+
+    /// The last trim that evicted something, for `cache` to say what went (B-148). Not
+    /// persisted, as the settle record is not. Written by the loop and by `cache limit`,
+    /// read by a server's request.
+    @Locked var lastCacheTrim: CacheTrim?
 
     /// Where `reportUnclaimedConfigKeys` sends its lines. A closure rather than a bare
     /// `print` call so a test can capture what would be printed instead of scraping stdout —
@@ -1004,8 +1012,10 @@ public final class BuildEngine {
                 switch result.output {
                 case .cached(let cached):
                     try node.writeToOutputs(output: cached)
+                    node.recordCacheKey(result.keyMaterial)
                 case .processed(let processed):
                     let applied = try node.writeToOutputs(output: processed)
+                    node.recordCacheKey(result.keyMaterial)
                     // Failing to save a cache entry must not fail a build — unless the
                     // failure is the machine's, which no later node will survive either.
                     do {

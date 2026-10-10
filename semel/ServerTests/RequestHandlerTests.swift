@@ -135,8 +135,52 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertTrue(String(decoding: try XCTUnwrap(body), as: UTF8.self).contains("no cache entry"))
     }
 
+    // MARK: - cache (B-148)
+
+    func test_cacheAnswersTheSummaryAndTheEntriesInTheBody() throws {
+        let key = try storeOneCacheEntry()
+
+        let (response, body) = try daemon(.cache)
+
+        guard case .cache(let summary) = response else {
+            return XCTFail("expected a cache reply, got \(response)")
+        }
+        XCTAssertEqual(summary.entries, 1)
+        XCTAssertEqual(summary.limit, BuildEngine.defaultCacheLimit)
+        XCTAssertTrue(summary.limitIsDefault)
+        let records = try MessageCoder.decode([CacheEntryRecord].self, from: try XCTUnwrap(body))
+        XCTAssertEqual(records.map(\.key), [key])
+        XCTAssertEqual(records.first?.nodeType, "KeyedSampleNode")
+        XCTAssertEqual(records.first?.bytes, summary.bytes, "the one entry holds all the cache holds")
+    }
+
+    func test_cacheLimitIsAskedThenSetAndStored() throws {
+        XCTAssertEqual(try daemon(.cacheLimit(limit: nil)).0,
+                       .cacheLimit(limit: BuildEngine.defaultCacheLimit, isDefault: true, trim: nil))
+
+        XCTAssertEqual(try daemon(.cacheLimit(limit: ByteCount.gibibytes(20))).0,
+                       .cacheLimit(limit: ByteCount.gibibytes(20), isDefault: false, trim: nil))
+        XCTAssertEqual(try daemon(.cacheLimit(limit: nil)).0,
+                       .cacheLimit(limit: ByteCount.gibibytes(20), isDefault: false, trim: nil))
+    }
+
+    /// A limit below what the cache holds evicts at once and says what it evicted.
+    func test_aLimitBelowWhatTheCacheHoldsEvictsAtOnce() throws {
+        try storeOneCacheEntry()
+
+        let (response, _) = try daemon(.cacheLimit(limit: ByteCount(bytes: 0)))
+
+        guard case .cacheLimit(_, _, let trim) = response else {
+            return XCTFail("expected a cacheLimit reply, got \(response)")
+        }
+        XCTAssertEqual(trim?.evicted, 1)
+        XCTAssertEqual(trim?.evictedByType, [CacheEvictedType(nodeType: "KeyedSampleNode", count: 1)])
+        XCTAssertEqual(trim?.bytesAfter, ByteCount(bytes: 0))
+    }
+
     /// One entry, stored the way a build stores one: the material is taken of a real
     /// node's real input and the key is taken of the material.
+    @discardableResult
     private func storeOneCacheEntry() throws -> String {
         try TypeRegistry.register(types: [KeyedSampleNode.self])
         let (record, _) = try GraphSpecNode.parse("KeyedSampleNode(prefix: 'sample')").findOrCreateMatchingNode()

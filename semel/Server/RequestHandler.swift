@@ -176,6 +176,17 @@ public final class RequestHandler {
                 let collection = try engine.collectUnreferencedObjects()
                 return (.daemon(.collected(removed: collection.removed, removedBytes: collection.removedBytes,
                                            kept: collection.kept)), nil)
+            case .cache:
+                let report = try engine.cacheReport()
+                return (.daemon(.cache(summary: Self.cacheSummary(report))),
+                        try MessageCoder.encode(Self.cacheEntryRecords(report)))
+            case .cacheLimit(let limit):
+                guard let limit else {
+                    let (current, isDefault) = try engine.cacheLimit()
+                    return (.daemon(.cacheLimit(limit: current, isDefault: isDefault, trim: nil)), nil)
+                }
+                let trim = try engine.setCacheLimit(limit)
+                return (.daemon(.cacheLimit(limit: limit, isDefault: false, trim: Self.trimRecord(trim))), nil)
             case .tools(let platformName):
                 // A name this server does not know answers as macOS rather than failing:
                 // the reply says what is installed either way, and the client validated it.

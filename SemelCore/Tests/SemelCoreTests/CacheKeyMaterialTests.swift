@@ -66,10 +66,10 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
     }
 
     /// A row under `key` holding content of a shape this Semel does not read.
-    private func storeAnUnreadableRow(key: String, timestamp: Date = Date()) throws {
+    private func storeAnUnreadableRow(key: String) throws {
         let withoutMaterial = #"{"outputValues":{},"inputWireSpecs":{}}"#
-        try engine.database.cacheEntry.save(.init(hash: key, content: Data(withoutMaterial.utf8),
-                                                  cost: 1, timestamp: timestamp))
+        try engine.database.cacheEntry.save(hash: key, nodeType: "SampleTool", cost: 1,
+                                            content: Data(withoutMaterial.utf8), objects: [])
     }
 
     private func builtOutput() throws -> AppliedOutput {
@@ -311,40 +311,39 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
 
         let entry = ProcessCacheEntry(outputValues: output.outputValues, specTable: output.specTable,
                                       keyMaterial: material)
-        try engine.database.cacheEntry.save(.init(hash: key, content: Data(try entry.toJSON().utf8),
-                                                  cost: 1, timestamp: Date()))
+        try engine.database.cacheEntry.save(hash: key, nodeType: material.nodeType, cost: 1,
+                                            content: Data(try entry.toJSON().utf8), objects: [])
         XCTAssertNil(try tool.loadCachedOutputs(cacheKey: key), "and is not answered from a row that stands")
     }
 
     // MARK: - What a lookup counts as recently used
 
-    /// Eviction is by timestamp, so a lookup that refreshed a row before reading it would
-    /// make the rows it rejects the hardest ones to evict.
-    func test_aRejectedRowIsNotMadeRecentlyUsedByTheLookupThatRejectsIt() throws {
-        let tool    = try makeCompilerNode()
-        let key     = try tool.buildCacheKeyMaterial(input: try makeInput()).cacheKey()
-        let longAgo = Date(timeIntervalSince1970: 1_000_000)
-        try storeAnUnreadableRow(key: key, timestamp: longAgo)
+    /// Eviction spares what the last settle used, so a lookup that stamped a row before
+    /// reading it would spare the rows it rejects.
+    func test_aRejectedRowIsNotStampedAsUsedByTheLookupThatRejectsIt() throws {
+        let tool = try makeCompilerNode()
+        let key  = try tool.buildCacheKeyMaterial(input: try makeInput()).cacheKey()
+        try storeAnUnreadableRow(key: key)
+        let written = try XCTUnwrap(engine.database.cacheEntry.select(hash: key)).lastUse
+        try engine.database.cacheEntry.closeSettle()
 
         XCTAssertNil(try tool.loadCachedOutputs(cacheKey: key))
 
         let row = try XCTUnwrap(engine.database.cacheEntry.select(hash: key))
-        XCTAssertEqual(row.timestamp.timeIntervalSince1970, longAgo.timeIntervalSince1970, accuracy: 1,
-                       "a row nothing could use is not a row that was used")
+        XCTAssertEqual(row.lastUse, written, "a row nothing could use is not a row that was used")
     }
 
-    /// The other half: a row that is handed back is recently used, which is what the
-    /// refresh is for.
-    func test_aRowThatIsHandedBackIsMadeRecentlyUsed() throws {
-        let tool    = try makeCompilerNode()
-        let key     = try store(tool, input: try makeInput())
-        let longAgo = Date(timeIntervalSince1970: 1_000_000)
-        try engine.database.cacheEntry.updateTimestampAndCost(hash: key, cost: 1, timestamp: longAgo)
+    /// The other half: a row that is handed back is used by the settle that read it.
+    func test_aRowThatIsHandedBackIsStampedWithTheSettleThatReadIt() throws {
+        let tool = try makeCompilerNode()
+        let key  = try store(tool, input: try makeInput())
+        try engine.database.cacheEntry.closeSettle()
 
         XCTAssertNotNil(try tool.loadCachedOutputs(cacheKey: key))
 
         let row = try XCTUnwrap(engine.database.cacheEntry.select(hash: key))
-        XCTAssertGreaterThan(row.timestamp, longAgo)
+        XCTAssertEqual(row.lastUse, try engine.database.cacheEntry.account().settle)
+        XCTAssertGreaterThan(row.lastUse, try engine.database.cacheEntry.account().lastUsingSettle)
     }
 
     // MARK: - Reading it back
@@ -406,8 +405,8 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
         let entry    = ProcessCacheEntry(outputValues: [:], specTable: GraphSpecTable(inputWireSpecs: [:], rows: [:]),
                                          keyMaterial: material)
         let wrongKey = String(repeating: "b", count: 64)
-        try engine.database.cacheEntry.save(.init(hash: wrongKey, content: Data(try entry.toJSON().utf8),
-                                                  cost: 1, timestamp: Date()))
+        try engine.database.cacheEntry.save(hash: wrongKey, nodeType: material.nodeType, cost: 1,
+                                            content: Data(try entry.toJSON().utf8), objects: [])
 
         let description = engine.cacheEntryDescription(key: wrongKey)
 

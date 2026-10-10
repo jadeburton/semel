@@ -388,10 +388,11 @@ final class VersionMarkerTests: SemelCoreTestCase {
     /// pins is the engine's half of it: an upgrade discards nothing by itself.
     func test_aVersionChangeKeepsTheCachedBuilds() throws {
         let engine = try makeEngine(try DatabaseLayer())
-        try engine.database.cacheEntry.save(.init(hash: "an-entry-built-by-the-older-semel",
-                                                    content: Data("{}".utf8),
-                                                    cost: 100,
-                                                    timestamp: Date()))
+        try engine.database.cacheEntry.save(hash: "an-entry-built-by-the-older-semel",
+                                            nodeType: "SampleTool",
+                                            cost: 100,
+                                            content: Data("{}".utf8),
+                                            objects: [])
         try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.0-older")
 
         try engine.reconcileVersionMarkers()

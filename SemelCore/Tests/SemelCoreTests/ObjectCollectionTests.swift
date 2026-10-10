@@ -130,8 +130,8 @@ final class ObjectCollectionTests: SemelCoreTestCase {
                                       specTable: GraphSpecTable(inputWireSpecs: [:], rows: [:]),
                                       keyMaterial: CacheKeyMaterial(nodeType: "SampleTool", implementationVersion: 1,
                                                                     properties: [], fingerprint: nil, inputs: []))
-        try database.cacheEntry.save(CacheEntry(hash: String(repeating: "c", count: 64),
-                                                content: try JSONEncoder().encode(entry), cost: 1, timestamp: Date()))
+        try database.cacheEntry.save(hash: String(repeating: "c", count: 64), nodeType: "SampleTool", cost: 1,
+                                     content: try JSONEncoder().encode(entry), objects: [])
 
         let collection = try engine.collectUnreferencedObjects()
 

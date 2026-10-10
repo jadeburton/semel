@@ -8,8 +8,6 @@
 import Foundation
 import SemelNodeKit
 
-private let cacheEntryLimit = 500
-
 extension Node {
 
     /// The property `ProjectBuilder` stamps on every cacheable node it builds a product
@@ -137,14 +135,14 @@ extension Node {
         }
 
         // Below every reason this lookup can answer nothing, so only a row that was used
-        // counts as recently used. Eviction is by timestamp, so refreshing a row before
-        // reading it makes the rejected ones the hardest to evict — an entry this Semel
-        // cannot decode, or one demanding a type it does not link, would hold its slot in
-        // the cache against the entries that do get used.
+        // counts as used by this settle. Eviction spares what the last settle used, so
+        // stamping a row before reading it would spare the rejected ones — an entry this
+        // Semel cannot decode, or one demanding a type it does not link, would hold its
+        // bytes in the cache against the entries that do get used.
         //
-        // Best effort: a stale timestamp only makes the entry evictable sooner.
+        // Best effort: a missed stamp only makes the entry evictable sooner.
         FatalErrors.attempt {
-            try database.cacheEntry.updateTimestampAndCost(hash: cacheKey, cost: cacheEntry.cost, timestamp: Date())
+            try database.cacheEntry.noteUse(hash: cacheKey)
         }
 
         Debug.log("using cache: \(type(of: self)), nodeID \(thisNode.id ?? -1)")
@@ -162,9 +160,16 @@ extension Node {
     /// folded once per run, for the graph and for the entry both.
     ///
     /// Whether an entry is written is the type's declaration (`cachesOutputs`) and nothing
-    /// else. The duration is stored as the entry's cost for `debug` to show; it decides
-    /// nothing, because an entry that existed only when a run was slow enough would make
-    /// the next settle depend on the machine's load.
+    /// else. The duration is stored as the entry's cost; it decides no value, because an
+    /// entry that existed only when a run was slow enough would make the next settle depend
+    /// on the machine's load. What it weighs is which entry goes first when the cache is
+    /// over its limit, which is a question about the machine's resources (B-148).
+    ///
+    /// The entry is stored with the objects it holds, as the collector would follow them
+    /// from its outputs, and their sizes: that is what the cache's running total is kept
+    /// from, so a trim reads rows and never the store. Here the store is read — a stat
+    /// per object, and the first bytes of each to see whether it is a document naming
+    /// more — which is the price of the total, paid once per entry written.
     func saveCacheForAllInputsAndOutputs(keyMaterial: CacheKeyMaterial?,
                                          processingDuration: TimeInterval,
                                          output: AppliedOutput) throws {
@@ -189,11 +194,12 @@ extension Node {
         // Replaces rather than refuses: a key whose row this Semel could not read is a key
         // it just missed on, and the build that missed is the one thing that can put a
         // readable entry there.
-        try database.cacheEntry.save(.init(hash: cacheKey, content: cacheEntryData,
-                                           cost: Int(processingDuration * 1000.0),
-                                           timestamp: Date()))
-        // Best effort: an untrimmed cache is over its limit until the next save trims it.
-        FatalErrors.attempt { try database.cacheEntry.trimToLimit(cacheEntryLimit) }
+        try database.cacheEntry.save(hash: cacheKey,
+                                     nodeType: keyMaterial.nodeType,
+                                     cost: Int(processingDuration * 1000.0),
+                                     content: cacheEntryData,
+                                     objects: BuildEngine.heldObjects(outputValues: output.outputValues,
+                                                                      in: DataObjectStore.shared))
     }
 }
 

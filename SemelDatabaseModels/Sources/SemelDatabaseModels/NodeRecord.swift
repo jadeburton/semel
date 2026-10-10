@@ -656,6 +656,7 @@ public struct NodeDataAccess: DataAccessType {
             try db.cachedExecute("DELETE FROM Node WHERE id = ?", arguments: [nodeID])
             let deleted = db.changesCount > 0
             try db.cachedExecute("DELETE FROM OutputPort WHERE nodeID = ?", arguments: [nodeID])
+            try db.cachedExecute("DELETE FROM NodeCacheKey WHERE nodeID = ?", arguments: [nodeID])
             return deleted
         }
     }
