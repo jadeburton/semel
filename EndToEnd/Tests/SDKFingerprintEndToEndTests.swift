@@ -40,11 +40,9 @@ final class SDKFingerprintEndToEndTests: XCTestCase {
     /// Asserted on what each compile reads, not on how many nodes a settle computed. The
     /// comment edit wakes the compiles too: the merged settings run again, and every node
     /// below them is pending until its input is written again. A compile woken with the
-    /// key it had is answered from the cache only if its earlier run took long enough to
-    /// store an entry — the 15 ms floor in `saveCacheForAllInputsAndOutputs` — so either
-    /// settle's `computed` count moves by up to three with the machine's load. A changed
-    /// configuration is a changed key, which no entry answers: a compile whose
-    /// configuration moved is a compile that ran.
+    /// key it had is answered from the cache, and one whose configuration moved has a key
+    /// no entry answers, so it runs; the configuration is the fact this test is about, and
+    /// the count is the cache's business.
     func test_aChangedSDKFingerprintLineReschedulesTheCompiles() throws {
         let root = try XCTUnwrap(self.root)
         let tree = root.appendingPathComponent("tree", isDirectory: true)

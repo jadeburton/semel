@@ -38,14 +38,10 @@ final class SettleSummaryTests: SemelCoreTestCase {
         engine = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
         engine.settleReporter = { [summaries] summary in summaries.append(summary) }
-        // Above the cache's floor, so the tool's result is stored and the second build has
-        // something to hit.
-        SampleTool.processingDurationForTests = 0.02
         engine.startProcessingLoop()
     }
 
     override func tearDown() {
-        SampleTool.processingDurationForTests = 0
         // A loop left running would keep processing against the next test's globals.
         engine.stopProcessingLoop()
         engine.waitUntilIdleBlocking()

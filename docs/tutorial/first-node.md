@@ -16,7 +16,9 @@ print a settle summary, and every transcript again when a build learned to print
 summary once, after its last settle, with the artifact diff under it; the cleanup's
 wrong-order transcripts when a node of a removed type became an error the report names; the
 two failed builds' reports when they learned to group by the products the errors stop, and
-again when the report became one block per cause, saying what needs it (B-145). The commits in
+again when the report became one block per cause, saying what needs it (B-145); the counts of
+Parts 2 and 4 and the cleanup when whether a result is cached became a declaration of its
+node's type rather than a matter of how long the run took (B-147). The commits in
 between change documents, comments, tests and the shape of the reference node's loop — not
 what anything prints.
 
@@ -382,7 +384,7 @@ Push file: hello/src/hello.h [no change]
 Push file: hello/src/hello2.c
 Push file: hello/src/main.c [no change]
 Settled.
-✅ 9 nodes scheduled, 9 computed, 0 from cache, 0 errors
+✅ 9 nodes scheduled, 8 computed, 1 from cache, 0 errors
    changed: output:/hello/hello
    changed: output:/hello/hello.dylib
 No errors.
@@ -390,28 +392,31 @@ Exported 3 files into /Users/you/semel-playground/out
 ```
 
 One file pushed without `[no change]`; two of the three products republished, and
-`config.txt` not. Nine nodes woken out of the forty in this graph, and all nine ran: the
+`config.txt` not. Nine nodes woken out of the forty in this graph, and eight ran: the
 project finder and the include finder, then one preprocessor and one compiler —
 `hello.c` and `main.c` were not touched, so two of each stayed asleep — then both linkers,
 because both products take that object, then the two output files. The ninth is the node
-that reads `hello.fmla`, which did not change and ran anyway: reading it takes less time
-than the engine thinks worth a cache entry, which Part 4 comes back to, so there was no
-answer stored to hit.
+that reads `hello.fmla`, which did not change: it was woken, asked the cache with the
+inputs it had last time, and got the answer it had stored then.
 
 **3. Put it back.** Undo the edit and build. The prompt prints exactly what it printed
 last time, line for line — the same file pushed, the same two products republished — with
 one line different:
 
 ```
-✅ 9 nodes scheduled, 5 computed, 4 from cache, 0 errors
+✅ 9 nodes scheduled, 3 computed, 6 from cache, 0 errors
 ```
 
-The same nine nodes were woken. Five ran; four did not, and those four are the
-preprocessor, the compiler and both linkers — the entire chain that had just been rebuilt,
-cache hits from end to end. A *cache entry* is keyed on the node's type, its
-properties and the name and content of everything wired to it; time appears nowhere, so a
-file restored to what it was asks the same question as before and gets the stored answer.
-`scheduled` did not move and `computed` nearly halved: that gap is the whole idea.
+The same nine nodes were woken. Three ran; six did not, and those six are the include
+finder, the preprocessor, the compiler, both linkers and the node reading the formula — the
+entire chain that had just been rebuilt, cache hits from end to end. A *cache entry* is
+keyed on the node's type, its properties and the name and content of everything wired to
+it; time appears nowhere, so a file restored to what it was asks the same question as
+before and gets the stored answer. The three that ran never store one: the project finder
+asks for every input it has itself, and the engine keeps no entry for a node like that;
+`OutputFile` declares that it caches nothing, because its work costs less than a lookup —
+Part 4 comes back to that. `scheduled` did not move and `computed`
+fell from eight to three: that gap is the whole idea.
 
 **4. Change a setting only the linker reads.** Add a line to
 `~/semel-playground/hello/semel.config`:
@@ -434,7 +439,7 @@ Push file: hello/src/hello.h [no change]
 Push file: hello/src/hello2.c [no change]
 Push file: hello/src/main.c [no change]
 Settled.
-✅ 18 nodes scheduled, 12 computed, 6 from cache, 0 errors
+✅ 18 nodes scheduled, 11 computed, 7 from cache, 0 errors
 No errors.
 Exported 3 files into /Users/you/semel-playground/out
 ```
@@ -443,8 +448,8 @@ Not one C file changed, and both programs were relinked — the linkers' setting
 change, even if the linker reads no such key, and the same bytes came out, which is why no
 `changed:` line follows. What did not happen is the interesting part. Eighteen nodes woken,
 against nine for a one-character edit to a source file: the settings feed every tool in the
-build, so touching them wakes nearly the whole graph. Six of those were answered from the
-cache, and those six are all the preprocessors and compilers.
+build, so touching them wakes nearly the whole graph. Seven of those were answered from the
+cache: all six preprocessors and compilers, and the node reading the formula.
 
 The summary counts; `explain` names. Ask it about the program:
 
@@ -473,7 +478,7 @@ answered from the cache. The numbers after `#` are node ids and yours will diffe
 reads the last settle only: the record is kept in memory, and a server that has restarted
 since says it has none.
 
-Each of the six reads its settings through a `ConfigFilter` that passes on only
+Each of the six tools reads its settings through a `ConfigFilter` that passes on only
 `clang.compiler.*` or `clang.preprocessor.*`, so what reached them was byte-identical and
 their keys did not move — woken, and not one of them ran. Only the linkers, whose selector
 really did see a different file, had work to do. Nothing complains about the new key
@@ -650,13 +655,13 @@ Now the experiments from Part 2, on your own node:
 - Add a line to `hello2.c`, build: `hello2.c: 13`, and the other two lines are the same
   bytes. The server shows `processWithCatch(input:): MyLineCounter, nodeID 42`, and that
   file's compile chain beside it; nothing else.
-- Undo it, build: the clang chain around your node hits cache, and your node does not —
-  `processWithCatch(input:): MyLineCounter, nodeID 42` again. Nothing is wrong. The engine
-  only stores a cache entry for work that took more than fifteen milliseconds
-  (`saveCacheForAllInputsAndOutputs` in
-  [`Cache.swift`](../../SemelCore/Sources/SemelCore/Cache.swift)), and counting three files
-  is far under it: looking the answer up would cost more than working it out. You wrote no
-  caching code, and that is exactly why the engine gets to make this choice for you.
+- Undo it, build: your node is answered from the cache along with the clang chain around
+  it — the server shows `using cache: MyLineCounter, nodeID 42` where it showed
+  `processWithCatch`. You wrote no caching code: a type is cached unless its descriptor
+  declares `cachesOutputs: false`, which the engine's cheapest types do — an output file, a
+  settings filter — because looking their answer up costs as much as working it out.
+  Whether a result is stored is the type's to say, never how long one run took, so the same
+  build hits the same entries on a fast machine and a slow one.
 - Add `src/extra.c` with one function in it, build: a fourth line appears at the top of
   `lines.txt` and the formula did not change. The glob is a node too — a `Folder` — and its
   manifest changed. Your node is not the same node afterwards: a different set of wires is
@@ -722,7 +727,9 @@ Push file: hello/src/hello.h [no change]
 Push file: hello/src/hello2.c
 Push file: hello/src/main.c [no change]
 Settled.
-❌ 11 nodes scheduled, 8 computed, 3 from cache, 2 errors
+❌ 11 nodes scheduled, 6 computed, 5 from cache, 2 errors
+   changed: output:/hello/hello
+   changed: output:/hello/hello.dylib
 lines.txt:
 a node of kind 45 is of a type this server does not link
   register: kind 45

@@ -37,19 +37,14 @@ public struct SampleTool: Node {
         outputPorts: [output, errorLog, infoLog]
     )
 
-    /// How long `process` takes. Zero unless a test sets it, and a test that wants this
-    /// node's result *cached* has to: the cache declines to store anything that took less
-    /// than its floor, on the grounds that such an entry costs more than recomputing.
-    static var processingDurationForTests: TimeInterval = 0
-
     /// Interns a result, so a test that makes the object store unwritable has something
     /// for the write to fail on. Every declared port is written: a node that leaves one
     /// unwritten is warned about and left scheduled.
+    ///
+    /// Returns at once, which is the point for the cache's tests: whether a result is
+    /// stored is the type's declaration, so a run this quick is cached like any other.
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        if Self.processingDurationForTests > 0 {
-            Thread.sleep(forTimeInterval: Self.processingDurationForTests)
-        }
-        return .init(outputValues: [Self.output:   .value(try "result".intern()),
+        .init(outputValues: [Self.output:   .value(try "result".intern()),
                                     Self.errorLog: .value(try "".intern()),
                                     Self.infoLog:  .value(try "".intern())],
                      inputWireSpecs: [:])
@@ -106,6 +101,28 @@ public struct DemandingSampleTool: Node {
             text += try value.expectValue().resolveAsString()
         }
         return .init(outputValues: [Self.output: .value(try text.intern())], inputWireSpecs: [:])
+    }
+}
+
+/// `SampleTool`'s shape, declared not to cache: what a type whose work costs less than a
+/// lookup looks like to the engine.
+public struct UncachedSampleTool: Node {
+    public static let kind: UInt = 987_105
+
+    public var thisNode: NodeRecord
+
+    public init(thisNode: NodeRecord) throws {
+        self.thisNode = thisNode
+    }
+
+    public static let descriptor = NodeDescriptor(
+        inputPorts: [.required(SampleTool.configuration)],
+        outputPorts: [SampleTool.output],
+        cachesOutputs: false
+    )
+
+    public func process(input: ProcessInput) throws -> ProcessOutput {
+        .init(outputValues: [SampleTool.output: .value(try "result".intern())], inputWireSpecs: [:])
     }
 }
 

@@ -98,7 +98,7 @@ extension Node {
     /// and none is hashed (B-121).
     func loadCachedOutputs(cacheKey: String?) throws -> AppliedOutput? {
 
-        guard let cacheKey else {
+        guard let cacheKey, descriptor.cachesOutputs else {
             return nil
         }
 
@@ -160,15 +160,18 @@ extension Node {
     ///
     /// The output is the applied one, whose table is what was wired: the demands are
     /// folded once per run, for the graph and for the entry both.
+    ///
+    /// Whether an entry is written is the type's declaration (`cachesOutputs`) and nothing
+    /// else. The duration is stored as the entry's cost for `debug` to show; it decides
+    /// nothing, because an entry that existed only when a run was slow enough would make
+    /// the next settle depend on the machine's load.
     func saveCacheForAllInputsAndOutputs(keyMaterial: CacheKeyMaterial?,
                                          processingDuration: TimeInterval,
                                          output: AppliedOutput) throws {
-        guard let keyMaterial else {
+        guard let keyMaterial, descriptor.cachesOutputs else {
             return
         }
         let cacheKey = try keyMaterial.cacheKey()
-
-        //Debug.log("Cache cost: \(Int(processingDuration * 1000.0)) ms")
 
         if descriptor.staticInputPorts.isEmpty {
             return
@@ -177,20 +180,6 @@ extension Node {
         if descriptor.outputPorts.isEmpty {
             return
         }
-
-        let thresholdDuration = 0.015 // 15ms
-
-        // The floor is about new work: a build cheaper than storing and fetching it back is
-        // not worth a row. It is not about a row already standing under this key whose
-        // content this Semel cannot read — that row is a slot nothing can use, and this
-        // build is the only thing that can put a usable entry in it. Left alone it would
-        // wait for the whole cache to turn over under it. So the floor is asked second, and
-        // a build of any cost replaces such a row.
-        if processingDuration < thresholdDuration && !holdsAnUnreadableEntry(cacheKey: cacheKey) {
-            return
-        }
-
-        //Debug.log("Saving cache entry..")
 
         let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues,
                                            specTable: output.specTable,
@@ -205,17 +194,6 @@ extension Node {
                                            timestamp: Date()))
         // Best effort: an untrimmed cache is over its limit until the next save trims it.
         FatalErrors.attempt { try database.cacheEntry.trimToLimit(cacheEntryLimit) }
-    }
-
-    /// Whether a row stands under this key that this Semel cannot decode — the entries an
-    /// older or newer shape of `ProcessCacheEntry` left behind. One lookup by primary key,
-    /// asked only of a build under the storage floor, which is the one case where the
-    /// answer decides anything.
-    private func holdsAnUnreadableEntry(cacheKey: String) -> Bool {
-        guard let row = (FatalErrors.attempt { try database.cacheEntry.select(hash: cacheKey) }) ?? nil else {
-            return false
-        }
-        return (try? JSONDecoder().decode(ProcessCacheEntry.self, from: row.content)) == nil
     }
 }
 

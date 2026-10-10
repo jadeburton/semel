@@ -124,7 +124,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertEqual(response, .debug)
         let text = String(decoding: try XCTUnwrap(body), as: UTF8.self)
         XCTAssertTrue(text.contains("cache entry \(key)"), text)
-        XCTAssertTrue(text.contains("node ConfigFilter@\(ConfigFilter.implementationVersion)"), text)
+        XCTAssertTrue(text.contains("node KeyedSampleNode@\(KeyedSampleNode.implementationVersion)"), text)
         XCTAssertTrue(text.contains(#"property {"key":"prefix","value":"sample"}"#), text)
         XCTAssertTrue(text.contains(#"input {"port":"input","#), text)
     }
@@ -138,7 +138,8 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     /// One entry, stored the way a build stores one: the material is taken of a real
     /// node's real input and the key is taken of the material.
     private func storeOneCacheEntry() throws -> String {
-        let (record, _) = try GraphSpecNode.parse("ConfigFilter(prefix: 'sample')").findOrCreateMatchingNode()
+        try TypeRegistry.register(types: [KeyedSampleNode.self])
+        let (record, _) = try GraphSpecNode.parse("KeyedSampleNode(prefix: 'sample')").findOrCreateMatchingNode()
         let node  = try record.makeNode()
         let input = ProcessInput(inputValues: ["input": ["wire0": .value(try "sample.key=1".intern())]])
         let material = try node.buildCacheKeyMaterial(input: input)
@@ -431,5 +432,23 @@ final class RequestHandlerTests: RequestHandlerTestCase {
             .findOrCreateMatchingNode()
         try nodeRecord.writeToOutputPort(TreeMerger.outputPort,
                                          value: .noValue(reason: try .failure(message)))
+    }
+}
+
+/// A node of a type that caches, with one input port and a property, so a stored entry's
+/// material has a line of each kind to show.
+private struct KeyedSampleNode: Node {
+    static let kind: UInt = 987_141
+
+    var thisNode: NodeRecord
+
+    init(thisNode: NodeRecord) throws {
+        self.thisNode = thisNode
+    }
+
+    static let descriptor = NodeDescriptor(inputPorts: [.required("input")], outputPorts: ["output"])
+
+    func process(input: ProcessInput) throws -> ProcessOutput {
+        .init(outputValues: ["output": .value(try "key=1".intern())], inputWireSpecs: [:])
     }
 }

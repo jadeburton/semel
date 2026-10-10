@@ -40,7 +40,9 @@ struct TreeBuilder: Node {
     public static let descriptor = NodeDescriptor(
         inputPorts: [.optional(inputPort, .many), .optional(fileMetadataInputPort, .many)],
         outputPorts: [outputPort],
-        fileMetadataInputPorts: [inputPort: fileMetadataInputPort]
+        fileMetadataInputPorts: [inputPort: fileMetadataInputPort],
+        // Placing hashes in a manifest costs what a lookup and a write cost (B-147).
+        cachesOutputs: false
     )
 
     public func process(input: ProcessInput) throws -> ProcessOutput {

@@ -188,11 +188,12 @@ questions about settled decisions, recorded so they are argued rather than re-di
   it. Authors import `SemelDatabaseModels` for `NodeRecord`, repeat the `thisNode`
   boilerplate, and are pure only by discipline.
 
-- **The 15 ms cache floor is a wall-clock decision.** Whether an entry exists depends on
-  how long processing took (`Cache.saveCacheForAllInputsAndOutputs`), so a shared cache
-  fills differently with machine speed and load. Harmless to correctness, odd in a
-  project built on determinism, and it made the tutorial's own node uncacheable. A
-  declared per-type property would be predictable.
+- **The 15 ms cache floor was a wall-clock decision (B-147, fixed).** Whether an entry
+  existed depended on how long processing took, so a shared cache filled differently with
+  machine speed and load, the tutorial's own node was never cached, and a compile woken
+  with an unchanged key reran or hit depending on how long its earlier run had taken.
+  Decided 2026-10-10: whether a type caches is a declared property of the type, never of
+  the clock. The tutorial's node is now cached like any type that says nothing.
 
 - **The easiest spelling in the formula language is the wrong one.** `%%f%%` names a wire
   after the mounted path and so puts the path into the product; `%%f.0%%` is the
@@ -898,6 +899,67 @@ per tool run (about 1 GB/s); a sampled verification of stored objects is where t
 Make the engine talk to the cache as though it were a separate server, without a socket or a
 separate process yet. Groundwork for the Cache Server role (B-30) that can be exercised
 entirely in-process.
+
+**B-147** `done` — **Whether a node is cached is declared by its type, not decided by the clock.**
+`saveCacheForAllInputsAndOutputs` stored an entry only for a run that took at least 15 ms,
+timed from the start of processing to the moment the engine wrote the result — so the
+wait for the writer counted, and the same graph cached different nodes under different
+load. The engine is a time-free zone (AGENTS.md); this was the one decision inside it made
+on a duration. It made the tutorial's `LineCounter` uncacheable, and it made B-47's
+end-to-end test flaky (PR #180): a compile woken with the key it had hit or reran
+depending on how long its earlier run had taken.
+
+Decided 2026-10-10: the floor goes, and `NodeDescriptor.cachesOutputs` (default `true`)
+says whether a type's results are stored and looked up. A type that declares `false` takes
+no key, looks nothing up and writes nothing, even where an older Semel left a row under its
+key. A type opts out when its work costs about what a lookup and a write cost, and what it
+computes is worth nothing to another machine; a tool node always caches. The duration is
+still stored as the entry's `cost`, which decides nothing here and is what a remote cache
+will weigh a fetch against.
+
+Measured before deciding, debug build, one machine, cold settle then a settle after a
+comment edit in one source and one after undoing it — first with the floor (main), then
+with no floor and every type cached, then with the opt-outs below:
+
+| | floor | all cached | opt-outs |
+|---|---|---|---|
+| IceCubes Packages cold | 48–60 s, 216 entries | 58 s, 258 | 58 s, 212 |
+| edit / undo | 3.0–4.7 s / 1.2–1.7 s | 2.9 / 0.9 s | 3.0 / 1.1 s |
+| NetNewsWire Mac cold | 112 s, 482 written | 114–131 s, 1,011 written | 129–135 s, 430 written |
+| edit / undo | 11.8 / 2.2 s | 10.7–11.3 / 3.6–4.8 s | 10.5–21.0 / 2.0–6.5 s |
+| NetNewsWire entries kept | 500 (19.6 MB) | 500 (2.6 MB) | 432 (28.6 MB) |
+
+The wall times are inside the noise: one Swift compile in the edit settle varies from 9 to
+15 s between runs, and the cheap types' processing on the NetNewsWire edit settle is
+0.1 to 0.3 s for 430 nodes. The object store is the same in all three (an entry holds hashes, not
+bytes). What moves is the entries. Per node, a run of each type that opts out costs 0.06
+to 1.6 ms, and its key, lookup and write 0.6 to 1.4 ms together, so caching it saves
+nothing; and on NetNewsWire everything-cached writes 1,011 entries into a cache trimmed to
+500 by age, so half of what a cold build wrote is evicted, the preprocessors' entries
+written first among it — the 500 kept hold 2.6 MB of the 28.6 MB written. With
+the floor the same eviction already happened at random: 482 entries written, which of the
+cheap ones depending on load. Per type, NetNewsWire Mac's cold settle:
+
+- `TreeFile`: 213 runs, 0.5 ms each; 213 entries. Opts out.
+- `OutputFile`: 213 runs, 0.06 ms each; 213 entries. Opts out.
+- `TreeBuilder`: 47 runs, 1 ms each (at most 8 ms); 1.9 KB an entry. Opts out.
+- `TreeMerger`: 43 runs, 1.5 ms each (at most 20 ms, the app bundle's merge). Opts out.
+- `ConfigMerger`: 40 runs, 0.9 ms each. Opts out.
+- `FolderTreeBuilder`: 16 runs, 1.3 ms each (at most 5 ms). Opts out.
+- `ConfigFilter`: 9 runs, 0.8 ms each. Opts out.
+- `ProjectFinder`, the converters (`SwiftFormulaConverter`, which holds the lock check,
+  and `XcodeProjectConverter`): not declared. They wrote no entry before and write none
+  now, because the engine stores nothing for a node with no static input port, whatever
+  it declares; `ProjectFinder` takes 50–200 ms a run, so whether that rule is right is
+  its own question.
+- `LineCounter`: keeps the default. It is the reference a node author copies, and the
+  tutorial now shows its hit on an undo.
+
+No `implementationVersion` moves: no type publishes anything different. The tutorial's
+counts in Parts 2 and 4 and the cleanup were walked through again. What this leaves: the
+500-entry limit is now reached by NetNewsWire's Mac app alone (430 entries), so two
+projects in one home evict each other's compiles; the limit wants to be a size, or a
+weight by `cost`, rather than a count.
 
 **B-121** `done` — **A cache entry spells out its upstream tree, once per wire.**
 A `ProcessCacheEntry` holds the node's `inputWireSpecs` so that a hit can apply them
