@@ -100,6 +100,7 @@ extension Node {
         if let cachedOutput = try? loadCachedOutputs(cacheKey: cacheKey) {
             do {
                 try writeToOutputs(output: cachedOutput)
+                recordCacheKey(keyMaterial)
                 didWriteCachedOutput = true
             } catch {
                 // Cached output is stale or the graph topology changed — fall
@@ -112,6 +113,7 @@ extension Node {
             let startTime = Date.now
             let output  = processWithCatch(input: input)
             let applied = try writeToOutputs(output: output)
+            recordCacheKey(keyMaterial)
             // Failing to save a cache entry must not fail a build — unless the failure is
             // the machine's, which no later node will survive either.
             do {
@@ -121,6 +123,21 @@ extension Node {
             } catch {
                 FatalErrors.check(error)
             }
+        }
+    }
+
+    /// Records which key the outputs just written are the build of — none, for a type that
+    /// does not cache — so that eviction leaves the entry under it alone while the node
+    /// stands on it (B-148). Recorded at every write of its outputs, so the record moves
+    /// with them; a node scheduled and not yet run again keeps the record of what it last
+    /// wrote, which spares one entry for the length of a settle. Best effort: a missed
+    /// record leaves the entry evictable, which costs a rebuild and nothing else.
+    func recordCacheKey(_ keyMaterial: CacheKeyMaterial?) {
+        guard descriptor.cachesOutputs, let nodeID = thisNode.id else {
+            return
+        }
+        FatalErrors.attempt {
+            try database.cacheEntry.recordKey(try keyMaterial?.cacheKey(), forNodeID: nodeID)
         }
     }
 

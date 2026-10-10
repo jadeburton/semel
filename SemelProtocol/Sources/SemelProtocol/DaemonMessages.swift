@@ -403,6 +403,12 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
     /// as the store grows; the verb is for the reader who wants it now, or wants to see
     /// what it does.
     case collect
+    /// The cache's entries with their sizes, its total and its limit (B-148).
+    case cache
+    /// With a limit, stores it as this home's cache limit and trims the cache to it at
+    /// once; without, asks what it is. A size, typed: the prompt's `20G` is turned into
+    /// bytes where it is typed.
+    case cacheLimit(limit: ByteCount?)
     /// The installed tools with their machine settings for `platform` (a `Platform`'s raw
     /// value): the SDK is one per platform (B-109).
     case tools(platform: String)
@@ -491,6 +497,12 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     case check(scheduledNodes: Int)
     /// What `collect` removed and what it kept, in objects and bytes.
     case collected(removed: Int, removedBytes: Int, kept: Int)
+    /// The answer to `cache`. The entries travel in the frame body, as a JSON array of
+    /// `CacheEntryRecord`, for the reason `check`'s findings do: a home holds thousands.
+    case cache(summary: CacheSummary)
+    /// The home's limit, whether it is the default, and what setting it evicted — nil when
+    /// the limit was only asked for.
+    case cacheLimit(limit: ByteCount, isDefault: Bool, trim: CacheTrimRecord?)
     case tools(namespaces: [ToolNamespaceRecord])
     /// Where the graph the reset discarded was copied to, so the state that made the reset
     /// necessary can still be read. Absent when there was nothing to discard, and when the
@@ -528,7 +540,8 @@ extension DaemonResponse {
         switch self {
         case .list, .remove, .errors:
             return true
-        case .ok, .pushFile, .pushFiles, .contentRoots, .folderChildren, .fetch, .symbolicLink, .check, .collected, .tools,
+        case .ok, .pushFile, .pushFiles, .contentRoots, .folderChildren, .fetch, .symbolicLink, .check, .collected,
+             .cache, .cacheLimit, .tools,
              .reset, .explain, .debug,
              .checkpoint, .checkpoints, .restored:
             return false

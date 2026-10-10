@@ -1,8 +1,8 @@
 // EnginePlugin.swift
 // semel
 //
-// Handles: d / debug, n / nudge, e / errors [<product>] [--verbose], check, collect, explain / why, reset, t / tools,
-// wait, watch, unwatch
+// Handles: d / debug, n / nudge, e / errors [<product>] [--verbose], check, collect, cache [limit [<size>]],
+// explain / why, reset, t / tools, wait, watch, unwatch
 
 import Foundation
 import SemelNodeKit
@@ -12,7 +12,7 @@ final class EnginePlugin: CommandPlugin {
 
     /// `watch` has no one-letter alias: `w` is free, but it is as much `wait` as `watch`,
     /// and the one of the two that waits for a key is the wrong one to reach by accident.
-    let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors", "check", "collect", "explain", "why",
+    let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors", "check", "collect", "cache", "explain", "why",
                               "reset", "t", "tools", "wait", "watch", "unwatch"]
 
     func handle(verb: String, tokens: [String], context: any CommandContext) throws {
@@ -22,6 +22,7 @@ final class EnginePlugin: CommandPlugin {
         case "e", "errors":     try handleErrors(tokens: tokens, context: context)
         case "check":           try handleCheck(context: context)
         case "collect":         try handleCollect(context: context)
+        case "cache":           try handleCache(tokens: tokens, context: context)
         case "explain", "why":  try handleExplain(tokens: tokens, context: context)
         case "reset":           try handleReset(tokens: tokens, context: context)
         case "t", "tools":      try handleTools(tokens: tokens, context: context)
@@ -336,6 +337,110 @@ final class EnginePlugin: CommandPlugin {
             return
         }
         context.outputMessage("Collected \(removed) unreferenced object\(removed == 1 ? "" : "s") (\(megabytes) MB); \(kept) kept.")
+    }
+
+    // MARK: - cache (B-148)
+
+    /// `cache`: every entry with what it alone holds, largest first, under a line with the
+    /// total and the limit; `cache limit` the limit; `cache limit <size>` sets it, and the
+    /// engine trims to it at once.
+    private func handleCache(tokens: [String], context: any CommandContext) throws {
+        guard let subcommand = tokens.first else {
+            try listCache(context: context)
+            return
+        }
+        guard subcommand == "limit" else {
+            context.outputError("cache: '\(subcommand)' is not something `cache` does; `cache limit [<size>]` is")
+            return
+        }
+        guard tokens.count <= 2 else {
+            throw CommandParserError.tooManyArguments(command: "cache limit")
+        }
+        var limit: ByteCount?
+        if let sizeToken = tokens.dropFirst().first {
+            guard let parsed = Self.size(parsing: sizeToken) else {
+                context.outputError("cache limit: '\(sizeToken)' is not a size; give bytes, or a number with K, M or G "
+                                  + "after it — 512M, 20G")
+                return
+            }
+            limit = parsed
+        }
+        guard case .cacheLimit(let current, let isDefault, let trim) = try context.request(.cacheLimit(limit: limit)).0 else {
+            return
+        }
+        context.outputMessage("The cache limit is \(current)\(isDefault ? " (the default)" : "").")
+        if let trim {
+            context.outputMessage(Self.trimLine(trim))
+        }
+    }
+
+    private func listCache(context: any CommandContext) throws {
+        let (response, body) = try context.request(.cache)
+        guard case .cache(let summary) = response else {
+            return
+        }
+        let entries = try body.map { try MessageCoder.decode([CacheEntryRecord].self, from: $0) } ?? []
+        let count = summary.entries
+        context.outputMessage("\(count) entr\(count == 1 ? "y holds" : "ies hold") \(summary.bytes) against a limit of "
+                            + "\(summary.limit)\(summary.limitIsDefault ? " (the default)" : "").")
+        let typeWidth = entries.map(\.nodeType.count).max() ?? 0
+        for entry in entries {
+            context.outputMessage(Self.entryLine(entry, typeWidth: typeWidth))
+        }
+        if let trim = summary.lastTrim {
+            context.outputMessage("The last trim: " + Self.trimLine(trim))
+        }
+    }
+
+    /// One entry: its size, its cost, its type, its key and why it is kept, in columns.
+    static func entryLine(_ entry: CacheEntryRecord, typeWidth: Int) -> String {
+        var notes: [String] = []
+        if entry.heldByNode {
+            notes.append("held by the graph")
+        }
+        if entry.usedByLastSettle {
+            notes.append("used by the last settle")
+        }
+        let size = entry.bytes.description
+        let cost = "\(entry.cost) ms"
+        let type = entry.nodeType.padding(toLength: typeWidth, withPad: " ", startingAt: 0)
+        let columns = String(repeating: " ", count: max(0, 9 - size.count)) + size + "  "
+                    + String(repeating: " ", count: max(0, 9 - cost.count)) + cost + "  "
+                    + type + "  " + String(entry.key.prefix(16))
+        return notes.isEmpty ? columns : columns + "  " + notes.joined(separator: ", ")
+    }
+
+    /// What a trim evicted, by type, and where it left the cache.
+    static func trimLine(_ trim: CacheTrimRecord) -> String {
+        let types = trim.evictedByType.map { "\($0.nodeType) \($0.count)" }.joined(separator: ", ")
+        var line = "evicted \(trim.evicted) entr\(trim.evicted == 1 ? "y" : "ies") (\(trim.freed)) — \(types); "
+                 + "the cache holds \(trim.bytesAfter)."
+        if trim.bytesAfter > trim.limit {
+            line += " The rest is held by entries the graph's nodes hold values from, which are not evicted."
+        }
+        return line
+    }
+
+    /// A size as typed at the prompt: bytes, or a number with `K`, `M` or `G` after it, in
+    /// either case, binary as every size Semel prints is — `512M`, `1.5G`, `20g`. The only
+    /// place a suffix is read: what reaches the server is bytes.
+    static func size(parsing text: String) -> ByteCount? {
+        let multipliers: [Character: Int] = ["K": ByteCount.kibibyte, "M": ByteCount.mebibyte, "G": ByteCount.gibibyte]
+        var number = Substring(text)
+        var multiplier = 1
+        if let last = text.last, let unit = multipliers[Character(last.uppercased())] {
+            multiplier = unit
+            number = number.dropLast()
+        }
+        guard !number.isEmpty, number.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") }),
+              let value = Double(number), value.isFinite, value >= 0 else {
+            return nil
+        }
+        let bytes = value * Double(multiplier)
+        guard bytes < Double(Int.max) else {
+            return nil
+        }
+        return ByteCount(bytes: Int(bytes.rounded()))
     }
 
     // MARK: - check

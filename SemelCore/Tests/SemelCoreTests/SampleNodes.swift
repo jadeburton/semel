@@ -126,6 +126,32 @@ public struct UncachedSampleTool: Node {
     }
 }
 
+/// A node whose output is its input with a label in front: as large as what it reads and
+/// never the same object, which is what a test of the cache's size needs — an output equal
+/// to its input would be held by the input file system and cost the cache nothing.
+public struct LabellingSampleTool: Node {
+    public static let kind: UInt = 987_106
+
+    static let input  = "input"
+    static let output = "output"
+
+    public var thisNode: NodeRecord
+
+    public init(thisNode: NodeRecord) throws {
+        self.thisNode = thisNode
+    }
+
+    public static let descriptor = NodeDescriptor(
+        inputPorts: [.required(input)],
+        outputPorts: [output]
+    )
+
+    public func process(input: ProcessInput) throws -> ProcessOutput {
+        let text = try input.onlyWire(onRequiredPort: Self.input).value.expectValue().resolveAsString()
+        return .init(outputValues: [Self.output: .value(try ("labelled: " + text).intern())], inputWireSpecs: [:])
+    }
+}
+
 /// A second type, for the tests that need two that must not share a cache key or a kind.
 public struct OtherSampleTool: Node {
     public static let kind: UInt = 987_102

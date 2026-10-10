@@ -959,7 +959,87 @@ No `implementationVersion` moves: no type publishes anything different. The tuto
 counts in Parts 2 and 4 and the cleanup were walked through again. What this leaves: the
 500-entry limit is now reached by NetNewsWire's Mac app alone (430 entries), so two
 projects in one home evict each other's compiles; the limit wants to be a size, or a
-weight by `cost`, rather than a count.
+weight by `cost`, rather than a count. Closed by B-148 (2026-10-10): the limit is a size,
+and eviction weighs `cost` per byte.
+
+**B-148** `done` — **The cache is limited by size, not by count.**
+The process cache was trimmed to 500 entries, oldest first, after every write. An entry
+holds hashes, so a count says nothing about the disk it keeps, and NetNewsWire's Mac app
+alone writes 430: two projects in one home evicted each other's compiles.
+
+Done 2026-10-10:
+
+- **What an entry costs.** The bytes of the objects in the store it alone holds. Which
+  objects an entry holds is the collector's reading (B-14), shared rather than copied:
+  its outputs' values and error documents, followed through tree manifests and
+  content-root documents (`objects(inOutputValues:)`, `markDocuments`). An object several
+  entries hold counts once in the total and in no entry's own size; an object the input
+  file system holds (a value on a `StaticFile`'s port) counts nowhere, so a build that
+  passes a pushed file on costs nothing.
+- **A running total, kept in the graph.** `CacheObject` holds each object an entry holds
+  with its size and how many entries hold it, `CacheEntryObject` links the two, and
+  `CacheAccount` keeps the total, the limit and the settle ordinals. Every save and delete
+  moves the total in its own transaction, so a trim reads rows and never the store. What
+  the input file system holds is recounted at idle, one pass over the sources' ports and
+  one over the cache's objects, rather than asked per object at write, where no index on
+  a port's value would answer it; a push between two idles leaves the total off by the
+  objects it shares with an entry until the next.
+- **The limit is the home's.** `cache limit <size>` stores it in the graph's database,
+  typed (`ByteCount`), the `K`/`M`/`G` suffixes read at the prompt only; `cache limit`
+  prints it; `cache` lists every entry with its size, its cost and its key, largest
+  first, under the total and the limit, and what the last trim evicted. The default is
+  10 GB (binary).
+- **What goes.** The trim runs at idle, after the reports and before the collector, which
+  is then run whether or not the store has grown, so the evicted bytes come back at once.
+  `CacheEvictionPolicy`: an entry a node records as the key its outputs came from
+  (`NodeCacheKey`, written with every output) is never evicted — its objects are on the
+  node's ports, so evicting it gives back nothing and costs the build the next time those
+  inputs return. The rest go in two tiers, what the last settle that used the cache did
+  not use before what it did, and within a tier the lowest recorded cost per byte first,
+  so the bytes that stay hold the most build time: a linker's or a signer's large output
+  that took a moment goes before a module's compile. An entry's weight is what it alone
+  holds plus its share of what it holds with entries no node stands on, so two builds
+  that produced the same bytes can both go; an entry of no weight is never evicted. Order
+  by last use alone was the alternative, and it is the case this item exists for: it
+  evicts an expensive compile because another project was built since. Use is counted
+  in settles (`lastUse`, a settle ordinal) where the entry had a timestamp, so the clock
+  left the cache; the cost is still a duration, and AGENTS.md's time-free invariant names
+  eviction as the second place time enters the engine, after the collector's age margin.
+- `debug <key>` shows the entry's type, cost, last settle and its own bytes. Protocol 27.
+
+Measured with debug binaries, one home, cold builds one after the other (the end-to-end
+clones of NetNewsWire, IceCubes' app and CodeEdit, prepared as the roster prepares them):
+
+| | entries | cache | cold build |
+|---|---|---|---|
+| NetNewsWire (Mac) | 430 | 112.9 MB | 97 s |
+| IceCubes (app) | 258 | 246.0 MB | 78 s |
+| CodeEdit | 222 | 379.3 MB | 101 s |
+| the three | 910 | 738.2 MB | |
+
+The home's whole object store, sources and vendored packages included, was 1.7 GB. 10 GB
+holds the three together thirteen times over, so it stays: liberal, and still a bound a
+laptop notices.
+
+- **Keeping the total current** cost, over those 910 entries and their 1,742 objects,
+  318 ms of store reads (a stat and the first bytes of each object) and 641 ms of database
+  writes — about a millisecond an entry, beside 276 s of building. The idle step (close the
+  settle, recount what the sources hold, compare with the limit) took 6 ms after
+  NetNewsWire and 47–58 ms with all three in the graph, most of it the recount over every
+  source's ports.
+- **The trim**, on NetNewsWire's entries once `rm netnewswire-mac` had left no node standing
+  on them: a limit of 700 MB evicted 5 entries (51.7 MB: two signers, two linkers, an
+  XCFramework slice) in under 20 ms at the prompt, the request included; 600 MB evicted
+  692 entries (64.7 MB, 341 of them preprocessors) in 0.24 s and left the cache at 625 MB,
+  over the limit by what the other two projects' nodes stand on, which it said. `cache`
+  over 465 entries answered in 10 ms.
+
+Residual: the recount at idle grows with the input file system and runs after every
+settle; it could run only after a settle a push started. A cache over its limit with
+nothing evictable is said only by the trim that got it there and by `cache`. And the
+`rm` above woke 842 of NetNewsWire's nodes, which ran over their removed inputs and wrote
+252 entries of errors before the collector took the nodes: a removal settles its
+downstream before it deletes it, which costs a settle and entries no build will hit.
 
 **B-121** `done` — **A cache entry spells out its upstream tree, once per wire.**
 A `ProcessCacheEntry` holds the node's `inputWireSpecs` so that a hit can apply them

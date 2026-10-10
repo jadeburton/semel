@@ -139,8 +139,13 @@ extension BuildEngine {
 
         let text = TextBuffer()
         appendSectionHeader("cache entry \(key)", to: text)
+        text.append("node type: \(cacheEntry.nodeType)")
         text.append("cost: \(cacheEntry.cost) ms")
-        text.append("last used: \(ISO8601DateFormatter().string(from: cacheEntry.timestamp))")
+        text.append("last used by settle: \(cacheEntry.lastUse)")
+        if let size = (FatalErrors.attempt { try database.cacheEntry.sizes() })?.first(where: { $0.hash == key }) {
+            text.append("held only by this entry: \(ByteCount(bytes: size.bytes))"
+                      + (size.heldByNode ? ", and a node of the graph holds its outputs" : ""))
+        }
         text.append()
 
         guard let decoded = try? ProcessCacheEntry.fromJSON(String(decoding: cacheEntry.content, as: UTF8.self)),

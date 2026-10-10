@@ -45,12 +45,13 @@ extension BuildEngine {
     /// loop's write latency, and an object interned again is made young again (`touch`).
     public static let collectionAgeMargin: TimeInterval = 60
 
-    /// Runs at idle when the store has grown enough since the last collection, and once
-    /// at the first idle after launch. Best effort, like every idle-time report: a failure
-    /// loses one collection, and the next settle gets another.
-    func collectObjectsIfDue() {
+    /// Runs at idle when the store has grown enough since the last collection, once at the
+    /// first idle after launch, and whenever `force` says the cache just let objects go.
+    /// Best effort, like every idle-time report: a failure loses one collection, and the
+    /// next settle gets another.
+    func collectObjectsIfDue(force: Bool = false) {
         let stored = DataObjectStore.shared.bytesStored
-        guard let since = bytesStoredAtLastCollection else {
+        guard !force, let since = bytesStoredAtLastCollection else {
             return collectNow(storedBefore: stored)
         }
         guard stored - since >= Self.collectionThresholdBytes else {
@@ -81,7 +82,7 @@ extension BuildEngine {
         let store = DataObjectStore.shared
 
         var marked = try referencedObjects()
-        try markDocuments(reaching: &marked, in: store)
+        Self.markDocuments(reaching: &marked, in: store)
 
         var removed = 0
         var removedBytes = 0
@@ -124,7 +125,15 @@ extension BuildEngine {
         guard let entry = try? JSONDecoder().decode(ProcessCacheEntry.self, from: content) else {
             return []
         }
-        return entry.outputValues.sorted { $0.key < $1.key }.compactMap { _, value in
+        return objects(inOutputValues: entry.outputValues)
+    }
+
+    /// The objects a set of output values names directly: a value's hash, or an error's
+    /// document. The one reading of what a cached build refers to, shared by the collector
+    /// and by the cache's own size accounting (B-148), so the two cannot disagree about
+    /// what evicting an entry lets go.
+    static func objects(inOutputValues outputValues: [String: NodeValue]) -> [DataObjectHash] {
+        outputValues.sorted { $0.key < $1.key }.compactMap { _, value in
             switch value {
             case .value(let hash):
                 return hash
@@ -188,14 +197,14 @@ extension BuildEngine {
     /// reached. Each object is looked at once, by its first bytes: a content-root document
     /// opens with its format tag, a tree manifest with the kind its JSON is tagged with;
     /// anything else is a file, and files name nothing.
-    private func markDocuments(reaching marked: inout Set<DataObjectHash>, in store: DataObjectStore) throws {
+    static func markDocuments(reaching marked: inout Set<DataObjectHash>, in store: DataObjectStore) {
         var pending = marked.sorted()
         var inspected = Set<DataObjectHash>()
         while let hash = pending.popLast() {
             guard inspected.insert(hash).inserted else {
                 continue
             }
-            for referenced in Self.objects(namedByDocument: hash, in: store) where marked.insert(referenced).inserted {
+            for referenced in objects(namedByDocument: hash, in: store) where marked.insert(referenced).inserted {
                 pending.append(referenced)
             }
         }

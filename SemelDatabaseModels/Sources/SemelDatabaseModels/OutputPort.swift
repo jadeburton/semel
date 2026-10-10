@@ -85,6 +85,21 @@ public struct OutputPortDataAccess: DataAccessType {
         }
     }
 
+    /// Every distinct value on a port of a node of one of `kinds`: what the input file
+    /// system holds, asked with the source kinds (B-148).
+    public func selectHashes(ofNodeKinds kinds: [UInt]) throws -> Set<DataObjectHash> {
+        guard !kinds.isEmpty else {
+            return []
+        }
+        let placeholders = kinds.map { _ in "?" }.joined(separator: ", ")
+        return try read { db in
+            Set(try String.fetchAll(db, sql: """
+                SELECT DISTINCT port.dataObjectHash FROM OutputPort port JOIN Node node ON node.id = port.nodeID
+                WHERE node.kind IN (\(placeholders)) AND port.dataObjectHash IS NOT NULL
+                """, arguments: StatementArguments(kinds.map { Int64($0) })))
+        }
+    }
+
     public func selectAllCount() throws -> Int {
         try read { db in
             try OutputPort.fetchAll(db).count

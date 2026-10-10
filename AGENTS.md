@@ -165,6 +165,14 @@ _ = try? database.wire.delete(comingFromNodeID: wire.fromNodeID,
   prose must be left alone while `\(interpolations)` must be renamed, so no single rule gets
   both right. Budget a reading pass, not a sweep.
 
+## Commits and pull requests
+
+A commit written by a Claude model ends with `Co-Authored-By: <the model that wrote the
+commit> <noreply@anthropic.com>`, naming the model by its own name as its harness gives
+it — never a name copied from an earlier commit or from a convention. A pull request's
+body has the sections `What`, `Why`, `Testing` and `Checklist`, and ends with
+`🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+
 ## Choosing a `kind`
 
 Every polymorphic type — every node type, and `FolderManifest` and `TreeManifest` beside
@@ -288,8 +296,14 @@ keyed by, ordered by or described in terms of a moment. A checkpoint is a conten
 not a time; a product downstream of a failure has no value, it is not "stale"; a report
 says what has no value and why, never what happened "while" or "after". Time lives in the
 clients — the watcher's quiet interval, the progress line, the log — where a process runs.
-The one exception inside is the object collector's age margin, a guard against collecting
-an object mid-write; reachability from the graph's roots is what decides.
+Two exceptions live inside, and both are resource policy rather than part of the function
+model. The first is the object collector's age margin, a guard against collecting an
+object mid-write; reachability from the graph's roots is what decides. The second is the
+cache's eviction when it is over its limit (B-148): what the last settle used is kept over
+what it did not, and among the rest a build's recorded cost — a duration measured under
+whatever load the machine had — orders what goes first. Use is counted in settles, never
+read off a clock, and nothing else in the engine may order by it. Either policy decides
+which builds a later settle has to run again, never what any settle computes.
 
 **Static topology is node identity.** A node's `graphSpec` is written once at creation and
 never recomputed. That is correct: static wiring and args are immutable, so different

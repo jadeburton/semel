@@ -123,6 +123,9 @@ public final class DatabaseLayer {
         /// A data accessor used after the `DatabaseLayer` that made it was released, named
         /// by its type.
         case layerReleased(accessor: String)
+        /// The cache's one account row is missing: `createTables` inserts it, so a database
+        /// without it was damaged by hand.
+        case cacheAccountMissing
         /// A savepoint that returned without running the work inside it.
         case savepointNotRun
     }

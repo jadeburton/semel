@@ -72,7 +72,9 @@ public enum ProtocolVersion {
     /// without a value and the node's facts, where earlier versions carried rendered
     /// messages, and `batchRejected` carries its lock's problem as a typed value (the
     /// 2026-10-09 error report design, B-145).
-    public static let current = 26
+    /// Version 27 adds `cache` and `cacheLimit` with their replies, the cache's sizes and
+    /// the home's limit (B-148).
+    public static let current = 27
 }
 
 public struct Hello: Codable, Equatable, Sendable {

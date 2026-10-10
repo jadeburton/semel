@@ -710,6 +710,11 @@ public final class CommandInterpreter: CommandContext {
                       description: "report every graph invariant that does not hold; ask it of a settled graph"),
             HelpEntry(verbs: ["collect"], usage: "collect",
                       description: "delete every stored object nothing refers to; the engine does this as the store grows"),
+            HelpEntry(verbs: ["cache"], usage: "cache",
+                      description: "every cached build with the bytes it alone holds, largest first, against the cache limit"),
+            HelpEntry(verbs: ["cache"], usage: "cache limit [<size>]",
+                      description: "show or set this home's cache limit, 10 GB unless set, with K, M or G after the number; "
+                                 + "a limit below what the cache holds evicts at once"),
             HelpEntry(verbs: ["tools", "t"], usage: "tools [<prefix>] [--platform <platform>]",
                       description: "the installed tools as config settings, as the machine file holds them"),
             HelpEntry(verbs: ["debug", "d"], usage: "debug [<cache key>]",

@@ -118,6 +118,99 @@ final class EnginePluginTests: XCTestCase {
         XCTAssertEqual(context.messages, ["Nothing to collect; 1 object kept."])
     }
 
+    // MARK: - cache (B-148)
+
+    func test_cacheListsTheEntriesUnderTheTotalAndTheLimit() throws {
+        let entries = [CacheEntryRecord(key: String(repeating: "a", count: 64), nodeType: "SwiftCompiler",
+                                        bytes: ByteCount(bytes: 3 * ByteCount.mebibyte), cost: 9_300,
+                                        usedByLastSettle: true, heldByNode: true),
+                       CacheEntryRecord(key: String(repeating: "b", count: 64), nodeType: "ClangCompiler",
+                                        bytes: ByteCount(bytes: 512), cost: 40, usedByLastSettle: false, heldByNode: false)]
+        connection.reply(.cache(summary: CacheSummary(entries: 2, bytes: ByteCount(bytes: 3 * ByteCount.mebibyte + 512),
+                                                      limit: ByteCount.gibibytes(10), limitIsDefault: true, lastTrim: nil)),
+                         body: try MessageCoder.encode(entries))
+
+        try run("cache")
+
+        XCTAssertEqual(connection.daemonRequests, [.cache])
+        XCTAssertEqual(context.messages, [
+            "2 entries hold 3.0 MB against a limit of 10.0 GB (the default).",
+            "   3.0 MB    9300 ms  SwiftCompiler  aaaaaaaaaaaaaaaa  held by the graph, used by the last settle",
+            "    512 B      40 ms  ClangCompiler  bbbbbbbbbbbbbbbb",
+        ])
+    }
+
+    /// What the last trim evicted is said under the list.
+    func test_cacheSaysWhatTheLastTrimEvicted() throws {
+        let trim = CacheTrimRecord(evicted: 3, freed: ByteCount(bytes: 2 * ByteCount.mebibyte), bytesAfter: ByteCount(bytes: 1_024),
+                                   limit: ByteCount(bytes: 2_048),
+                                   evictedByType: [CacheEvictedType(nodeType: "SwiftCompiler", count: 2),
+                                                   CacheEvictedType(nodeType: "ClangCompiler", count: 1)])
+        connection.reply(.cache(summary: CacheSummary(entries: 0, bytes: ByteCount(bytes: 1_024), limit: ByteCount(bytes: 2_048),
+                                                      limitIsDefault: false, lastTrim: trim)),
+                         body: try MessageCoder.encode([CacheEntryRecord]()))
+
+        try run("cache")
+
+        XCTAssertEqual(context.messages, [
+            "0 entries hold 1.0 KB against a limit of 2.0 KB.",
+            "The last trim: evicted 3 entries (2.0 MB) — SwiftCompiler 2, ClangCompiler 1; the cache holds 1.0 KB.",
+        ])
+    }
+
+    func test_cacheLimitAloneAsksForTheLimit() throws {
+        connection.reply(.cacheLimit(limit: ByteCount.gibibytes(10), isDefault: true, trim: nil))
+
+        try run("cache", ["limit"])
+
+        XCTAssertEqual(connection.daemonRequests, [.cacheLimit(limit: nil)])
+        XCTAssertEqual(context.messages, ["The cache limit is 10.0 GB (the default)."])
+    }
+
+    /// The suffix is read here and nowhere else: the server is sent bytes.
+    func test_cacheLimitWithASizeSendsItInBytesAndSaysWhatItEvicted() throws {
+        let trim = CacheTrimRecord(evicted: 1, freed: ByteCount(bytes: 600 * ByteCount.mebibyte),
+                                   bytesAfter: ByteCount(bytes: 600 * ByteCount.mebibyte),
+                                   limit: ByteCount(bytes: 512 * ByteCount.mebibyte),
+                                   evictedByType: [CacheEvictedType(nodeType: "SwiftCompiler", count: 1)])
+        connection.reply(.cacheLimit(limit: ByteCount(bytes: 512 * ByteCount.mebibyte), isDefault: false, trim: trim))
+
+        try run("cache", ["limit", "512M"])
+
+        XCTAssertEqual(connection.daemonRequests, [.cacheLimit(limit: ByteCount(bytes: 512 * ByteCount.mebibyte))])
+        XCTAssertEqual(context.messages, [
+            "The cache limit is 512.0 MB.",
+            "evicted 1 entry (600.0 MB) — SwiftCompiler 1; the cache holds 600.0 MB. The rest is held by entries the "
+          + "graph's nodes hold values from, which are not evicted.",
+        ])
+    }
+
+    func test_cacheLimitRefusesWhatIsNotASize() throws {
+        try run("cache", ["limit", "20X"])
+
+        XCTAssertEqual(connection.daemonRequests, [])
+        XCTAssertEqual(context.errors, ["cache limit: '20X' is not a size; give bytes, or a number with K, M or G after it — 512M, 20G"])
+    }
+
+    func test_cacheRefusesASubcommandItDoesNotHave() throws {
+        try run("cache", ["clear"])
+
+        XCTAssertEqual(connection.daemonRequests, [])
+        XCTAssertEqual(context.errors, ["cache: 'clear' is not something `cache` does; `cache limit [<size>]` is"])
+    }
+
+    func test_sizesAreReadInBinaryUnitsWithAnOptionalSuffix() {
+        XCTAssertEqual(EnginePlugin.size(parsing: "4096"), ByteCount(bytes: 4_096))
+        XCTAssertEqual(EnginePlugin.size(parsing: "8K"), ByteCount(bytes: 8 * 1_024))
+        XCTAssertEqual(EnginePlugin.size(parsing: "512m"), ByteCount(bytes: 512 * 1_048_576))
+        XCTAssertEqual(EnginePlugin.size(parsing: "20G"), ByteCount.gibibytes(20))
+        XCTAssertEqual(EnginePlugin.size(parsing: "1.5G"), ByteCount(bytes: 1_610_612_736))
+        XCTAssertEqual(EnginePlugin.size(parsing: "0"), ByteCount(bytes: 0))
+        for refused in ["", "G", "-1G", "20GB", "1e3", "twenty", "1.5.2M", "99999999999999999999G"] {
+            XCTAssertNil(EnginePlugin.size(parsing: refused), refused)
+        }
+    }
+
     func test_errorsWithNoneSaysSo() throws {
         connection.reply(.errors(records: []))
 
