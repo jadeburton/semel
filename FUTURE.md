@@ -1435,6 +1435,12 @@ the eight seconds a result card stays are the app's.
    listing `output:` by folder, marking the settle's products, showing the errors' lines,
    and exporting a selection to a destination chosen in a save panel through the prompt's
    export code. No *Reveal in Finder* and no knowledge of where anyone else exported.
+   With it, two follow-ups the owner approved on 2026-10-11:
+   a. **A Semel glyph of its own** for the status item in place of the SF Symbol circles:
+      a monochrome shape drawn in code as a template image, so it tints as the system's
+      items do — a small graph of three nodes and two wires is the suggestion.
+   b. **The errors state on the status item** while an error card is held. Phase 1
+      already knows it from the planner's cards, without `progress`.
 3. **The running card and the live window.** A card updated in place from `progress`
    while a settle runs — `Building · 12 running · 48 ahead`, the running nodes named — and
    *Show window* with the running nodes, the queue and the counts. A view of the graph
