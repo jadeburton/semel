@@ -245,11 +245,16 @@ let package = Package(
             exclude: ["Sources", "Tests"],
             sources: ["main.swift", "App"]
         ),
+        // The model without a screen, and the products window's listing and export over an
+        // in-process server, against what `ls` and `export` do on the same graph.
         .testTarget(
             name: "SemelMonitorTests",
             dependencies: [
                 "SemelMonitor",
                 "SemelCLI",
+                "SemelServer",
+                "SemelTransport",
+                .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
             ],

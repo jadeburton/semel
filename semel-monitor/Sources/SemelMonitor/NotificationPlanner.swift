@@ -28,6 +28,12 @@ public final class NotificationPlanner {
     /// `last settle:` line, and what *Resume* shows.
     public private(set) var lastCard: Card?
 
+    /// Whether an error card is held: on screen, or made during a pause and still news —
+    /// what turns the status item's glyph red.
+    public var holdsErrorCard: Bool {
+        cards.contains { $0.kind == .errors } || (lastCardSwallowed && lastCard?.kind == .errors)
+    }
+
     private let clock: any Clock
     private let only: [String]
     private var nextID = 1

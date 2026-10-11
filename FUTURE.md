@@ -1474,10 +1474,10 @@ node, its ports and its carriers; colour at a terminal unless `NO_COLOR`. `Error
 
 **B-150** `open` — **A Mac app that shows what the build did.**
 Designed 2026-10-11 (`docs/superpowers/specs/2026-10-11-semel-monitor-design.md`, with
-mockups beside it and an "As built (phase 1)" addendum), decided to be delivered in three
-phases, each a working app. `semel-monitor`, a fifth client of `semelserv`, subscribes to
-the engine's events and changes nothing: it pushes nothing, builds nothing and starts no
-server. One settle that moved a product or broke one is one card at the top right of the
+mockups beside it and "As built" addenda for phases 1 and 2), decided to be delivered in
+three phases, each a working app; phases 1 and 2 are done, phase 3 and item 4 are open.
+`semel-monitor`, a fifth client of `semelserv`, subscribes to the engine's events and
+changes nothing: it pushes nothing, builds nothing and starts no server. One settle that moved a product or broke one is one card at the top right of the
 screen, in the engine's vocabulary — appeared, changed, disappeared, without a value — with
 products named as the error report names them (B-145). The engine stays a time-free zone;
 the eight seconds a result card stays are the app's.
@@ -1501,16 +1501,31 @@ the eight seconds a result card stays are the app's.
    (`card: …`, indented lines, `dismissed: …`), which `MonitorEndToEndTests` reads against
    a real `semelserv` over the C fixture, stopped and started again under it. Focus is not
    read: no public API answers an unbundled process, so *Pause* is the switch.
-2. **The products window and export.** *Products…* and a click on a card open a window
-   listing `output:` by folder, marking the settle's products, showing the errors' lines,
-   and exporting a selection to a destination chosen in a save panel through the prompt's
-   export code. No *Reveal in Finder* and no knowledge of where anyone else exported.
-   With it, two follow-ups the owner approved on 2026-10-11:
-   a. **A Semel glyph of its own** for the status item in place of the SF Symbol circles:
-      a monochrome shape drawn in code as a template image, so it tints as the system's
-      items do — a small graph of three nodes and two wires is the suggestion.
-   b. **The errors state on the status item** while an error card is held. Phase 1
-      already knows it from the planner's cards, without `progress`.
+2. ~~**The products window and export.**~~ Done 2026-10-12. *Products…* and a click on a
+   card (which dismisses it) open a window listing `output:` as `ls` lists it — its
+   folders on the left with *Errors (N)* under them, the selected folder's subfolders and
+   products on the right — with the products the settle moved marked `appeared` or
+   `changed`, the ones the listing says failed marked `no value`, each product's size, and
+   the error report's own lines under *Errors*, selectable. The listing is one streamed
+   `list` of `output:` (`CommandInterpreter.outputFolders`) ordered by the code `ls` orders
+   with, and the errors are the `errors` request's records; it is read off the main queue
+   and again after every settle while the window is open (`ProductsPresenter`). *Export…*
+   writes the selection, or the whole folder, into a destination chosen in a save panel
+   through `FilePlugin.exportFiles`, the code `export <folder> --into <dir>` runs, which
+   takes the selection as its one new parameter; *Copy paths* copies the `output:` paths.
+   No *Reveal in Finder* and no knowledge of where anyone else exported. The window's
+   model (`ProductsWindowModel`) is a value tested without AppKit, and
+   `ProductsExportTests` pins the listing against `ls -o` folder by folder and the export
+   against `export`'s bytes and modes over an in-process server. `--print` reads `click`
+   and `products` on standard input and writes the window it would open after `window:`,
+   which `MonitorEndToEndTests` reads over the C fixture. With it, the two follow-ups the
+   owner approved on 2026-10-11:
+   a. ~~**A Semel glyph of its own**~~ for the status item in place of the SF Symbol
+      circles: three nodes and two wires, two inputs wired into what they build, drawn in
+      code (`StatusGlyph`'s circles and lines, stroked by the app) as a template image.
+   b. ~~**The errors state on the status item**~~ while an error card is held, on screen
+      or swallowed by a pause: the glyph filled in the system's red. No engine is hollow,
+      connected is filled; no engine wins over a held error.
 3. **The running card and the live window.** A card updated in place from `progress`
    while a settle runs — `Building · 12 running · 48 ahead`, the running nodes named — and
    *Show window* with the running nodes, the queue and the counts. A view of the graph
@@ -1519,7 +1534,11 @@ the eight seconds a result card stays are the app's.
 4. **A tree product's entries name their folder.** The `artifacts` event names each entry
    of a tree product by its own path, so a result card counts and names an `.app`'s
    entries one by one where an error card names the bundle; the event would carry each
-   path's tree folder as `StoppedProduct` does (B-142) for a card to name it once.
+   path's tree folder as `StoppedProduct` does (B-142) for a card to name it once. Left open
+   by phase 2: it is a change to the `artifacts` case and so a protocol version, and the
+   server's diff of the products would have to learn which tree each entry belongs to,
+   which `ProductReach` knows for errors and the diff does not. The products window lists
+   a tree's entries under their folders, as `ls` does, so it needs nothing from it.
 
 ### Formula language
 

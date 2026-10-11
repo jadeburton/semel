@@ -5,7 +5,8 @@
 
 public struct MonitorConfiguration: Equatable {
 
-    /// Cards as lines on standard output, with no panels and no status item.
+    /// Cards as lines on standard output, with no panels and no status item; clicks as
+    /// lines on standard input.
     public var prints = false
 
     /// Folders of `output:` whose products make cards; empty for every product.
@@ -19,7 +20,9 @@ public struct MonitorConfiguration: Equatable {
     public static let usage = """
         usage: semel-monitor [--print] [--only <folder>]...
           Shows what each settle of the engine did, as a card at the top right of the screen.
-          --print          write each card as lines on standard output instead
+          --print          write each card as lines on standard output instead; a line `click`
+                           on standard input clicks the card on top and `products` opens the
+                           products window, which is written as lines after `window:`
           --only <folder>  only products under this folder of output: (repeatable)
         """
 
