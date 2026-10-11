@@ -525,7 +525,7 @@ enum Projects {
             }
         })
 
-    /// Sequel Ace's Mac app (B-77 item 4) from a fresh clone with nothing stepped around: one
+    /// Sequel Ace's Mac app (B-77 item 4) from a fresh clone with one xib corrected: one
     /// project listing its files through groups, Objective-C with Swift beside it and
     /// headers found the way Xcode's header map finds them, a prefix header, two lex
     /// scanners, a Core Data model, xibs and a storyboard. Two referenced projects build
@@ -533,7 +533,10 @@ enum Projects {
     /// versioned; the vendored `ShortcutRecorder.framework` is embedded. Firebase's Analytics
     /// and Crashlytics are built from seventeen vendored packages, 957 MB of them, with
     /// Objective-C importing the modules SwiftPM writes. The `SequelAceTunnelAssistant`
-    /// tool is signed by itself and copied beside the executable. Signed ad-hoc, verified
+    /// tool is signed by itself and copied beside the executable. The overlay
+    /// `Fixtures/external/sequel-ace` corrects `ImportAccessory.xib`, whose frames do not
+    /// match its constraints, which ibtool resolves differently from run to run (B-154);
+    /// its README says how it was made. Signed ad-hoc, verified
     /// deep and strict, and inspected, not run. A cold build takes about ten minutes on a
     /// loaded machine and `prepare` under a minute, so the run builds twice and leaves the
     /// second mount and the perturbed build to the fixtures.
@@ -541,7 +544,8 @@ enum Projects {
         name: "sequel-ace",
         source: .git(url: "https://github.com/Sequel-Ace/Sequel-Ace.git",
                      commit: "1f2798da98d7cd8eef5cb5be97ce23de06733202",
-                     subfolder: "."),
+                     subfolder: ".",
+                     overlay: "external/sequel-ace"),
         buildFolder: "sequel-ace",
         platform: "macos",
         expectedProducts: [
@@ -565,17 +569,6 @@ enum Projects {
         // room for a cold cache's 957 MB of fetching and for the nightly's runner, which is
         // also a workstation.
         buildTimeout: 25 * 60,
-        // ibtool is not a function of its input for two of the app's documents (B-154): the
-        // storyboard's compile names its view controllers by fresh UUIDs and orders its
-        // nibs' keys afresh, and `ImportAccessory.xib`'s ambiguous constraints are laid out
-        // to one of several frames. The app's seal over its resources, and so the
-        // executable's signature, differ with them. A bug report, not a fix.
-        mayDiffer: ["Sequel Ace.app/Contents/Resources/ImportAccessory.nib",
-                    "Sequel Ace.app/Contents/Resources/ProgressWindowController.storyboardc/Info.plist",
-                    "Sequel Ace.app/Contents/Resources/ProgressWindowController.storyboardc/ProgressViewController.nib",
-                    "Sequel Ace.app/Contents/Resources/ProgressWindowController.storyboardc/ProgressWindowController.nib",
-                    "Sequel Ace.app/Contents/_CodeSignature/CodeResources",
-                    "Sequel Ace.app/Contents/MacOS/Sequel Ace"],
         twoMounts: false,
         perturbed: false,
         onlyUnder: "Sequel Ace.app",
