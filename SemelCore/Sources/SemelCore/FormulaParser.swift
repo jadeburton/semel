@@ -1030,6 +1030,34 @@ private enum FormulaValue {
     var typeName: String { switch self { case .node: return "node"; case .string: return "string" } }
 }
 
+/// A value as a dictionary key: a node by `GraphSpecSubtreeKey`, so an argument passed on
+/// from an earlier call is found by its shared storage rather than compared node by node.
+private enum FormulaValueKey: Hashable {
+    case node(GraphSpecSubtreeKey)
+    case string(String)
+
+    init(_ value: FormulaValue) {
+        switch value {
+        case .node(let node):   self = .node(GraphSpecSubtreeKey(node: node))
+        case .string(let text): self = .string(text)
+        }
+    }
+}
+
+/// One call of a formula function: the function and what each of its parameters was bound
+/// to. A function's body sees its parameters and nothing of its caller's, so the call's
+/// value is a function of this key.
+private struct FormulaCallKey: Hashable {
+    let function:  String
+    let arguments: [String: FormulaValueKey]
+}
+
+/// What each function call of one resolution evaluated to. A class, because the resolver
+/// is a value whose evaluation reads it from every depth of the recursion.
+private final class FormulaCallMemo {
+    var values: [FormulaCallKey: FormulaValue] = [:]
+}
+
 // MARK: - For-each template expansion
 
 /// Captures the expansion of a single for-each variable binding.
@@ -1145,6 +1173,12 @@ private struct FormulaResolver {
     let products:   [ProductDef]
     let wildcardExpander:    (String) throws -> [String]
     let fileReader: (String) throws -> String?
+    /// Each call's value, so a call made again with the same arguments is the value the
+    /// first made, its storage shared. A generated formula calls one function for every
+    /// target that reaches it — Sequel Ace's calls its settings, package and module
+    /// functions from every compile — and evaluating each call afresh spelled the products
+    /// out, a gigabyte of nodes in one pass (B-155).
+    private let callMemo = FormulaCallMemo()
 
     init(_ file: FormulaFile,
          wildcardExpander:    @escaping (String) throws -> [String],
@@ -1295,7 +1329,13 @@ private struct FormulaResolver {
             }
         }
 
-        return try eval(funcDef.body, env: newEnv, templateEnv: bodyTemplateEnv)
+        let callKey = FormulaCallKey(function: funcDef.name, arguments: newEnv.mapValues(FormulaValueKey.init))
+        if let value = callMemo.values[callKey] {
+            return value
+        }
+        let value = try eval(funcDef.body, env: newEnv, templateEnv: bodyTemplateEnv)
+        callMemo.values[callKey] = value
+        return value
     }
 
     // import(path: <file>) — reads an external .graph file and returns its root node.

@@ -199,14 +199,18 @@ public struct GraphSpecRewriter {
 /// of one subtree share their storage, which `==` on an array checks before its elements,
 /// so meeting a copy again costs a lookup rather than a walk; an equal subtree in storage
 /// of its own is compared, which costs less than walking it again would.
-struct GraphSpecSubtreeKey: Hashable {
-    let node: GraphSpecNode
+public struct GraphSpecSubtreeKey: Hashable {
+    public let node: GraphSpecNode
 
-    static func == (lhs: GraphSpecSubtreeKey, rhs: GraphSpecSubtreeKey) -> Bool {
+    public init(node: GraphSpecNode) {
+        self.node = node
+    }
+
+    public static func == (lhs: GraphSpecSubtreeKey, rhs: GraphSpecSubtreeKey) -> Bool {
         lhs.node == rhs.node
     }
 
-    func hash(into hasher: inout Hasher) {
+    public func hash(into hasher: inout Hasher) {
         hasher.combine(node.typeName)
         hasher.combine(node.outputPort)
         hasher.combine(node.properties)
