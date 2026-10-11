@@ -17,6 +17,16 @@ public final class NotificationPlanner {
     /// How many cards are on screen at most; older ones fold into the bottom one.
     public static let mostCardsShown = 5
 
+    /// How long a running card names the same running nodes before it turns to the next.
+    public static let namesTurn = Duration.seconds(2)
+
+    /// How long a running card waits, after its settle's `settled`, for the `artifacts`
+    /// that would make it the result. The engine sends the two back to back when a product
+    /// moved and sends no `artifacts` when none did, and nothing else marks a settle's end:
+    /// a running card left standing until the next settle would say `Building` over a
+    /// quiet engine. Should the event come later than this, it makes a card of its own.
+    public static let artifactsWait = Duration.seconds(1)
+
     /// On screen, newest first.
     public private(set) var cards: [Card] = []
 
@@ -25,8 +35,13 @@ public final class NotificationPlanner {
     public private(set) var isPaused = false
 
     /// The card the last settle that made one made, shown or not: the status item's
-    /// `last settle:` line, and what *Resume* shows.
+    /// `last settle:` line, and what *Resume* shows. Never a running card.
     public private(set) var lastCard: Card?
+
+    /// Where the settle in progress stands, from its latest `progress`; nil between
+    /// settles. The status item's settling state, kept whether or not a running card shows
+    /// it: a pause, or a running card clicked away, silences the card and not the state.
+    public private(set) var settleInProgress: ProgressRecord?
 
     /// Whether an error card is held: on screen, or made during a pause and still news —
     /// what turns the status item's glyph red.
@@ -49,14 +64,28 @@ public final class NotificationPlanner {
     /// Whether `lastCard` came while paused and has not been shown.
     private var lastCardSwallowed = false
 
+    // MARK: - The running card
+
+    /// The running card on screen, if any.
+    private var runningCardID: Int?
+    /// When the running card next turns to the next running nodes; nil while it names
+    /// them all.
+    private var nextTurn: Duration?
+    /// When a running card whose settle has ended goes, should no `artifacts` come for it.
+    private var runningCardWaitsUntil: Duration?
+    /// The settle in progress had its running card clicked away, so its next `progress`
+    /// does not bring it back.
+    private var runningCardDeclined = false
+
     // MARK: - The settle being read
 
-    /// The engine sends one settle as `errors` (when it found new failures), `settled`
-    /// (when it scheduled anything) and `artifacts` (when a product moved), in that order,
-    /// each only when it has something to say — the order `CommandInterpreter` prints
-    /// them in. So the card cannot wait for all three: an error settle's card is made at
-    /// `settled` and the `artifacts` after it only replaces, a result card is made at
-    /// `artifacts`, and the first event of the next settle closes whatever is held.
+    /// The engine sends one settle as `progress` while it runs, then `errors` (when it
+    /// found new failures), `settled` (when it scheduled anything) and `artifacts` (when a
+    /// product moved), in that order, each only when it has something to say — the order
+    /// `CommandInterpreter` prints them in. So the card cannot wait for all three: an error
+    /// settle's card is made at `settled` and the `artifacts` after it only replaces, a
+    /// result card is made at `artifacts`, and the first event of the next settle closes
+    /// whatever is held.
     private var heldErrors: [ErrorRecord] = []
     private var heldCounts: SettleCounts?
     private var heldSettleMadeItsCard = false
@@ -74,9 +103,12 @@ public final class NotificationPlanner {
     public func receive(_ event: DaemonEvent) -> [CardChange] {
         var changes = expire()
         switch event {
-        case .progress:
-            // Progress comes before a settle's other events, so one now begins a settle.
+        case .progress(let record):
+            // Progress comes before a settle's other events, so one now belongs to a
+            // settle that has not ended: whatever an earlier settle left held is closed.
             changes += closeHeldSettle()
+            settleInProgress = record
+            changes += showProgress(record)
         case .errors(let records):
             if heldCounts != nil {
                 changes += closeHeldSettle()
@@ -86,7 +118,9 @@ public final class NotificationPlanner {
             if heldCounts != nil {
                 changes += closeHeldSettle()
             }
-            heldCounts = SettleCounts(computed: computed, fromCache: fromCache)
+            heldCounts          = SettleCounts(computed: computed, fromCache: fromCache)
+            settleInProgress    = nil
+            runningCardDeclined = false
             // A graph that holds no error leaves no error card standing.
             if errors == 0 {
                 changes += replaceErrorCards { _ in true }
@@ -94,16 +128,25 @@ public final class NotificationPlanner {
             if !heldErrors.isEmpty {
                 changes += makeErrorCard()
                 heldSettleMadeItsCard = true
+                changes += retireRunningCard()
+            } else if runningCardID != nil {
+                runningCardWaitsUntil = clock.now + Self.artifactsWait
+                nextTurn              = nil
             }
-        case .artifacts(let appeared, let changed, let disappeared):
+        case .artifacts(let appeared, let changed, let disappeared, let treeFolders):
             changes += replaceErrorCards(givenAValue: appeared + changed)
             if !heldSettleMadeItsCard {
                 if heldErrors.isEmpty {
-                    changes += makeResultCard(changed: changed, appeared: appeared, disappeared: disappeared)
+                    changes += makeResultCard(changed: changed, appeared: appeared, disappeared: disappeared,
+                                              treeFolders: treeFolders)
                 } else {
                     changes += makeErrorCard()
                 }
             }
+            // A running card the settle's products did not resolve — `--only` kept none
+            // of them — has nothing left to say.
+            changes += retireRunningCard()
+            settleInProgress = nil
             resetHeldSettle()
         case .notice:
             break
@@ -111,9 +154,14 @@ public final class NotificationPlanner {
         return changes
     }
 
-    /// The connection is gone: whatever settle was being read will never finish.
-    public func engineLost() {
+    /// The connection is gone: whatever settle was being read will never finish, and its
+    /// running card goes with it.
+    @discardableResult
+    public func engineLost() -> [CardChange] {
         resetHeldSettle()
+        settleInProgress    = nil
+        runningCardDeclined = false
+        return retireRunningCard()
     }
 
     // MARK: - The person
@@ -134,10 +182,14 @@ public final class NotificationPlanner {
         return expire() + show(card)
     }
 
-    /// A click.
+    /// A click. A running card clicked away stays away for the rest of its settle, whose
+    /// result still makes a card of its own.
     @discardableResult
     public func dismiss(cardID: Int) -> [CardChange] {
-        expire() + (remove(cardID).map { [.dismissed($0)] } ?? [])
+        if cardID == runningCardID, settleInProgress != nil {
+            runningCardDeclined = true
+        }
+        return expire() + (remove(cardID).map { [.dismissed($0)] } ?? [])
     }
 
     /// The pointer over a card holds its expiry; leaving gives it its full time again.
@@ -156,12 +208,15 @@ public final class NotificationPlanner {
 
     // MARK: - Time
 
-    /// When the next result card goes, for the caller to come back then with `advance`.
+    /// When the planner next has something to do — a result card to go, a running card to
+    /// turn its names or to go — for the caller to come back then with `advance`.
     public var nextDeadline: Duration? {
-        deadlines.filter { !hovered.contains($0.key) }.values.min()
+        (Array(deadlines.filter { !hovered.contains($0.key) }.values) + [nextTurn, runningCardWaitsUntil].compactMap { $0 })
+            .min()
     }
 
-    /// The result cards whose time is up, dismissed.
+    /// The result cards whose time is up, dismissed; the running card's names turned, or
+    /// the card gone when its settle ended with no product moved.
     @discardableResult
     public func advance() -> [CardChange] {
         expire()
@@ -170,19 +225,86 @@ public final class NotificationPlanner {
     private func expire() -> [CardChange] {
         let now = clock.now
         let due = deadlines.filter { !hovered.contains($0.key) && $0.value <= now }.keys.sorted()
-        return due.compactMap { remove($0) }.map { .dismissed($0) }
+        var changes: [CardChange] = due.compactMap { remove($0) }.map { .dismissed($0) }
+        if let waitsUntil = runningCardWaitsUntil, waitsUntil <= now {
+            changes += retireRunningCard()
+        }
+        if let turn = nextTurn, turn <= now {
+            changes += turnRunningNames()
+        }
+        return changes
+    }
+
+    // MARK: - The running card
+
+    /// The running card made by the first `progress` that lists a running node, and
+    /// redrawn in place by every one after it. A settle whose records list nothing running
+    /// shows no card, and neither does one under a pause or whose card was clicked away.
+    private func showProgress(_ record: ProgressRecord) -> [CardChange] {
+        if let runningID = runningCardID, let index = cards.firstIndex(where: { $0.id == runningID }) {
+            guard case .running(let shown, let rotation) = cards[index].content, shown != record else {
+                return []
+            }
+            let turned = record.running.isEmpty ? 0 : rotation % record.running.count
+            cards[index] = Card(id: runningID, content: .running(record: record, rotation: turned),
+                                earlier: cards[index].earlier)
+            scheduleTurn(runningNodes: record.running.count)
+            return [.progressed(cards[index])]
+        }
+        guard !record.running.isEmpty, !isPaused, !runningCardDeclined else {
+            return []
+        }
+        let card = Card(id: takeID(), content: .running(record: record, rotation: 0))
+        runningCardID = card.id
+        scheduleTurn(runningNodes: record.running.count)
+        return show(card)
+    }
+
+    /// A turn is due only while there are more running nodes than a card names.
+    private func scheduleTurn(runningNodes: Int) {
+        guard runningNodes > CardText.runningNodesNamed else {
+            nextTurn = nil
+            return
+        }
+        if nextTurn == nil {
+            nextTurn = clock.now + Self.namesTurn
+        }
+    }
+
+    private func turnRunningNames() -> [CardChange] {
+        nextTurn = nil
+        guard let runningID = runningCardID, let index = cards.firstIndex(where: { $0.id == runningID }),
+              case .running(let record, let rotation) = cards[index].content, !record.running.isEmpty else {
+            return []
+        }
+        let turned = (rotation + CardText.runningNodesNamed) % record.running.count
+        cards[index] = Card(id: runningID, content: .running(record: record, rotation: turned), earlier: cards[index].earlier)
+        scheduleTurn(runningNodes: record.running.count)
+        return [.progressed(cards[index])]
+    }
+
+    /// The running card goes with nothing in its place.
+    private func retireRunningCard() -> [CardChange] {
+        guard let runningID = runningCardID else {
+            return []
+        }
+        return remove(runningID).map { [.dismissed($0)] } ?? []
     }
 
     // MARK: - Making cards
 
-    private func makeResultCard(changed: [String], appeared: [String], disappeared: [String]) -> [CardChange] {
-        let changed     = changed.filter(isKept)
-        let appeared    = appeared.filter(isKept)
-        let disappeared = disappeared.filter(isKept)
+    private func makeResultCard(changed: [String], appeared: [String], disappeared: [String],
+                                treeFolders: [String: String]) -> [CardChange] {
+        let changed     = changed.filter { isKept($0, treeFolders: treeFolders) }
+        let appeared    = appeared.filter { isKept($0, treeFolders: treeFolders) }
+        let disappeared = disappeared.filter { isKept($0, treeFolders: treeFolders) }
         guard !(changed.isEmpty && appeared.isEmpty && disappeared.isEmpty) else {
             return []
         }
-        return offer(.result(changed: changed, appeared: appeared, disappeared: disappeared, counts: heldCounts))
+        let keptPaths = Set(changed + appeared + disappeared)
+        let kept      = treeFolders.filter { keptPaths.contains($0.key) }
+        return offer(.result(changed: changed, appeared: appeared, disappeared: disappeared, counts: heldCounts,
+                             treeFolders: kept))
     }
 
     private func makeErrorCard() -> [CardChange] {
@@ -194,39 +316,47 @@ public final class NotificationPlanner {
         return offer(.errors(records: records))
     }
 
-    /// A new card: shown, or swallowed by a pause and kept for *Resume*.
+    /// A settle's card: in the running card's place when one is on screen, otherwise new on
+    /// top; or swallowed by a pause and kept for *Resume*.
     private func offer(_ content: Card.Content) -> [CardChange] {
-        let card = Card(id: nextID, content: content)
-        nextID += 1
         if lastCardSwallowed, let swallowed = lastCard {
             awaited[swallowed.id] = nil
         }
-        lastCard = card
         guard !isPaused else {
+            let card = Card(id: takeID(), content: content)
+            lastCard = card
             // An error card waits for its products while swallowed, so that one fixed
             // during the pause is not shown by *Resume*.
             if card.kind == .errors {
                 awaited[card.id] = Self.keys(of: card)
             }
             lastCardSwallowed = true
-            return []
+            return retireRunningCard()
         }
         lastCardSwallowed = false
+        if let runningID = runningCardID, let index = cards.firstIndex(where: { $0.id == runningID }) {
+            clearRunningCard()
+            let card = Card(id: runningID, content: content, earlier: cards[index].earlier)
+            cards[index] = card
+            lastCard     = card
+            arm(card)
+            return [.resolved(card)]
+        }
+        let card = Card(id: takeID(), content: content)
+        lastCard = card
         return show(card)
+    }
+
+    private func takeID() -> Int {
+        defer { nextID += 1 }
+        return nextID
     }
 
     /// On top; a sixth folds the oldest into the one above it.
     private func show(_ card: Card) -> [CardChange] {
         var changes: [CardChange] = [.shown(card)]
         cards.insert(card, at: 0)
-        switch card.kind {
-        case .result:
-            deadlines[card.id] = clock.now + Self.resultLifetime
-        case .errors where awaited[card.id] == nil:
-            awaited[card.id] = Self.keys(of: card)
-        case .errors:
-            break
-        }
+        arm(card)
         while cards.count > Self.mostCardsShown, let oldest = remove(cards[cards.count - 1].id) {
             changes.append(.folded(oldest))
             let bottom = cards.count - 1
@@ -236,6 +366,18 @@ public final class NotificationPlanner {
         return changes
     }
 
+    /// What a card on screen waits for: a result its eight seconds, an error its products.
+    private func arm(_ card: Card) {
+        switch card.kind {
+        case .result:
+            deadlines[card.id] = clock.now + Self.resultLifetime
+        case .errors where awaited[card.id] == nil:
+            awaited[card.id] = Self.keys(of: card)
+        case .errors, .running:
+            break
+        }
+    }
+
     private func remove(_ cardID: Int) -> Card? {
         guard let index = cards.firstIndex(where: { $0.id == cardID }) else {
             return nil
@@ -243,22 +385,31 @@ public final class NotificationPlanner {
         deadlines[cardID] = nil
         awaited[cardID]   = nil
         hovered.remove(cardID)
+        if cardID == runningCardID {
+            clearRunningCard()
+        }
         return cards.remove(at: index)
+    }
+
+    private func clearRunningCard() {
+        runningCardID         = nil
+        nextTurn              = nil
+        runningCardWaitsUntil = nil
     }
 
     // MARK: - Replacing error cards
 
     /// Error cards whose every product now has a value go, as does a swallowed one: a
     /// failure fixed during a pause is not news after it.
-    private func replaceErrorCards(givenAValue paths: [String]) -> [CardChange] {
-        guard !paths.isEmpty else {
+    private func replaceErrorCards(givenAValue named: [String]) -> [CardChange] {
+        guard !named.isEmpty else {
             return []
         }
         // A card for errors no product needs has nothing to wait on; only a settle that
         // leaves the graph without errors replaces it.
         var emptied: Set<Int> = []
         for (cardID, keys) in awaited where !keys.isEmpty {
-            let remaining = keys.filter { key in !paths.contains { Self.path($0, isNamedBy: key) } }
+            let remaining = keys.filter { key in !named.contains { Self.path($0, isNamedBy: key) } }
             awaited[cardID] = remaining
             if remaining.isEmpty {
                 emptied.insert(cardID)
@@ -278,12 +429,18 @@ public final class NotificationPlanner {
 
     // MARK: - The settle
 
+    /// Shows the errors an earlier settle held without a card, and retires a running card
+    /// still waiting for the `artifacts` its settle did not send.
     private func closeHeldSettle() -> [CardChange] {
         defer { resetHeldSettle() }
-        guard !heldSettleMadeItsCard, !heldErrors.isEmpty else {
-            return []
+        var changes: [CardChange] = []
+        if !heldSettleMadeItsCard, !heldErrors.isEmpty {
+            changes += makeErrorCard()
         }
-        return makeErrorCard()
+        if runningCardWaitsUntil != nil {
+            changes += retireRunningCard()
+        }
+        return changes
     }
 
     private func resetHeldSettle() {
@@ -307,8 +464,11 @@ public final class NotificationPlanner {
         return root + trimmed + "/"
     }
 
-    private func isKept(_ path: String) -> Bool {
-        only.isEmpty || only.contains { path.hasPrefix($0) }
+    /// Whether `--only` keeps the product at `path`: a tree's entry by its folder, as an
+    /// error's product is kept.
+    private func isKept(_ path: String, treeFolders: [String: String] = [:]) -> Bool {
+        let named = treeFolders[path].map { "\($0)/" } ?? path
+        return only.isEmpty || only.contains { named.hasPrefix($0) }
     }
 
     /// A record narrowed to the products `--only` keeps, or nil when it keeps none.

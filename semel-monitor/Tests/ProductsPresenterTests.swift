@@ -62,7 +62,8 @@ final class ProductsPresenterTests: XCTestCase {
     func test_anOpenWindowIsReadAnnouncedOnceAndReadAgainAfterASettle() throws {
         let source = ScriptedSource(snapshots: [Self.snapshot("hello"), Self.snapshot("hello", "hello.dylib")])
         let presenter = presenter(over: source)
-        let card = Card(id: 1, content: .result(changed: ["output:/hello"], appeared: [], disappeared: [], counts: nil))
+        let card = Card(id: 1, content: .result(changed: ["output:/hello"], appeared: [], disappeared: [], counts: nil,
+                                                treeFolders: [:]))
 
         presenter.open(for: card, marks: card)
         waitForDisplays(2)

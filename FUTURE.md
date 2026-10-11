@@ -1538,10 +1538,13 @@ node, its ports and its carriers; colour at a terminal unless `NO_COLOR`. `Error
 `BuildCommandTests`, `SettleTimeErrorCountingTests`, `WatcherTests` and
 `ErrorReportEndToEndTests` (the C fixture with an `#error`, line for line) pin it.
 
-**B-150** `open` — **A Mac app that shows what the build did.**
+**B-150** `done` — **A Mac app that shows what the build did.**
 Designed 2026-10-11 (`docs/superpowers/specs/2026-10-11-semel-monitor-design.md`, with
-mockups beside it and "As built" addenda for phases 1 and 2), decided to be delivered in
-three phases, each a working app; phases 1 and 2 are done, phase 3 and item 4 are open.
+mockups beside it and "As built" addenda for phases 1, 2 and 3), decided to be delivered in
+three phases, each a working app; all three are done, and item 4 with the third, on
+2026-10-12. The view of the graph itself — nodes, wires and their states — is not part of
+this item: it needs requests that do not exist yet, and is to be designed and filed on its
+own once the live window has shown what people look at.
 `semel-monitor`, a fifth client of `semelserv`, subscribes to the engine's events and
 changes nothing: it pushes nothing, builds nothing and starts no server. One settle that moved a product or broke one is one card at the top right of the
 screen, in the engine's vocabulary — appeared, changed, disappeared, without a value — with
@@ -1592,19 +1595,35 @@ the eight seconds a result card stays are the app's.
    b. ~~**The errors state on the status item**~~ while an error card is held, on screen
       or swallowed by a pause: the glyph filled in the system's red. No engine is hollow,
       connected is filled; no engine wins over a held error.
-3. **The running card and the live window.** A card updated in place from `progress`
-   while a settle runs — `Building · 12 running · 48 ahead`, the running nodes named — and
-   *Show window* with the running nodes, the queue and the counts. A view of the graph
-   itself needs requests that do not exist yet and is designed when this phase has shown
-   what people look at.
-4. **A tree product's entries name their folder.** The `artifacts` event names each entry
-   of a tree product by its own path, so a result card counts and names an `.app`'s
-   entries one by one where an error card names the bundle; the event would carry each
-   path's tree folder as `StoppedProduct` does (B-142) for a card to name it once. Left open
-   by phase 2: it is a change to the `artifacts` case and so a protocol version, and the
-   server's diff of the products would have to learn which tree each entry belongs to,
-   which `ProductReach` knows for errors and the diff does not. The products window lists
-   a tree's entries under their folders, as `ls` does, so it needs nothing from it.
+3. ~~**The running card and the live window.**~~ Done 2026-10-12. While a settle runs, one
+   card updates in place from `progress`: `Building · 12 running · 48 ahead`, two running
+   nodes by type and name turning through the rest every two seconds, a bar of pending
+   against scheduled and `31 computed · 9 from cache · 48 pending`; it becomes the
+   settle's result or error card in its place (`CardChange.resolved`), and goes when its
+   settle ends with nothing moved — a second after `settled` with no `artifacts`, or at the
+   next settle. A settle whose records list nothing running shows none, and neither does
+   one under a pause or whose card was clicked away. The status item shows the settling
+   state — the glyph swept round from twelve o'clock as far as the settle has gone, the
+   rest dimmed, the pending count beside it — with a held error and no engine taking
+   precedence. *Show window*, or a click on the running card, opens the live window: the
+   running nodes with their type, name and elapsed time on the app's clock from the record
+   that first listed them, the bar, the counts, and the last settle's products and errors
+   through `ProductsWindowModel`, built from the events (`ProductsSnapshot.ofSettle`) with
+   no request to the server. `--print` writes `running: <headline>` at most once a second
+   and only when the running set changed (`CardPrinter`), and `show` on standard input
+   writes the live window after `live:`. `NotificationPlannerTests`,
+   `LiveWindowModelTests`, `StatusGlyphTests`, `CardTextTests` and `MonitorEndToEndTests`
+   (the C fixture's compiles, which run long enough) pin it.
+4. ~~**A tree product's entries name their folder.**~~ Done 2026-10-12, with phase 3. The
+   `artifacts` event carries `treeFolders`, the folder of the tree product each path is an
+   entry of (protocol version 29), read by the engine's diff from the entry's `TreeFile`
+   through the code the error report uses (`ProductReach.treeFolder(ofArtifact:)`) — for
+   a product that moved when it is noted, and for one collected before its input wires go.
+   A result card counts and names a tree once, by its folder, in the first list one of its
+   entries is in; `--only` keeps a tree by its folder; the products window and the live
+   window mark the tree's folder row. What disappeared at a launch's reconciliation, whose
+   node was gone before this launch, has no folder: nothing left in the graph says which
+   tree it was part of, and is named by its own path.
 
 ### Formula language
 

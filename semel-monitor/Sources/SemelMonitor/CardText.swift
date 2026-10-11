@@ -2,8 +2,8 @@
 // SemelMonitor
 //
 // The words on a card. Every one is a word the engine's events carry — appeared, changed,
-// disappeared, without a value, computed, from cache — and every product is named as the
-// error report names it (B-145), through the report's own `ProductNames`.
+// disappeared, without a value, computed, from cache, running, pending — and every product
+// is named as the error report names it (B-145), through the report's own `ProductNames`.
 //
 //     3 products changed, 1 appeared
 //     App, libModels.a, libConversations.a and 1 more
@@ -13,6 +13,10 @@
 //     Packages/Models/Sources/Models/Account.swift:201:28: error: cannot convert value …
 //     libConversations.a, libExplore.a
 //     1 error · 2 products without a value
+//
+//     Building · 12 running · 48 ahead
+//     SwiftCompiler App/View.swift · ClangCompiler Sources/parser.c
+//     31 computed · 9 from cache · 48 pending
 
 import SemelCLI
 import SemelProtocol
@@ -22,6 +26,10 @@ public enum CardText {
     /// How many products a card names before it counts the rest, as a report heading does.
     public static let productsNamed = 3
 
+    /// How many running nodes a running card names at once; the clock turns through the
+    /// rest (`NotificationPlanner.namesTurn`).
+    public static let runningNodesNamed = 2
+
     /// The headline, then what is under it: for errors the first cause's line one; the
     /// names; the counts; and, on the bottom card of a full stack, how many were folded.
     public static func lines(for card: Card) -> [String] {
@@ -30,11 +38,14 @@ public enum CardText {
     }
 
     /// `3 products changed, 1 appeared`; `1 product disappeared`; `2 products without a
-    /// value`, or the error count for errors no product needs.
+    /// value`, or the error count for errors no product needs; `Building · 12 running · 48
+    /// ahead` while a settle runs.
     public static func headline(of card: Card) -> String {
         switch card.content {
-        case .result(let changed, let appeared, let disappeared, _):
-            let parts = resultParts(changed: changed.count, appeared: appeared.count, disappeared: disappeared.count)
+        case .running(let record, _):
+            return "Building · \(record.running.count) running · \(record.pending) ahead"
+        case .result:
+            let parts = resultParts(of: card.movedProducts)
             guard let first = parts.first else {
                 return "no product moved"
             }
@@ -55,21 +66,25 @@ public enum CardText {
     /// changed, 1 appeared`.
     public static func summary(of card: Card) -> String {
         switch card.content {
-        case .result(let changed, let appeared, let disappeared, _):
-            return resultParts(changed: changed.count, appeared: appeared.count, disappeared: disappeared.count)
+        case .result:
+            return resultParts(of: card.movedProducts)
                 .map { "\($0.total) \($0.verb)" }
                 .joined(separator: ", ")
-        case .errors:
+        case .running, .errors:
             return headline(of: card)
         }
     }
 
     /// The lines `--print` writes for one change: a card as its headline after `card:`
-    /// and the rest indented under it; a card that goes, by its headline. An update to a
-    /// card's `earlier` count writes nothing: the fold that moved it was written.
+    /// and the rest indented under it; a running card as `running:` and its headline; a
+    /// card that goes, by its headline. An update to a card's `earlier` count writes
+    /// nothing: the fold that moved it was written. How often a running card's progress is
+    /// written is `CardPrinter`'s to decide.
     public static func printed(_ change: CardChange) -> [String] {
         switch change {
-        case .shown(let card):
+        case .shown(let card) where card.kind == .running, .progressed(let card):
+            return ["running: \(headline(of: card))"]
+        case .shown(let card), .resolved(let card):
             let lines = lines(for: card)
             return ["card: \(lines[0])"] + lines.dropFirst().map { "  \($0)" }
         case .dismissed(let card):
@@ -84,8 +99,9 @@ public enum CardText {
     // MARK: - The parts
 
     /// Changed first, as the common case is a save that changed what was there.
-    private static func resultParts(changed: Int, appeared: Int, disappeared: Int) -> [(total: Int, verb: String)] {
-        [(changed, "changed"), (appeared, "appeared"), (disappeared, "disappeared")].filter { $0.total > 0 }
+    private static func resultParts(of moved: MovedProducts) -> [(total: Int, verb: String)] {
+        [(moved.changed.count, "changed"), (moved.appeared.count, "appeared"), (moved.disappeared.count, "disappeared")]
+            .filter { $0.total > 0 }
     }
 
     /// For errors, the first cause's line one as the report draws it, so a compile error
@@ -103,8 +119,13 @@ public enum CardText {
     }
 
     /// Three names and `and N more`, named as the report names products: by file name,
-    /// the path under `output:` only for two of one name, a tree by its folder.
+    /// the path under `output:` only for two of one name, a tree by its folder. On a
+    /// running card, the running nodes the card's turn has come to, each by its type and
+    /// the name the record gives it.
     public static func namesLine(of card: Card) -> String? {
+        if case .running(let record, let rotation) = card.content {
+            return runningNames(of: record, from: rotation)
+        }
         let products = card.products
         guard !products.isEmpty else {
             return nil
@@ -115,13 +136,56 @@ public enum CardText {
         return shown.joined(separator: ", ") + (rest > 0 ? " and \(rest) more" : "")
     }
 
-    /// `3 computed · 9 from cache` for a result; for errors, the report's own summary line.
+    /// `3 computed · 9 from cache` for a result; for errors, the report's own summary line;
+    /// `31 computed · 9 from cache · 48 pending` while a settle runs.
     public static func countsLine(of card: Card) -> String? {
         switch card.content {
-        case .result(_, _, _, let counts):
+        case .running(let record, _):
+            return "\(record.computed) computed · \(record.fromCache) from cache · \(record.pending) pending"
+        case .result(_, _, _, let counts, _):
             return counts.map { "\($0.computed) computed · \($0.fromCache) from cache" }
         case .errors(let records):
             return ErrorReportRenderer.summaryLine(for: records)
         }
+    }
+
+    /// How far a running card's bar is drawn, nil for any other card.
+    public static func barFraction(of card: Card) -> Double? {
+        guard case .running(let record, _) = card.content else {
+            return nil
+        }
+        return record.startedFraction
+    }
+
+    /// `SwiftCompiler App/View.swift · ClangCompiler Sources/parser.c`: up to
+    /// `runningNodesNamed` of the running nodes from `rotation` on, wrapping round.
+    static func runningNames(of record: ProgressRecord, from rotation: Int) -> String? {
+        let running = record.running
+        guard !running.isEmpty else {
+            return nil
+        }
+        let shown = min(runningNodesNamed, running.count)
+        return (0..<shown)
+            .map { running[(rotation + $0) % running.count] }
+            .map(nodeName)
+            .joined(separator: " · ")
+    }
+
+    /// A running node as the record carries it: its type, and its name when it has one.
+    public static func nodeName(_ node: ActiveNode) -> String {
+        node.name.isEmpty ? node.type : "\(node.type) \(node.name)"
+    }
+}
+
+extension ProgressRecord {
+
+    /// Pending against scheduled: the share of the nodes the settle has scheduled that are
+    /// no longer waiting to start. What the running card's bar, the live window's bar and
+    /// the status item's ring draw. Zero for a record that has scheduled nothing.
+    public var startedFraction: Double {
+        guard scheduled > 0 else {
+            return 0
+        }
+        return min(1, max(0, Double(scheduled - pending) / Double(scheduled)))
     }
 }

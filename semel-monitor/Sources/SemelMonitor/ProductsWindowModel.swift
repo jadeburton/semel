@@ -30,6 +30,39 @@ public struct ProductsSnapshot: Equatable, Sendable {
     public static func read(through interpreter: CommandInterpreter) throws -> ProductsSnapshot {
         ProductsSnapshot(folders: try interpreter.outputFolders(), errors: try interpreter.errorRecords())
     }
+
+    /// One settle's products and errors as the events said them, in the shape a listing of
+    /// `output:` has, so the live window shows them through the products window's model
+    /// and asks the engine for nothing. Each folder holds the settle's products in it, as
+    /// `ls` orders them: what appeared or changed, and what the errors left without a
+    /// value; a tree product is one entry, its folder, as the card names it. What
+    /// disappeared is not listed, as the products window does not list it. Sizes are not
+    /// in the events, so none is given.
+    public static func ofSettle(appeared: [String], changed: [String], treeFolders: [String: String],
+                                errors: [ErrorRecord]) -> ProductsSnapshot {
+        var entries: [String: [String: ListEntry]] = [:]
+        func add(_ product: StoppedProduct, status: EntryStatus) {
+            let named = product.treeFolder ?? product.path
+            guard let path = ProductsWindowModel.pathBelowRoot(named) else {
+                return
+            }
+            let folder = Path(path).deletingLastComponent?.string ?? ""
+            entries[folder, default: [:]][path] = ListEntry(path: path, kind: product.treeFolder == nil ? .file : .folder,
+                                                            size: nil, mode: nil, status: status)
+        }
+        for path in changed + appeared {
+            add(StoppedProduct(path: path, treeFolder: treeFolders[path]), status: .none)
+        }
+        // After the products that moved: a product an error left without a value is said
+        // to have none, whatever else the settle said of it.
+        for product in errors.flatMap(\.products) {
+            add(product, status: .failed)
+        }
+        let folders = entries.keys.sorted().map { folder in
+            FolderListing(folder: folder, entries: ListingOrder.sorted(Array(entries[folder, default: [:]].values)))
+        }
+        return ProductsSnapshot(folders: folders, errors: errors)
+    }
 }
 
 /// What the settle did to a product, in the events' words.
@@ -152,8 +185,16 @@ public struct ProductsWindowModel: Equatable, Sendable {
     /// The folder's entries as `ls` lists them, each with its mark and size. None for the
     /// errors section.
     public var rows: [ProductRow] {
-        guard case .folder(let folder) = section,
-              let listing = snapshot.folders.first(where: { $0.folder == folder }) else {
+        guard case .folder(let folder) = section else {
+            return []
+        }
+        return rows(in: folder)
+    }
+
+    /// One folder's entries as `ls` lists them, whichever is selected: what the live window
+    /// lists, every folder of the settle under the one before.
+    public func rows(in folder: String) -> [ProductRow] {
+        guard let listing = snapshot.folders.first(where: { $0.folder == folder }) else {
             return []
         }
         return listing.entries.map { entry in
@@ -219,22 +260,24 @@ public struct ProductsWindowModel: Equatable, Sendable {
 
     // MARK: - Marks
 
+    /// The settle's paths, and the folder of each tree product it moved, marked as the card
+    /// names the tree: a tree's folder is listed among its parent's entries, and is the
+    /// product a person built.
     private mutating func mark(from card: Card?) {
-        guard case .result(let changedPaths, let appearedPaths, _, _)? = card?.content else {
+        guard let card, case .result(let changedPaths, let appearedPaths, _, _, _) = card.content else {
             appeared = []
             changed  = []
             return
         }
-        appeared = Set(appearedPaths.compactMap(Self.pathBelowRoot))
-        changed  = Set(changedPaths.compactMap(Self.pathBelowRoot))
+        let moved = card.movedProducts
+        let trees = { (products: [StoppedProduct]) in products.compactMap(\.treeFolder) }
+        appeared = Set((appearedPaths + trees(moved.appeared)).compactMap(Self.pathBelowRoot))
+        changed  = Set((changedPaths + trees(moved.changed)).compactMap(Self.pathBelowRoot))
     }
 
     /// A failure is a state the listing reads now; appeared and changed are what the
-    /// settle said. A folder carries no mark.
+    /// settle said. A folder carries no mark unless it is a tree product's.
     private func mark(of entry: ListEntry) -> ProductMark? {
-        guard entry.kind == .file else {
-            return nil
-        }
         if entry.status == .failed {
             return .noValue
         }

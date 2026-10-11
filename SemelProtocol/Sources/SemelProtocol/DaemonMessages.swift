@@ -591,7 +591,12 @@ public enum DaemonEvent: Codable, Equatable, Sendable {
     /// in rather than by a word. A product that failed is in none of them — that belongs
     /// to `errors`, and saying it twice in two vocabularies is what this event exists to
     /// stop.
-    case artifacts(appeared: [String], changed: [String], disappeared: [String])
+    ///
+    /// `treeFolders` is the folder of the tree product (B-63) each path above is an entry
+    /// of, by path, as `StoppedProduct.treeFolder` is for an error's: what lets a client
+    /// name a tree by its folder without taking paths apart. A product named on its own has
+    /// no key, and so has an entry that disappeared where the engine no longer knew its tree.
+    case artifacts(appeared: [String], changed: [String], disappeared: [String], treeFolders: [String: String])
     /// Where the current settle stands, sent as the engine's pass changes state: after a
     /// round of scheduling starts nodes and after a result is written (B-95). Never from
     /// a pass that started nothing, as `settled` says nothing for one. The last of a

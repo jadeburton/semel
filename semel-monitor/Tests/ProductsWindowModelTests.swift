@@ -35,9 +35,10 @@ final class ProductsWindowModelTests: XCTestCase {
         ]),
     ], errors: [])
 
-    private static func resultCard(changed: [String] = [], appeared: [String] = []) -> Card {
+    private static func resultCard(changed: [String] = [], appeared: [String] = [],
+                                   treeFolders: [String: String] = [:]) -> Card {
         Card(id: 1, content: .result(changed: changed, appeared: appeared, disappeared: [],
-                                     counts: SettleCounts(computed: 1, fromCache: 0)))
+                                     counts: SettleCounts(computed: 1, fromCache: 0), treeFolders: treeFolders))
     }
 
     // MARK: - What it lists
@@ -73,6 +74,24 @@ final class ProductsWindowModelTests: XCTestCase {
         XCTAssertEqual(model.errorLines.last, "1 error · 1 product without a value")
         XCTAssertNil(model.exportRequest, "nothing to export from the errors")
         XCTAssertEqual(model.copiedPaths, ["output:/Packages/libConversations.a"])
+    }
+
+    /// B-150 item 4: a tree product's folder is listed among its parent's entries, and is
+    /// marked as the settle's card names the tree; its entries keep their own marks below it.
+    func test_aTreeProductsFolderCarriesTheMarkOfItsEntries() {
+        let snapshot = ProductsSnapshot(folders: [
+            FolderListing(folder: "", entries: [Self.folder("App")]),
+            FolderListing(folder: "App", entries: [Self.folder("App/App.app"), Self.file("App/lib.a")]),
+            FolderListing(folder: "App/App.app", entries: [Self.file("App/App.app/Info.plist")]),
+        ], errors: [])
+        var model = ProductsWindowModel(snapshot: snapshot,
+                                        card: Self.resultCard(changed: ["output:/App/App.app/Info.plist"],
+                                                              treeFolders: ["output:/App/App.app/Info.plist": "output:/App/App.app"]))
+        XCTAssertEqual(model.section, .folder("App"), "opened where the tree is listed")
+        XCTAssertEqual(model.rows.map(\.name), ["App.app/", "lib.a"])
+        XCTAssertEqual(model.rows.map(\.mark), [.changed, nil])
+        model.select(.folder("App/App.app"))
+        XCTAssertEqual(model.rows.map(\.mark), [.changed])
     }
 
     func test_productsOpensOnTheFirstFolderHoldingAProductWithNoCard() {

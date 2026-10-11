@@ -13,8 +13,10 @@ import XCTest
 final class CardTextTests: XCTestCase {
 
     private func result(changed: [String] = [], appeared: [String] = [], disappeared: [String] = [],
-                        counts: SettleCounts? = SettleCounts(computed: 3, fromCache: 9)) -> Card {
-        Card(id: 1, content: .result(changed: changed, appeared: appeared, disappeared: disappeared, counts: counts))
+                        counts: SettleCounts? = SettleCounts(computed: 3, fromCache: 9),
+                        treeFolders: [String: String] = [:]) -> Card {
+        Card(id: 1, content: .result(changed: changed, appeared: appeared, disappeared: disappeared, counts: counts,
+                                     treeFolders: treeFolders))
     }
 
     // MARK: - Headlines
@@ -71,6 +73,34 @@ final class CardTextTests: XCTestCase {
             "  libConversations.a, libExplore.a",
             "  1 error · 2 products without a value",
         ])
+    }
+
+    func test_printWritesARunningCardAsItsHeadlineAndItsResultAsACard() {
+        let record  = ProgressRecord(scheduled: 88, computed: 31, fromCache: 9, pending: 48,
+                                     running: [ActiveNode(type: "SwiftCompiler", name: "App/View.swift"),
+                                               ActiveNode(type: "ClangCompiler", name: "Sources/parser.c"),
+                                               ActiveNode(type: "ProjectBuilder", name: "")])
+        let running = Card(id: 3, content: .running(record: record, rotation: 0))
+        XCTAssertEqual(CardText.lines(for: running), [
+            "Building · 3 running · 48 ahead",
+            "SwiftCompiler App/View.swift · ClangCompiler Sources/parser.c",
+            "31 computed · 9 from cache · 48 pending",
+        ], "as the mockup draws it")
+        XCTAssertEqual(CardText.namesLine(of: Card(id: 3, content: .running(record: record, rotation: 2))),
+                       "ProjectBuilder · SwiftCompiler App/View.swift", "a node with no name by its type, wrapping round")
+        XCTAssertEqual(CardText.barFraction(of: running), 40.0 / 88.0)
+        XCTAssertEqual(CardText.printed(.shown(running)), ["running: Building · 3 running · 48 ahead"])
+        XCTAssertEqual(CardText.printed(.progressed(running)), ["running: Building · 3 running · 48 ahead"])
+        XCTAssertEqual(CardText.printed(.dismissed(running)), ["dismissed: Building · 3 running · 48 ahead"])
+
+        let result = result(changed: ["output:/c/hello"])
+        XCTAssertEqual(CardText.printed(.resolved(result)), ["card: 1 product changed", "  hello", "  3 computed · 9 from cache"])
+    }
+
+    func test_aTreesEntriesAreNamedOnceByItsFolder() {
+        let entries = ["output:/App/App.app/Contents/Info.plist", "output:/App/App.app/Contents/MacOS/App"]
+        let card = result(appeared: entries, treeFolders: Dictionary(uniqueKeysWithValues: entries.map { ($0, "output:/App/App.app") }))
+        XCTAssertEqual(CardText.lines(for: card), ["1 product appeared", "App.app", "3 computed · 9 from cache"])
     }
 
     func test_aCardWithoutCountsHasNoCountsLineAndTheBottomCardSaysWhatItFolded() {

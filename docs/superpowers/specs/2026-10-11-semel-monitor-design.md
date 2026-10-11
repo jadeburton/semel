@@ -1,7 +1,7 @@
 # A Mac app that shows what the build did: notifications first, the graph later
 
-Status: design; phases 1 and 2 built — see "As built (phase 1)" and "As built (phase 2)"
-at the end. Follows the 2026-10-11
+Status: built, all three phases and B-150 item 4 — see "As built (phase 1)", "As built
+(phase 2)" and "As built (phase 3)" at the end. Follows the 2026-10-11
 request for a Mac app that shows notifications when build products appear, change or
 disappear, to grow later into a real-time view of the nodes at work. Mockups of the cards,
 the status item, the products window and the live window:
@@ -297,3 +297,79 @@ choice, this is what was done.
 - **B-150 item 4 stays open.** Naming a tree in a result card by its folder needs the
   `artifacts` event to carry each path's tree folder, which is a protocol version and a
   change to the server's diff; the window does not need it.
+
+## As built (phase 3)
+
+Built as phase 3 states, with B-150 item 4; where the design left a choice, this is what
+was done.
+
+- **When the running card appears.** At the first `progress` whose record lists a node
+  running; every later `progress` redraws it in place (`CardChange.progressed`). A settle
+  whose records list nothing running shows no card — the engine sends no `progress` from a
+  pass that started nothing, so this is a settle answered without a node starting. A
+  record between two passes of one settle, `0 running`, redraws the card rather than
+  ending it: only the settle's own events end it. No card is made under a pause, and a
+  running card clicked away stays away for the rest of its settle; its result still makes
+  a card of its own.
+- **What it shows.** The headline `Building · 12 running · 48 ahead`; two running nodes, by
+  their type and the name the record carries, a node with no name by its type alone;
+  every two seconds on the app's clock the two names turn to the next two, wrapping, while
+  more run than are named; a bar of pending against scheduled — the share of the
+  scheduled nodes that are no longer waiting to start, `(scheduled − pending) /
+  scheduled`; and `31 computed · 9 from cache · 48 pending` in small type. Its mark is the
+  accent colour, where a result's is green and an error's red.
+- **How it ends.** The settle's card takes its place and its id (`CardChange.resolved`):
+  an error card at `settled`, a result card at `artifacts`, each made as phase 1 makes
+  them. A settle that moved nothing and broke nothing sends `settled` and no `artifacts`,
+  and nothing else marks its end, so the card waits one second on the app's clock after
+  `settled` (`NotificationPlanner.artifactsWait`) and goes; the next settle's first event
+  retires it sooner. An `artifacts` later than that second makes a new card, as before
+  phase 3. A lost connection takes the card with it. The running card is never the
+  status item's `last settle`.
+- **`--print`.** `running: <headline>` when the card appears, then when the running set has
+  changed since the last such line and a second has passed since it (`CardPrinter`) — the
+  rarer of the two; a turn of the names writes nothing. The card it becomes is written as
+  any card is, `card: …`, and one that goes as `dismissed: Building · …`. Two lines can
+  read the same: the set changed and the counts did not.
+- **The settling glyph.** The glyph drawn dimmed whole (`StatusGlyph.unreachedOpacity`),
+  then again at full strength inside a sector swept clockwise from twelve o'clock as far
+  as the settle's started share — the mockup's conic fill — with the pending count as the
+  status item's title beside it. Still a template image. Precedence: no engine, then a
+  held error card, then settling, then connected. The planner's `settleInProgress` says a
+  settle runs from its first `progress` to its `settled`, whether or not a card shows it,
+  so a pause silences the card and not the glyph.
+- **The live window.** *Show window*, or a click on the running card, opens it; the
+  running card goes as any clicked card does. `LiveWindowModel` is fed every event whether
+  or not the window is open, since a node's elapsed time is measured on the app's clock
+  from the `progress` that first listed it — matched by type and name, the first
+  unmatched of each, so two nodes of one description keep their own starts. It shows
+  `scheduled · computed · from cache · pending · running` while a settle runs and the last
+  `settled`'s four counts after it; the bar full once a settle has ended. Below, the last
+  settle's products and errors through `ProductsWindowModel`, from a snapshot built from
+  the settle's `artifacts` and `errors` events (`ProductsSnapshot.ofSettle`): each folder
+  of `output:` the settle touched holds its products, appeared and changed, and those its
+  errors left without a value, marked `no value`; a tree product is one row, its folder.
+  What disappeared is not listed, as the products window does not list it, and there are
+  no sizes, which the events do not carry. The window lists every folder's rows at once —
+  a folder column, the product, its mark — rather than the products window's column of
+  folders, since a settle's products are few; the errors follow in the report's lines.
+  The products part changes only when a settle ends, so a settle in progress shows the
+  last one's. While a settle runs, the open window redraws twice a second for the elapsed
+  times. It sends no request: the products window's reading of `output:` is that
+  window's.
+- **`show`** on `--print`'s standard input writes the live window once, `live: semel ·
+  idle` (or `settling`, `no engine`), then indented: the counts, `started N of M`, each
+  running node as `type · name · 2.1 s` or `nothing running`, `last settle: <headline>`,
+  and each product as `folder: name · mark`, then any errors' lines.
+- **B-150 item 4.** `DaemonEvent.artifacts` carries `treeFolders: [String: String]`, the
+  folder of the tree product each path is an entry of; protocol version 29. The engine's
+  diff reads it from the entry's `TreeFile`, through the code the error report reads it
+  with (`ProductReach.treeFolder(ofArtifact:database:)`): for a product that moved, when
+  it is noted, and for one being collected, before its input wires are deleted, carried on
+  the collection's candidate. A row the first report of a launch finds without a node
+  has no folder, since nothing left in the graph says which tree it was in; it is named by
+  its own path. A result card names and counts a tree once, by its folder, in the first
+  list one of its entries is in (`Card.movedProducts`) — a tree with an entry changed and
+  another appeared is a tree that changed; `--only` keeps a tree by its folder; and the
+  products window marks the tree's folder row with what the settle did to it, beside its
+  entries' own marks in the folder below.

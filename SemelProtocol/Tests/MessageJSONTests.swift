@@ -49,9 +49,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsTwentyEight() {
-        XCTAssertEqual(ProtocolVersion.current, 28)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 28,
+    func test_currentProtocolVersionIsTwentyNine() {
+        XCTAssertEqual(ProtocolVersion.current, 29)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 29,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -78,16 +78,31 @@ final class MessageJSONTests: XCTestCase {
     }
 
     func test_encodesArtifactsEvent() throws {
-        let event = Event.daemon(.artifacts(appeared: ["output:/app"], changed: [], disappeared: ["output:/old"]))
+        let event = Event.daemon(.artifacts(appeared: ["output:/app"], changed: [], disappeared: ["output:/old"],
+                                            treeFolders: [:]))
 
         XCTAssertEqual(try json(event),
-                       #"{"daemon":{"artifacts":{"appeared":["output:\/app"],"changed":[],"disappeared":["output:\/old"]}}}"#)
+                       #"{"daemon":{"artifacts":{"appeared":["output:\/app"],"changed":[],"disappeared":["output:\/old"],"#
+                     + #""treeFolders":{}}}}"#)
+    }
+
+    /// A tree's entry carries its folder by path, as an error's stopped product does (B-150).
+    func test_anArtifactsEventCarriesTheFolderOfATreesEntries() throws {
+        let event = Event.daemon(.artifacts(appeared: ["output:/App.app/Info.plist", "output:/lib.a"], changed: [],
+                                            disappeared: [],
+                                            treeFolders: ["output:/App.app/Info.plist": "output:/App.app"]))
+
+        XCTAssertEqual(try json(event),
+                       #"{"daemon":{"artifacts":{"appeared":["output:\/App.app\/Info.plist","output:\/lib.a"],"#
+                     + #""changed":[],"disappeared":[],"treeFolders":{"output:\/App.app\/Info.plist":"output:\/App.app"}}}}"#)
+        XCTAssertEqual(try roundTrip(event), event)
     }
 
     func test_roundTripsArtifactsEvent() throws {
         let event = Event.daemon(.artifacts(appeared: ["output:/app"],
                                             changed: ["output:/lib.a"],
-                                            disappeared: ["output:/old"]))
+                                            disappeared: ["output:/old"],
+                                            treeFolders: ["output:/app": "output:/"]))
 
         XCTAssertEqual(try roundTrip(event), event)
     }

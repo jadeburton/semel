@@ -284,7 +284,7 @@ public final class CommandInterpreter: CommandContext {
                 return
             }
             outputMessage(line)
-        case .daemon(.artifacts(let appeared, let changed, let disappeared)):
+        case .daemon(.artifacts(let appeared, let changed, let disappeared, _)):
             guard !holdArtifacts(appeared: appeared, changed: changed, disappeared: disappeared) else {
                 return
             }

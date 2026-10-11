@@ -11,6 +11,10 @@
 //         ●       connected: filled, a template the menu bar tints
 //       ╱         no engine: hollow
 //     ●           errors held: filled, in the system's red
+//                 settling: swept round like a clock hand by the settle's progress, the
+//                 part not yet reached dimmed, and the pending count beside it
+
+import SemelProtocol
 
 /// A point in the glyph's square, in points, the origin at the bottom left as AppKit draws.
 public struct GlyphPoint: Equatable, Sendable {
@@ -30,13 +34,27 @@ public enum StatusGlyph: Equatable, Sendable {
     case connected
     /// An error card is held, on screen or swallowed by a pause: filled, in red.
     case errors
+    /// A settle runs: the glyph filled as far round as `startedFraction` of its nodes have
+    /// left the queue, the rest dimmed, and `pending` written beside it.
+    case settling(pending: Int, startedFraction: Double)
 
     /// What the status item shows. No engine says more than a held error, whose card is
-    /// still on screen to say it: the engine that would replace it is gone.
-    public static func of(state: EngineSubscription.State, holdsErrors: Bool) -> StatusGlyph {
+    /// still on screen to say it: the engine that would replace it is gone. A held error
+    /// says more than a settle running: the error is something to act on, and the settle
+    /// that may fix it will replace the card when it does.
+    public static func of(state: EngineSubscription.State, holdsErrors: Bool,
+                          settle: ProgressRecord? = nil) -> StatusGlyph {
         switch state {
-        case .noEngine:  return .noEngine
-        case .connected: return holdsErrors ? .errors : .connected
+        case .noEngine:
+            return .noEngine
+        case .connected:
+            if holdsErrors {
+                return .errors
+            }
+            guard let settle else {
+                return .connected
+            }
+            return .settling(pending: settle.pending, startedFraction: settle.startedFraction)
         }
     }
 
@@ -52,6 +70,10 @@ public enum StatusGlyph: Equatable, Sendable {
 
     /// The width of a wire and of a hollow node's outline.
     public static let lineWidth = 1.5
+
+    /// How strongly the part of a settling glyph the sweep has not reached is drawn, as
+    /// the mockup dims it.
+    public static let unreachedOpacity = 0.45
 
     /// Each wire from one node to another, by index into `nodes`.
     public static let wires = [(source: 0, target: 2), (source: 1, target: 2)]
@@ -70,6 +92,26 @@ public enum StatusGlyph: Equatable, Sendable {
                 GlyphPoint(horizontal: end.horizontal - insetHorizontal, vertical: end.vertical - insetVertical))
     }
 
+    /// The sector of the square a settling glyph draws at full strength, in degrees as
+    /// AppKit measures them — anticlockwise from three o'clock — and drawn clockwise from
+    /// `start` to `end`: from twelve o'clock round as far as the settle has gone, a clock
+    /// hand's sweep. Nil for every other state, which is drawn whole.
+    public var sweep: (start: Double, end: Double)? {
+        guard case .settling(_, let fraction) = self else {
+            return nil
+        }
+        let twelveOClock = 90.0
+        return (twelveOClock, twelveOClock - 360 * min(1, max(0, fraction)))
+    }
+
+    /// What is written beside the glyph: the pending count while a settle runs.
+    public var title: String? {
+        guard case .settling(let pending, _) = self else {
+            return nil
+        }
+        return "\(pending)"
+    }
+
     /// Whether the nodes are filled, or outlined.
     public var fillsNodes: Bool {
         self != .noEngine
@@ -84,9 +126,10 @@ public enum StatusGlyph: Equatable, Sendable {
     /// What VoiceOver and the tooltip call it.
     public var description: String {
         switch self {
-        case .noEngine:  return "No engine"
-        case .connected: return "Connected"
-        case .errors:    return "Errors"
+        case .noEngine:                  return "No engine"
+        case .connected:                 return "Connected"
+        case .errors:                    return "Errors"
+        case .settling(let pending, _):  return "Settling · \(pending) pending"
         }
     }
 }
