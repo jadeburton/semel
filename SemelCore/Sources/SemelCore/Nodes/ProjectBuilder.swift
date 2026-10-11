@@ -68,6 +68,27 @@ public struct ProjectBuilder: Node {
                              outputs: spec.outputs, outputPort: spec.outputPort)
     }
 
+    /// `spec` with the formula's folder and the project's root given to its top node alone,
+    /// as `fillingFormulaFolder` and `adding(property:)` would give them, for a node whose
+    /// inputs have them already. Both walks rebuild the whole tree below a node, and a tree
+    /// product wraps one expression once per entry: Sequel Ace's signed bundle, an
+    /// expression of every compile of the app, was rebuilt for each of its files, and the
+    /// server grew past twenty gigabytes (B-153). The expression is filled once, and each
+    /// entry shares it.
+    static func fillingTopNode(_ folder: String, projectRoot: String, in spec: GraphSpecNode) -> GraphSpecNode {
+        var properties = spec.properties
+        if let type = TypeRegistry.nodeType(forTypeName: spec.typeName) as? Node.Type,
+           let key = type.descriptor.formulaFolderProperty,
+           !properties.contains(where: { $0.key == key }) {
+            properties.append(GraphSpecProperty(key: key, value: folder))
+        }
+        if isCacheable(spec), !properties.contains(where: { $0.key == projectRootProperty }) {
+            properties.append(GraphSpecProperty(key: projectRootProperty, value: projectRoot))
+        }
+        return GraphSpecNode(typeName: spec.typeName, properties: properties, inputs: spec.inputs,
+                             outputs: spec.outputs, outputPort: spec.outputPort)
+    }
+
     public static let descriptor = NodeDescriptor(
         inputPorts: [
             .required(projectFileInputPort),
@@ -216,9 +237,13 @@ public struct ProjectBuilder: Node {
 
         /// The wrapper that publishes `shapeNode`'s value at `fullPath`, with the source's
         /// `fileMetadata` port wired in when it has one, so chmod can be applied on cp.
-        func outputFileSpec(fullPath: Path, shapeNode: GraphSpecNode) -> GraphSpecNode {
-            let shapeNode = Self.fillingFormulaFolder(parentFolder.string, in: shapeNode)
-                .adding(property: Self.projectRootProperty, value: outputFolder.string, where: Self.isCacheable)
+        /// `filledBelow` says the shape's inputs have had the formula's folder and the
+        /// project's root written into them already, so only the shape itself is given them.
+        func outputFileSpec(fullPath: Path, shapeNode: GraphSpecNode, filledBelow: Bool = false) -> GraphSpecNode {
+            let shapeNode = filledBelow
+                ? Self.fillingTopNode(parentFolder.string, projectRoot: outputFolder.string, in: shapeNode)
+                : Self.fillingFormulaFolder(parentFolder.string, in: shapeNode)
+                    .adding(property: Self.projectRootProperty, value: outputFolder.string, where: Self.isCacheable)
             return GraphSpecNode(OutputFile.self,
                                  properties: [OutputFile.pathProperty: fullPath.string],
                                  inputs: [OutputFile.inputPort: ["product": shapeNode]])
@@ -264,7 +289,7 @@ public struct ProjectBuilder: Node {
                                                    inputs: [TreeFile.treeInputPort: ["tree": treeSpec]])
                         .port(TreeFile.outputPort)
                     let entryPath = fullPath / Path(entry.path)
-                    try publish(entryPath, outputFileSpec(fullPath: entryPath, shapeNode: entryShape))
+                    try publish(entryPath, outputFileSpec(fullPath: entryPath, shapeNode: entryShape, filledBelow: true))
                 }
             }
         }

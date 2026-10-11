@@ -710,3 +710,28 @@ run, about 0.6 s, where a pooled daemon answers at once.
 
 Residual: something else on the machine running `ibtool` or `actool` with the pool can
 still poison the pool for its own later clients, but never Semel's.
+
+**B-153** `open` — **A large app made the server's memory grow without bound.** Seen
+2026-10-11 building Sequel Ace (B-77 item 4). Six cold builds in a row were killed with
+SIGKILL about thirteen minutes in. Swap went from 10 GB to 40 GB in three and a half minutes,
+and the server's footprint reached 24 GB and was still growing. A sample of the server put
+every compute thread in `ProjectBuilder.fillingFormulaFolder`, under `outputFileSpec`.
+
+Half fixed 2026-10-11. A tree product, `product 'Sequel Ace.app/' = signed_Sequel_Ace().files`,
+publishes one `OutputFile` per entry of the tree, each wrapping a `TreeFile` over the tree's
+expression. `outputFileSpec` filled each entry's spec with the formula's folder and the
+project's root by walking it whole: `fillingFormulaFolder` and `adding(property:)` each
+rebuild the tree below a node. So the signed bundle's expression, every compile of the app
+and its packages, was rebuilt for each of the bundle's 270 files. The expression is filled
+once already, for the wire that brings the tree. Each entry now shares it, and only the
+entry's own `TreeFile` and `OutputFile` are given the two properties
+(`ProjectBuilder.fillingTopNode`). The specs are the same as before. The cold build then
+completed: 610 s with `SEMEL_JOBS=4`.
+
+Still open. The server's footprint reaches 7.5 GB about ninety seconds into the same build,
+just after the push of the clone's 41,392 files, and stays between 4 and 6 GB to the end.
+`heap` at one of those moments counted 155 MB live in 27,580 allocations against 4.2 GB of
+footprint, and calling `malloc_zone_pressure_relief` every five seconds changed nothing. So
+the pages are dirty and held, by something `heap` does not attribute. Next: run the push of
+a large tree under `MallocStackLogging` and read `malloc_history` for where the burst is
+allocated.
