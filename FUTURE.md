@@ -3458,16 +3458,25 @@ application target, simulator only, all library code in packages. In suggested o
    10. ~~**Package modules in Objective-C.**~~ Done. `@import FMDB;`: the products' module
       trees reach both clang stages on a `moduleTrees` port, merged under `modules/`, each
       folder holding a module map an `-I`, as the Swift compiler has them.
-   11. **ARC's audited CF calls in preprocessed text** — `open`. SPMySQL's
-      `SPMySQLStreamingResultStore.m:316` passes `(CFMutableArrayRef)rowArray` to
-      `CFArrayAppendValue` with no `__bridge`, which ARC allows inside the SDK's
-      `#pragma clang arc_cf_code_audited` regions; `clang -E` does not write that pragma
-      out, so the compile of the preprocessed text refuses the cast. Reproduced outside
-      Semel: the file compiles directly and with modules, and `-E` then `-c` fails. The
-      split into two stages is what loses it (with modules the SDK's declarations come
-      from the module and keep it). Next: the clang stages, not the project — modules for
-      an Objective-C target that sets none, or `-frewrite-includes`. Stepped around with
-      `__bridge` in the clone.
+   11. ~~**ARC's audited CF calls in preprocessed text.**~~ Done (second slice).
+      SPMySQL's `SPMySQLStreamingResultStore.m:316` passes `(CFMutableArrayRef)rowArray`
+      to `CFArrayAppendValue` with no `__bridge`. ARC allows that inside the SDK's
+      `#pragma clang arc_cf_code_audited` regions, which open and close through
+      `CF_IMPLICIT_BRIDGING_ENABLED`/`…_DISABLED` 220 times in 189 headers. `clang -E`
+      acts on the pragma and prints nothing for it (it prints `assume_nonnull`), so the
+      compile of the preprocessed text refused the cast. `ClangPreprocessor` (11) now
+      writes the pragma pair back into the text of an Objective-C source under ARC,
+      around what each region of a header covers (`ClangAuditedRegions`). Each pragma is
+      followed by a line marker that puts the header's numbering and system flag back. A
+      header's regions are read from its text: an input by its hash, an SDK header where
+      the SDK is, whose fingerprint is in the key. `-frewrite-includes` was measured and
+      not taken. A file importing Foundation came to 22.5 MB of text against `-E`'s
+      4.9 MB, and it would have moved every preprocessed text and every compile key of
+      every project. The rewrite moves none where no region is reached. A C source, a
+      source without ARC and one whose SDK comes through modules are untouched.
+      `ClangCompiler`'s command line is unchanged, so it is not bumped. Pinned by
+      `ClangAuditedRegionsTests`, whose real-clang test compiles the cast across the two
+      stages.
    12. **Firebase** — `open`, the Swift converter's. (a) GoogleUtilities,
       GoogleDataTransport and Crashlytics include `"Crashlytics/Crashlytics/Components/…h"`
       from the package's root, which their `.headerSearchPath("../..")` names and the

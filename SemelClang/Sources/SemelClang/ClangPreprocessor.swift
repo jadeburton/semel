@@ -119,7 +119,9 @@ public struct ClangPreprocessor: Node {
     /// 9: a failure is published as an `ErrorDocument`, the typed value a client renders,
     /// where it was a sentence (B-145).
     /// 10: the fingerprint of the SDK tree at `sdkPath` is in the key (B-47).
-    public static let implementationVersion = 10
+    /// 11: under ARC, the `arc_cf_code_audited` regions of the headers an Objective-C source
+    /// reads as text are written back around their text (`ClangAuditedRegions`, B-77 item 4).
+    public static let implementationVersion = 11
 
     /// `preprocessed` with the `#pragma clang module begin`/`end` lines around the target's
     /// own module taken out, and everything between them kept.
@@ -548,6 +550,15 @@ public struct ClangPreprocessor: Node {
            case .value(let preprocessed) = output {
             output = .value(try Self.ownModuleAsText(try preprocessed.resolve(), moduleName: moduleName).intern())
         }
+        if inputs.configuration.features.objectiveCARC, language.hasPrefix("objective-c"), case .value(let preprocessed) = output {
+            let text = try preprocessed.resolve()
+            let kept = ClangAuditedRegions.keepingRegions(in: text,
+                                                          facts: Self.auditFacts(inputFiles: inputFiles,
+                                                                                 sdkPath: inputs.configuration.sdkPath))
+            if kept != text {
+                output = .value(try kept.intern())
+            }
+        }
 
         return .init(output: output,
                      errorLog: .value(try result.errorOutput.intern()),
@@ -555,6 +566,26 @@ public struct ClangPreprocessor: Node {
                      headerInputFilesWireSpecs: headerInputFilesWireSpecs,
                      includeFileListWireSpecs: includeFileListWireSpecs,
                      headerFolderTreeWireSpecs: headerFolderTreeWireSpecs)
+    }
+
+    /// What a header the preprocessed text names says about its audited regions: an input
+    /// by its content, a header of the SDK read where it is — the SDK's fingerprint is in
+    /// the key, which is what covers reading it (B-47) — and anything else, a header of the
+    /// toolchain's own, as having none.
+    static func auditFacts(inputFiles: [FileNameAndContent], sdkPath: String?) -> (String) -> ClangAuditedRegions.FileFacts {
+        let inputs = Dictionary(inputFiles.map { ($0.filePath, $0) }, uniquingKeysWith: { first, _ in first })
+        return { path in
+            if let input = inputs[path] {
+                guard input.symbolicLinkTarget == nil else {
+                    return .none
+                }
+                return ClangAuditedRegions.cachedFacts(key: "hash \(input.hash)") { try? DataObjectStore.shared.read(hash: input.hash) }
+            }
+            guard let sdkPath, !sdkPath.isEmpty, path.hasPrefix(sdkPath.hasSuffix("/") ? sdkPath : sdkPath + "/") else {
+                return .none
+            }
+            return ClangAuditedRegions.cachedFacts(key: "path \(path)") { FileManager.default.contents(atPath: path).map { Array($0) } }
+        }
     }
 
     func process(inputs: ClangPreprocessorInputs) throws -> ClangPreprocessorOutputs {
