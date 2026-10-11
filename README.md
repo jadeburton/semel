@@ -238,6 +238,8 @@ An `.xcodeproj` is converted the way a package is: a formula names it, and the c
 include XcodeProjectConverter(path: <IceCubesApp.xcodeproj>, root: <.>, configuration: 'Debug', sdk: 'iphonesimulator').formula
 ```
 
+A target's sources are its synchronized folders or the files its sources phase lists; Swift is compiled as one module, and Objective-C, C and C++ through clang a file at a time, each finding headers the way Xcode's header map finds them — every header the project references, by name and as `<Product/Header.h>` — with `GCC_PREFIX_HEADER` forced in, the Swift's `SWIFT_OBJC_INTERFACE_HEADER_NAME` beside them, `HEADER_SEARCH_PATHS`, `USER_HEADER_SEARCH_PATHS` (a `/**` entry recursive) and `FRAMEWORK_SEARCH_PATHS` read as folders of the project, and a file's own `COMPILER_FLAGS` after the target's. The frameworks phase's SDK frameworks and libraries are linked by name, a framework or library in the project's tree as the files it is, and a framework target of a referenced project (`PBXReferenceProxy`) is built from that project — its `MODULEMAP_FILE`, `SWIFT_INCLUDE_PATHS`, install name and versions read — and embedded as a versioned framework where a copy-files phase puts it. FUTURE.md's B-77 lists what each roster project asked for and what is still not read.
+
 ### Dependencies
 
 Semel never fetches anything: every file a build needs has to be inside the input file system, found by one rule. For a tree of Swift packages, the Swift conversion tool puts them there and writes what the build needs:

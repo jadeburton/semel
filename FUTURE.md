@@ -3198,17 +3198,193 @@ application target, simulator only, all library code in packages. In suggested o
    not add, so its export cannot be attached to by a debugger; the app group
    `$(TeamIdentifierPrefix)` in both entitlements files is an empty string in Semel's
    signature, as it is when Xcode does not sign.
-4. *Mastodon iOS (official)* — IceCubes's domain with different structure: a Core Data
+4. *Sequel Ace* — `open`; the first slice (2026-10-11): the header-lookup walls and the
+   framework targets are done, and with three things stepped around in the clone — the
+   lex files and the Core Data model out of the sources phase (1), Firebase out of the
+   app (12), one unbridged cast bridged (11) — every Objective-C and Swift source of the
+   app and of both frameworks compiles, and the link fails on the lex scanners' symbols
+   alone. A fresh clone stops at 1. Pinned at `1f2798da98d7cd8eef5cb5be97ce23de06733202`
+   (main, 2026-10-09). Chosen for Objective-C header finding, which no roster project
+   had asked for: NetNewsWire's Objective-C sits in synchronized folders beside the
+   headers it includes.
+
+   *What the project is.* One project, `sequel-ace.xcodeproj`, every target listing its
+   files through groups (no synchronized folder): the app `Sequel Ace` (155 `.m`, 175
+   `.swift`, 172 headers, all under `Source/`), `Unit Tests`, and two tools —
+   `SequelAceTunnelAssistant`, which a copy-files phase (`dstSubfolderSpec = 6`) puts
+   beside the app's executable, and `xibLocalizationPostprocessor`, which nothing the
+   app builds runs. Two project references (`projectReferences`, `PBXReferenceProxy`):
+   `Frameworks/SPMySQLFramework/SPMySQLFramework.xcodeproj`, whose `SPMySQL.framework`
+   target is Objective-C with Swift beside it (`DEFINES_MODULE`, its own
+   `MODULEMAP_FILE`, a Swift `import MySQLClient` through `SWIFT_INCLUDE_PATHS`, a
+   headers phase with 24 public headers, and a copy-files phase putting the prebuilt
+   `libmysqlclient.24.dylib`, `libssl.3.dylib` and `libcrypto.3.dylib` beside its
+   executable, each already named `@loader_path/…`), and `Frameworks/QueryKit/QueryKit.xcodeproj`,
+   plain Objective-C. A prebuilt, versioned `Frameworks/ShortcutRecorder.framework` with
+   no module map. The app's frameworks phase: the SDK's `Cocoa`, `Quartz`, `QuickLookUI`,
+   `Security`, `WebKit`, `libc++.tbd`, `libz.tbd`, `libicucore.dylib`, `libbz2.dylib`,
+   the three frameworks, and five package products. Its *Copy Frameworks* phase embeds
+   the three frameworks. One script phase (uploading dSYMs to Crashlytics in Release and
+   Beta, a message otherwise): not Semel's business. The `libmysqlclient` folder holds
+   the scripts that built the dylibs, an `.xcodeproj` the app does not reference.
+
+   *Settings.* `GCC_PREFIX_HEADER = Source/Sequel-Ace.pch` on the project (it imports
+   Cocoa and `SPConstants.h` for every source), `SWIFT_OBJC_BRIDGING_HEADER`,
+   `SWIFT_OBJC_INTERFACE_HEADER_NAME = $(PROJECT_NAME)-Swift.h` (25 sources import
+   `sequel-ace-Swift.h`), `ALWAYS_SEARCH_USER_PATHS = NO`, `FRAMEWORK_SEARCH_PATHS =
+   $(SRCROOT)/Frameworks $(PROJECT_DIR)/Frameworks $(PLATFORM_DIR)/Developer/Library/Frameworks`,
+   `LIBRARY_SEARCH_PATHS` naming the MySQL client's folder, `OTHER_LDFLAGS = -ObjC`, ARC
+   and the hardened runtime, per-file `COMPILER_FLAGS` (`-fno-objc-arc` on
+   `RegexKitLite.m`), `MACOSX_DEPLOYMENT_TARGET = 13.5`, Swift 5. The app's
+   `HEADER_SEARCH_PATHS` is unset; the unit tests' is not. SPMySQL: `INSTALL_PATH =
+   @executable_path/../Frameworks`, `DYLIB_*_VERSION`, `FRAMEWORK_VERSION = A`,
+   `REEXPORTED_LIBRARY_NAMES = crypto.3 ssl.3`, `BUILD_LIBRARY_FOR_DISTRIBUTION = YES`.
+
+   *Packages.* Five products through the project: FMDB, SnapKit, Alamofire,
+   FirebaseAnalyticsCore and FirebaseCrashlytics; OCMock for the tests. `prepare
+   --platform macos` resolves 17 packages and vendors them (957 MB; grpc-binary is 610
+   MB of it), with nine binary artifacts (abseil, gRPC, BoringSSL, GoogleAppMeasurement,
+   FirebaseAnalytics, FirebaseFirestoreInternal, …), in 56 s over a warm SwiftPM cache.
+
+   *What stops it*, in the order met (Xcode converter v21, `SwiftCompiler` v8,
+   `ClangPreprocessor`/`ClangCompiler` with new optional ports and no new version — no
+   command line they wrote before changes):
+
+   1. **Listed sources no node builds** — `open`. The sources phase lists
+      `SPSQLTokenizer.l` and `SPEditorTokens.l`, which Xcode's lex rule turns into C, and
+      `SPUserManager.xcdatamodel`, which `momc` compiles into the bundle; the converter
+      refuses them by name (`unsupportedSources`, pinned by `SequelAceFixtureTests`).
+      Next: a lex node (the toolchain's `lex`, `<name>.yy.c`, compiled through clang with
+      the target's settings) and a `momc` node (also wanted by Mastodon, item 5). Without
+      the scanners the link fails on `_yylex`, `_yy_scan_string`, `_yy_switch_to_buffer`,
+      `_yyuoffset` and `_yyuleng`, which is where the stepped-around build stops.
+   2. ~~**No prefix header.**~~ Done. `NSBeep`, `NSString`, `SPLog` undeclared in most of
+      the app's sources: `GCC_PREFIX_HEADER` is forced into every C-family source,
+      `-include`, on `ClangPreprocessor`'s new `prefixHeader` port. One outside the
+      project (the tool's `$(SYSTEM_LIBRARY_DIR)/…/AppKit.h`) is said in the formula and
+      left out.
+   3. ~~**No header map.**~~ Done. A listed source found only headers in its own folder,
+      where Xcode's header map finds every header of the project by name. The project's
+      header references (`XcodeProject.headerPaths`, with a synchronized folder's headers)
+      are one tree, `headers_<Target>()`, on `ClangPreprocessor.quoteHeaderTrees`, which
+      places it under the project's folder and makes each folder of it holding a header
+      an `-iquote`, sorted; `headerMapProduct` (a literal) makes each also reachable as
+      `<Product>/Foo.h` through a link under `header-map/`, an `-I`. Links and not copies:
+      first laid as a copied tree, QueryKit's `#import <QueryKit/QKQueryTypes.h>` and
+      `#import "QKQueryTypes.h"` were two files to clang, and everything in the header was
+      defined twice. A listed source's own folder is no longer a search path, so a
+      preprocess places the headers rather than every file beside them. *ISSUE:* a header
+      beside a listed source that the project does not reference is not found.
+   4. ~~**`sequel-ace-Swift.h`.**~~ Done. `SwiftCompiler` writes the interface the
+      `objectiveCHeaderName` literal names and publishes it on `objectiveCHeader`; the
+      converter gives the settings `PROJECT_NAME`, and the emitter puts it on an `-I`
+      (`derived-headers/`) by its name and under the product (SPMySQL's sources import
+      `<SPMySQL/SPMySQL-Swift.h>`). swiftc writes the bridging header into it by the
+      absolute path it read it from, the sandbox's — `#import "/private/var/…/objc/Source/
+      Sequel-Ace-Bridging-Header.h"`, a different path every run, and one no preprocess
+      can open — so the node rewrites that import to the header's file name, which the
+      header map finds (the bridging header is in `headers_<Target>()` now), and refuses
+      an interface that still names the sandbox (`toolOutputNamesItsSandbox`).
+   5. ~~**A listed source's own flags.**~~ Done. `COMPILER_FLAGS` on a build file
+      (`-fno-objc-arc` on `RegexKitLite.m`) reach its preprocessor and compiler after the
+      target's, as an exception set's flags already did.
+   6. ~~**Search-path settings.**~~ Done, though the app needs none: `HEADER_SEARCH_PATHS`
+      and `USER_HEADER_SEARCH_PATHS` are header folders, a recursive `/**` every folder
+      below it, `FRAMEWORK_SEARCH_PATHS` finds frameworks to compile against, and the
+      converter walks each folder of the project they name (`XcodeSearchPaths`); entries
+      outside the project are said in the formula. *ISSUE:* a user path is an `-I`, where
+      Xcode searches it for quoted includes alone, and folders are searched in path order.
+   7. ~~**The SDK's libraries.**~~ Done. `libz.tbd`, `libc++.tbd`, `libicucore.dylib`,
+      `libbz2.dylib` in a frameworks phase are `-lz`, `-lc++`, `-licucore`, `-lbz2`; a
+      library of the project's tree is linked by its file.
+   8. ~~**`ShortcutRecorder.framework`.**~~ Done. A framework the frameworks phase names
+      by a path in the project is the tree the push made of it, links kept
+      (`FolderTreeBuilder`): compiled against (`-F` for Swift and both clang stages),
+      linked by name, and embedded under `Contents/Frameworks` where a copy-files phase
+      puts it.
+   9. ~~**The framework targets of the referenced projects.**~~ Done. The app's
+      `#import <SPMySQL/…>` and `import SPMySQL`: a `PBXReferenceProxy` in a frameworks
+      phase is a `BuiltProduct` (the project, the product, the target), the converter
+      demands each referenced project file on a new `subprojects` port (one nobody pushed
+      is said in the formula not to be built), and the emitter builds a framework target
+      with an emitter over its own project: its sources as the app's are, linked as a
+      dynamic library with `-install_name` (`$(INSTALL_PATH)/<framework>/Versions/A/<name>`)
+      and the `DYLIB_*_VERSION`s, and laid out versioned — `Versions/A` with the
+      executable, the public and private headers, the module map `MODULEMAP_FILE` names,
+      the Swift module, the generated interface, `Resources/Info.plist`, what the
+      copy-files phase puts beside the executable — with `Versions/Current` and the links
+      at the top made by `TreeBuilder`'s new `links` property. SPMySQL's Swift uses its
+      Objective-C (`SPMySQLConnectionProxy`), so it imports it as the underlying module
+      (`importsUnderlyingModule`), from a headers-only framework of the public headers and
+      the module map on `-F`; its `@_implementationOnly import MySQLClient` finds the map
+      `SWIFT_INCLUDE_PATHS` names, with the headers it names by `../../` laid where that
+      reaches (`SwiftCompiler.includeTrees`). Pinned by `SequelAceFixtureTests` over the
+      sub-project's own file, and `XcodeProjectConverterTests`. *ISSUE:* no Swift
+      interface (`BUILD_LIBRARY_FOR_DISTRIBUTION`), no module map written for
+      `DEFINES_MODULE` without `MODULEMAP_FILE`, `REEXPORTED_LIBRARY_NAMES` not passed, a
+      referenced project's xcconfigs not read (Sequel Ace's name none).
+   10. ~~**Package modules in Objective-C.**~~ Done. `@import FMDB;`: the products' module
+      trees reach both clang stages on a `moduleTrees` port, merged under `modules/`, each
+      folder holding a module map an `-I`, as the Swift compiler has them.
+   11. **ARC's audited CF calls in preprocessed text** — `open`. SPMySQL's
+      `SPMySQLStreamingResultStore.m:316` passes `(CFMutableArrayRef)rowArray` to
+      `CFArrayAppendValue` with no `__bridge`, which ARC allows inside the SDK's
+      `#pragma clang arc_cf_code_audited` regions; `clang -E` does not write that pragma
+      out, so the compile of the preprocessed text refuses the cast. Reproduced outside
+      Semel: the file compiles directly and with modules, and `-E` then `-c` fails. The
+      split into two stages is what loses it (with modules the SDK's declarations come
+      from the module and keep it). Next: the clang stages, not the project — modules for
+      an Objective-C target that sets none, or `-frewrite-includes`. Stepped around with
+      `__bridge` in the clone.
+   12. **Firebase** — `open`, the Swift converter's. (a) GoogleUtilities,
+      GoogleDataTransport and Crashlytics include `"Crashlytics/Crashlytics/Components/…h"`
+      from the package's root, which their `.headerSearchPath("../..")` names and the
+      converter does not put on the preprocessor's path; (b) Promises' `FBLPromises`
+      leaves `#pragma clang module import FBLPromises` for its own headers in its own
+      preprocessed text, and the compile fails `module 'FBLPromises' not found`; (c) not
+      reached: nanopb's C, leveldb's C++, the binary xcframeworks. Stepped around by taking
+      the two Firebase products out of the app with the two sources that use them
+      (`SAAnalyticsConsentPolicy+Firebase.swift`, `ReportExceptionApplication.m`, the
+      app's principal class) and two calls in `SPAppController.m`.
+   13. **ibtool and actool here** — `open`, not Semel's. Every xib, the storyboard and the
+      catalog fail `IBCurrentDirectoryPath … currentDirectoryPath is unexpectedly nil —
+      Operation not permitted`; `xcrun ibtool --compile out.nib X.xib` fails the same way
+      outside Semel, in any directory, under `launchd` as well, and succeeds with absolute
+      paths — a state of this machine's Interface Builder tools on 2026-10-11, which
+      every roster project with a catalog would meet. Stepped around for the compile with
+      `ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO`, so the Swift does not wait for
+      actool's symbols. Next: check on a machine whose tools work before blaming a node.
+   14. **`SequelAceTunnelAssistant`** — `open`. A tool target of the project the app's
+      copy-files phase puts beside its executable; only the application and its
+      extensions are built, and the formula says the copy is not made. Next: a
+      `com.apple.product-type.tool` target built and copied (its own entitlements, signed).
+
+   *Not reached*: the link with the scanners, the Core Data model, signing with the
+   sandbox entitlements and the nested frameworks (`SPMySQL`'s dylibs keep their
+   vendor's signature), the export, launching. A cold build over a fresh home of the clone
+   with 1, 11 and 12 stepped around and asset symbols off (13): 378 s, 1,318 nodes, with
+   the CI runner busy on the same machine; it ends at the link (1) and at ibtool and
+   actool (13). A fresh clone with nothing stepped around stops at 1 in 58 s, nearly all
+   of it the push of 41,392 files. Not in the roster, so no `buildTimeout` yet; the next
+   slice starts at 1 and 11.
+
+   *Noticed on the way*: twice a `semelserv` started over a home a moment after
+   `semel stop` — by `semel`'s autostart, and by `launchd` respawning a submitted job —
+   died at once on `Could not record the name 'output' in the database`
+   (`DatabaseVolumeError`), apparently while the old server still held the database; the
+   next start over the same home was fine. Not chased.
+5. *Mastodon iOS (official)* — IceCubes's domain with different structure: a Core Data
    `.xcdatamodeld` (wants a `momc` node), several extensions, generated-code build phases,
    a big local SDK package.
-5. *Wikipedia iOS* — heavy Objective-C and Swift mixing, bridging headers, generated
+6. *Wikipedia iOS* — heavy Objective-C and Swift mixing, bridging headers, generated
    `-Swift.h`. An app target's Objective-C and its bridging header are built since
-   NetNewsWire's 6; the `-Swift.h` its Objective-C imports is not.
+   NetNewsWire's 6, and the `-Swift.h` its Objective-C imports since Sequel Ace's 4.
 
 Expected to surface: script build phases, framework and dynamic-library targets, Core
 Data models. Non-synchronized groups surfaced with item 1 and are read; Objective-C in
 the application target, and storyboards and xibs (`ibtool`), with item 2 (its 6 and 8),
-and are built.
+and are built; framework targets of a referenced project with item 4 (its 9), and are
+built, and a Core Data model with item 4 (its 1), and is not yet.
 
 **B-78** `open` — **More Swift packages.**
 
