@@ -181,6 +181,20 @@ public final class BuildEngine {
                 continue
             }
 
+            switch openSettleReport() {
+            case .wakeUpOutstanding:
+                continue
+            case .batchOpen:
+                // Settled as far as a waiter is concerned — a `wait` inside the batch has
+                // to return, or the batch could never end — but not reported: the batch's
+                // end wakes the loop for that.
+                await idle.markIdle(settledThrough: wakeUpsConsumed)
+                await workSignal.wait()
+                continue
+            case .opened:
+                break
+            }
+
             settleTally.errors = reportIdleTimeErrors()
             reportUnclaimedConfigKeys()
             reportUnnamedProjects(settleHasErrors: settleTally.errors > 0)
@@ -189,6 +203,7 @@ public final class BuildEngine {
             // against the totals above it, and a list of paths between the failures and
             // the line that counts them would separate the two halves of one report.
             reportArtifactChanges()
+            closeSettleReport()
             // The cache before the collector: an evicted entry's objects are what a
             // collection right after it gives back.
             let evicted = trimCacheAtIdle()
@@ -738,29 +753,90 @@ public final class BuildEngine {
 
     // MARK: - Batch mode
 
-    /// Guards `batchDepth` and `signalPendingInBatch` from concurrent access.
-    private let batchLock = NSLock()
+    /// Guards `batchDepth` and `signalPendingInBatch` from concurrent access, and is the
+    /// condition an opening batch waits on while a settle is being reported.
+    private let batchLock = NSCondition()
     private var batchDepth = 0
     private var signalPendingInBatch = false
 
+    /// Whether the loop is reading the graph for a settle's reports. No batch opens while
+    /// it is, so what the reports read is what the passes before them processed.
+    private var settleBeingReported = false
+
+    /// Whether a pass ended with a batch open and left its settle unreported, for the
+    /// batch's end to wake the loop and report it.
+    private var settleReportWithheld = false
+
     /// Suppress work signals for the duration of a batch write (e.g. a multi-file push).
     /// Nest calls freely; the engine is unblocked only when the outermost `endBatch()` runs.
+    ///
+    /// The outermost one waits while the loop reports a settle: a batch's writes landing
+    /// between the reports' reads would be reported as a state of the graph that no pass
+    /// has seen, and — a removal read with the push that undoes it still to come — one the
+    /// batch never stands in (B-151). A nested one never waits: no report begins while a
+    /// batch is open.
     public func beginBatch() {
-        batchLock.withLock { batchDepth += 1 }
+        batchLock.withLock {
+            while settleBeingReported {
+                batchLock.wait()
+            }
+            batchDepth += 1
+        }
     }
 
-    /// End a batch. Sends a single coalesced signal if any were suppressed inside.
+    /// End a batch. Sends a single coalesced signal if any were suppressed inside, or if a
+    /// pass ended inside it and left its settle to be reported; that one is counted as a
+    /// wake-up, so a waiter after the batch waits for the report.
     public func endBatch() {
         let shouldSignal = batchLock.withLock { () -> Bool in
             batchDepth -= 1
-            guard batchDepth == 0, signalPendingInBatch else {
+            guard batchDepth == 0, signalPendingInBatch || settleReportWithheld else {
                 return false
             }
+            if settleReportWithheld {
+                wakeUpsRequestedCount += 1
+            }
             signalPendingInBatch = false
+            settleReportWithheld = false
             return true
         }
         if shouldSignal {
             sendLoopSignal()
+        }
+    }
+
+    // MARK: - Reporting a settle
+
+    /// Whether the loop may report the settle its passes have reached.
+    enum SettleReportGate {
+        /// It may, and no batch opens until `closeSettleReport`.
+        case opened
+        /// Something asked for a pass since this one began. Its writes may already be in
+        /// the graph the reports would read, unprocessed: the work signal travels through a
+        /// Task and a batch holds it back to its end, so the count is what says so.
+        case wakeUpOutstanding
+        /// A batch is open. Withheld, and the batch's end wakes the loop to report.
+        case batchOpen
+    }
+
+    func openSettleReport() -> SettleReportGate {
+        batchLock.withLock {
+            guard wakeUpsRequestedCount == wakeUpsConsumedCount else {
+                return .wakeUpOutstanding
+            }
+            guard batchDepth == 0 else {
+                settleReportWithheld = true
+                return .batchOpen
+            }
+            settleBeingReported = true
+            return .opened
+        }
+    }
+
+    func closeSettleReport() {
+        batchLock.withLock {
+            settleBeingReported = false
+            batchLock.broadcast()
         }
     }
 
@@ -829,6 +905,8 @@ public final class BuildEngine {
         let output: ComputedOutput
         let keyMaterial: CacheKeyMaterial?
         let computeStart: Date
+        /// What the node read: the write compares it with what the node's inputs hold then.
+        let input: ProcessInput
 
         var outcome: SettleTally.Outcome {
             switch output {
@@ -1017,7 +1095,8 @@ public final class BuildEngine {
                 continuation.resume(returning: (nodeRecord, ComputeResult(nodeRecord: nodeRecord,
                                                                           output: result.output,
                                                                           keyMaterial: result.keyMaterial,
-                                                                          computeStart: result.computeStart)))
+                                                                          computeStart: result.computeStart,
+                                                                          input: result.input)))
             }
             thread.name = "semel.compute"
             thread.qualityOfService = .userInitiated
@@ -1088,9 +1167,29 @@ public final class BuildEngine {
                     throw error
                 }
             }
+            try unscheduleIfAnswered(node, nodeID: nodeID, read: result.input)
         } catch {
             Debug.warn("error processing node \(nodeID): \(error)")
         }
+    }
+
+    /// Takes a node off the schedule when what it is scheduled for is what its result has
+    /// just answered (B-151).
+    ///
+    /// A node is unscheduled as it starts and reads its inputs on its own thread a moment
+    /// later, while the loop goes on writing other nodes' results. An input written in
+    /// between schedules it again, and its run reads that value all the same: a second
+    /// run would read what the first did and, the node being a function of its inputs,
+    /// publish what it published — from the entry the first run had just stored, so that
+    /// the settle called a node it had computed a cache hit. Its inputs as they stand
+    /// after its own write are compared with what it read, so that its own demands, which
+    /// that write wires, still run it again over the wires they add.
+    private func unscheduleIfAnswered(_ node: any Node, nodeID: ObjectID, read: ProcessInput) throws {
+        guard try database.node.find(nodeID: nodeID)?.scheduled == true,
+              try node.buildProcessInput().inputValues == read.inputValues else {
+            return
+        }
+        try database.node.updateScheduled(nodeID: nodeID, scheduled: false)
     }
 
     func processOneNode(_ nodeRecord: NodeRecord) throws {

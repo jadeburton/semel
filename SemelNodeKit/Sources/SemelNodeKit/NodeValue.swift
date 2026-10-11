@@ -12,7 +12,7 @@ import SemelDatabaseModels
 /// value" but is not a failure of this node — a port that has never been processed, a node
 /// whose input failed — is its own case rather than an `error` carrying a sentence, so that
 /// anything deciding what to do about it reads the case instead of matching the text.
-public enum NoValueReason: Codable {
+public enum NoValueReason: Codable, Equatable {
     /// The node is waiting for something: a consumer must wait with it.
     case pending
     /// No value has ever been produced here. A port holds this from its node's creation
@@ -72,7 +72,7 @@ extension NoValueReason {
     }
 }
 
-public enum NodeValue: Codable {
+public enum NodeValue: Codable, Equatable {
     case noValue(reason: NoValueReason)
     case value(_ value: DataObjectHash)
 }

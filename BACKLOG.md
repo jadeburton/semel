@@ -381,6 +381,45 @@ deletions and the idle reports. A cold build was unchanged: 94.5 s before, 95.1 
 
 ## Design, correctness and code quality
 
+**B-151** `done` — **Two settle tests failed now and then on a slow machine.** Seen
+2026-10-10 on the hosted runner (three cores), on a documentation-only pull request whose
+check passed on main just before: `CheckpointTests.test_aRestoreRoundTripsFilesAddedRemovedRelinkedAndReModed`
+failed twice in two runs with `restore before: no product: app/lib/Lib.swift has been
+removed`, and `SettleRecordTests.test_theFirstBuildRecordsEveryNodeAsNewAndComputed` with
+a tool recorded `fromCache` where it had been computed. Under twelve CPU burners on the
+owner's ten-core Mac the first failed 13 rounds in 80 and the second 4 in 250. Two causes
+in the engine, both races between the processing loop and the writes beside it.
+
+Fixed 2026-10-11. **A settle was reported over writes no pass had processed.** The loop
+reported when no work signal was pending, but a batch holds its signal back to its end and
+the signal travels through a Task, so a removal committed in a batch could be in the graph
+the report read while its wake-up was still on its way. The `rm` before the restore took
+`app/lib` in one transaction after the pass of the push before it had run its collector;
+the report then read `Lib.swift` removed and not yet collected, said so as an error, and
+the interpreter counted it against `restore`, the command running when the event arrived.
+Each of five failures logged made its report with wake-ups requested and not consumed. A settle is
+now reported only when every wake-up asked for has been taken by a pass and no batch is
+open: a pass that ends inside a batch marks the loop idle — a `wait` inside the batch still
+returns — and leaves the report to the batch's end, which wakes the loop and counts a
+wake-up, so a waiter after it waits for the report. No batch opens while a report is being
+read. `SettleReportBoundaryTests` holds a pass open, removes a file a node reads and pushes
+it back in one batch, and fails without the change on the removal reported between.
+
+**A node ran twice over the same inputs in one settle.** A node is unscheduled as it
+starts and reads its inputs on its own thread a moment later, while the loop writes other
+results; an input written in between schedules it again, and its run reads that value all
+the same. The second run read what the first had, and was answered from the entry the
+first had just stored, so the settle record called a node it had computed a hit — the
+settle record's per-node log showed tool 9 `computed` and then `fromCache` within one pass.
+B-147 made this visible: before it, a node faster than the cache floor stored no entry and
+the second run was a second run. The write of a result now takes the node off the schedule
+when its inputs, after the write, are what the run read; the wires its own demands add are
+inputs it did not read, so those still run it again. `RescheduledRunTests` holds a node
+between its start and its read, writes its input, and fails without the change on the
+`fromCache` outcome. With the first change the restore test passed 60 in 60 under the
+burners, 60 in 60 beside a release build and 60 in 60 under `taskpolicy -c background`;
+with both, 60 in 60 for it and 150 in 150 for the record test, under the burners.
+
 **B-144** `done` — **Deleting a running server's home sometimes failed with a permission error.**
 Seen 2026-10-09 twice in one day, once on the hosted runner (PR #170's first check) and
 once on the owner's Mac (an agent's root suite run), and passed on rerun both times:

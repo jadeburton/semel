@@ -14,7 +14,7 @@ import SemelNodeKit
 
 extension Node {
 
-    private func buildProcessInput() throws -> ProcessInput {
+    func buildProcessInput() throws -> ProcessInput {
         var inputValues = [String: [String: NodeValue]]()
         for inputPort in descriptor.staticInputPorts + descriptor.dynamicInputPorts {
             inputValues[inputPort] = try thisNode.readFromInputPort(inputPort)
@@ -193,8 +193,11 @@ extension Node {
     /// Phase 1 of two-phase parallel processing: reads inputs and computes the
     /// output without making any graph mutations.  Safe to call concurrently with
     /// other nodes.  Returns nil if this node is not ready to process (no input
-    /// ports, inputs pending, required wires missing, etc.).
-    func tryComputeOutput() -> (output: ComputedOutput, keyMaterial: CacheKeyMaterial?, computeStart: Date)? {
+    /// ports, inputs pending, required wires missing, etc.). The input it read comes back
+    /// with the output, for the write to tell whether the node has answered what it is
+    /// scheduled for.
+    func tryComputeOutput() -> (output: ComputedOutput, keyMaterial: CacheKeyMaterial?, computeStart: Date,
+                                input: ProcessInput)? {
         guard hasInputPorts() else {
             return nil
         }
@@ -219,7 +222,7 @@ extension Node {
         }
 
         if let state = stateStoppingProcess(input: input) {
-            return (.stopped(buildOutput(reason: state)), nil, .now)
+            return (.stopped(buildOutput(reason: state)), nil, .now, input)
         }
 
         // A type that does not cache takes no key: nothing would look it up or store under it.
@@ -227,11 +230,11 @@ extension Node {
         let cacheKey    = keyMaterial.flatMap { try? $0.cacheKey() }
 
         if let cached = try? loadCachedOutputs(cacheKey: cacheKey) {
-            return (.cached(cached), keyMaterial, .now)
+            return (.cached(cached), keyMaterial, .now, input)
         }
 
         let computeStart = Date.now
-        return (.processed(processWithCatch(input: input)), keyMaterial, computeStart)
+        return (.processed(processWithCatch(input: input)), keyMaterial, computeStart, input)
     }
 }
 
