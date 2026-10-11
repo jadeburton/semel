@@ -88,6 +88,7 @@ struct ServerError: Error, CustomStringConvertible {
             return "the server's reply to `\(request)` is \(bytes) bytes, over the \(limit)-byte limit for one reply; "
                  + "ask for less of the graph at a time, or report the verb as needing a reply that streams"
         case .unrecoverable(let message):      return "the server stopped: \(message)"
+        case .cacheStoreFailed(let description): return "the cache could not use its store: \(description)"
         // Locked folders and checkpoints (B-146).
         case .batchRejected(let folder, let lock, let expected, let found, let paths):
             let condition = ErrorCondition.batchRejected(folder: folder, lock: lock, expected: expected, found: found, paths: paths)
@@ -105,7 +106,7 @@ struct ServerError: Error, CustomStringConvertible {
         switch response {
         case .pathNotFound, .notAFolder, .notAProduct, .nodeError, .batchRejected, .checkpointNotFound:
             return true
-        case .roleNotOffered, .malformedRequest, .replyTooLarge, .unrecoverable:
+        case .roleNotOffered, .malformedRequest, .replyTooLarge, .unrecoverable, .cacheStoreFailed:
             return false
         }
     }
@@ -221,6 +222,8 @@ extension Response {
             throw ServerError(response: error)
         case .hello:
             throw ServerError(response: .malformedRequest(description: "a hello reply to a daemon request"))
+        case .cache:
+            throw ServerError(response: .malformedRequest(description: "a cache reply to a daemon request"))
         }
     }
 }

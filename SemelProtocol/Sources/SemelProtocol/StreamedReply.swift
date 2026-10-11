@@ -131,7 +131,7 @@ public struct ReplyParts: Sendable {
                 throw ReplyStreamError.mismatchedPart
             }
             return .daemon(whole)
-        case .hello:
+        case .hello, .cache:
             throw ReplyStreamError.mismatchedPart
         }
     }

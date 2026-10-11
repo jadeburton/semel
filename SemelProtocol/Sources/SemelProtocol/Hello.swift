@@ -11,9 +11,10 @@
 
 import Foundation
 
-/// One `semelserv` binary, several modes. A server offers some subset; a client asks for
-/// one. Only `daemon` has messages; the others are named so that `Hello` does not change
-/// when they arrive.
+/// What a peer is, when two processes meet: the engine's server (`daemon`), a shared cache
+/// (`cache`, the `semel-cache` program), a remote runner when it comes. A server offers
+/// some subset and a client asks for one; the role names what the peer is, not which binary
+/// runs it.
 public enum Role: String, Codable, Equatable, Sendable {
     case daemon
     case cache
@@ -74,16 +75,27 @@ public enum ProtocolVersion {
     /// 2026-10-09 error report design, B-145).
     /// Version 27 adds `cache` and `cacheLimit` with their replies, the cache's sizes and
     /// the home's limit (B-148).
-    public static let current = 27
+    /// Version 28 adds the cache role (B-153): `CacheRequest` and `CacheResponse`, a hello's
+    /// `wantsWrite` and the cache's answer to it, and `cacheStoreFailed`.
+    public static let current = 28
 }
 
 public struct Hello: Codable, Equatable, Sendable {
     public let protocolVersion: Int
     public let role:            Role
+    /// Whether the client means to write: what a cache asks of its writers (B-153). A cache
+    /// is read-only to a client by default, and the server decides from its configuration
+    /// whether a client that asks may; the engine's server reads nothing from it.
+    public let wantsWrite:      Bool
 
-    public init(protocolVersion: Int, role: Role) {
+    public init(protocolVersion: Int, role: Role, wantsWrite: Bool) {
         self.protocolVersion = protocolVersion
         self.role            = role
+        self.wantsWrite      = wantsWrite
+    }
+
+    public init(protocolVersion: Int, role: Role) {
+        self.init(protocolVersion: protocolVersion, role: role, wantsWrite: false)
     }
 
     /// A hello that speaks whatever version this module holds.
@@ -97,8 +109,39 @@ public struct Hello: Codable, Equatable, Sendable {
     /// initializer body stays in this module, so every caller reads the constant at the
     /// moment it asks for it (B-84).
     public init(role: Role) {
-        self.init(protocolVersion: ProtocolVersion.current, role: role)
+        self.init(protocolVersion: ProtocolVersion.current, role: role, wantsWrite: false)
     }
+
+    /// A hello that speaks this module's version and says whether it means to write. An
+    /// overload for the same reason as `init(role:)`.
+    public init(role: Role, wantsWrite: Bool) {
+        self.init(protocolVersion: ProtocolVersion.current, role: role, wantsWrite: wantsWrite)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case role
+        case wantsWrite
+    }
+
+    /// `wantsWrite` absent reads as false. A hello is the one message that has to decode
+    /// across versions: a peer speaking an older message set must still be told so, with
+    /// both numbers, and a hello that failed to decode for want of a field would be refused
+    /// as malformed instead.
+    public init(from decoder: any Decoder) throws {
+        let container   = try decoder.container(keyedBy: CodingKeys.self)
+        protocolVersion = try container.decode(Int.self, forKey: .protocolVersion)
+        role            = try container.decode(Role.self, forKey: .role)
+        wantsWrite      = try container.decodeIfPresent(Bool.self, forKey: .wantsWrite) ?? false
+    }
+}
+
+/// What a cache grants a client it accepts.
+public enum CacheAccess: String, Codable, Equatable, Sendable {
+    /// Reads and writes: a client that asked to write, of a server whose writers include it.
+    case readWrite
+    /// Reads only: a client that did not ask to write, or one the server will not let.
+    case readOnly
 }
 
 public enum HelloRejection: Codable, Equatable, Sendable {
@@ -107,8 +150,10 @@ public enum HelloRejection: Codable, Equatable, Sendable {
 }
 
 public enum HelloResponse: Codable, Equatable, Sendable {
-    /// `databasePath` is here because the REPL prints "Graph: …" at startup and the client
-    /// has no local state to take it from.
+    /// The engine's server took the client on. `databasePath` is here because the REPL
+    /// prints "Graph: …" at startup and the client has no local state to take it from.
     case accepted(serverVersion: String, databasePath: String)
+    /// A cache took the client on, with what it may do: read and write, or read only.
+    case cacheAccepted(access: CacheAccess)
     case rejected(reason: HelloRejection)
 }

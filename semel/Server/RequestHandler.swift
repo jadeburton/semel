@@ -104,6 +104,8 @@ public final class RequestHandler {
                 return (.hello(answer(hello)), nil)
             case .daemon(let daemonRequest):
                 return handleDaemon(daemonRequest, body: body, session: session, replyStream: replyStream)
+            case .cache:
+                return (.error(.roleNotOffered(role: .cache)), nil)
             }
         }
     }

@@ -37,6 +37,14 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertEqual(response, .hello(.rejected(reason: .roleNotOffered(role: .cache))))
     }
 
+    /// The engine's server is not a cache: `semel-cache` is (B-153). A cache request sent
+    /// here anyway is refused by role, never taken for something the engine might do.
+    func test_aCacheRequestIsRefusedAsARoleNotOffered() {
+        let (response, _) = handler.handle(.cache(.status), body: nil, session: session)
+
+        XCTAssertEqual(response, .error(.roleNotOffered(role: .cache)))
+    }
+
     /// The version a role-only `Hello` carries is read from `SemelProtocol`, not copied into
     /// this module. A default argument would be copied: the compiler emits the
     /// default-argument generator into every caller's object file with the number folded in,
