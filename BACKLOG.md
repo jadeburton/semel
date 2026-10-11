@@ -735,3 +735,26 @@ footprint, and calling `malloc_zone_pressure_relief` every five seconds changed 
 the pages are dirty and held, by something `heap` does not attribute. Next: run the push of
 a large tree under `MallocStackLogging` and read `malloc_history` for where the burst is
 allocated.
+
+**B-154** `open` — **ibtool is not a function of its input for some documents.** Found
+2026-10-11 by the roster's byte comparison of Sequel Ace's two builds (B-77 item 4), and
+reproduced outside Semel on Xcode 26.6. Two kinds:
+
+- A Mac storyboard. `ProgressWindowController.storyboard` compiles to a `.storyboardc`
+  whose `Info.plist` maps each view controller to a fresh UUID on every run
+  (`NSViewControllerIdentifiersToUUIDs`), and the nibs carry the same UUIDs. With the
+  UUIDs replaced by ones derived from the document and the identifier, the
+  `ProgressWindowController.nib`s of two runs still differ in their NIBArchive header,
+  which suggests the archive's key table is written in a different order each run. Both
+  look canonicalisable the way `Assets.car` is (B-89): UUIDs derived from what they name,
+  and a NIBArchive rewritten with its tables in a stated order, checked by reading back.
+- A xib with ambiguous constraints. `ImportAccessory.xib` (`useAutolayout`, 130
+  constraints) is laid out by ibtool when it compiles, and one text field's frame came out
+  `{{173, 93}}`, `{{173, 117}}`, `{{173, 119}}` or `{{173, 143}}` across eight runs from one
+  file. That is a different nib, not a different encoding of one, so no canonical form
+  exists. The build would have to refuse the document, or lay it out itself.
+  NetNewsWire's thirty-five xibs come out the same on every run.
+
+The roster exempts the four files, the app's `CodeResources` that seals them, and the
+executable whose signature seals that. Next: the storyboard canonicaliser in
+`IBToolCompiler`, which would leave only `ImportAccessory.nib` and what seals it.

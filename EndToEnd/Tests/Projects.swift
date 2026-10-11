@@ -525,6 +525,93 @@ enum Projects {
             }
         })
 
+    /// Sequel Ace's Mac app (B-77 item 4) from a fresh clone with nothing stepped around: one
+    /// project listing its files through groups, Objective-C with Swift beside it and
+    /// headers found the way Xcode's header map finds them, a prefix header, two lex
+    /// scanners, a Core Data model, xibs and a storyboard. Two referenced projects build
+    /// `SPMySQL.framework` and `QueryKit.framework`, linked, embedded and laid out
+    /// versioned; the vendored `ShortcutRecorder.framework` is embedded. Firebase's Analytics
+    /// and Crashlytics are built from seventeen vendored packages, 957 MB of them, with
+    /// Objective-C importing the modules SwiftPM writes. The `SequelAceTunnelAssistant`
+    /// tool is signed by itself and copied beside the executable. Signed ad-hoc, verified
+    /// deep and strict, and inspected, not run. A cold build takes about ten minutes on a
+    /// loaded machine and `prepare` under a minute, so the run builds twice and leaves the
+    /// second mount and the perturbed build to the fixtures.
+    static let sequelAce = Project(
+        name: "sequel-ace",
+        source: .git(url: "https://github.com/Sequel-Ace/Sequel-Ace.git",
+                     commit: "1f2798da98d7cd8eef5cb5be97ce23de06733202",
+                     subfolder: "."),
+        buildFolder: "sequel-ace",
+        platform: "macos",
+        expectedProducts: [
+            "Sequel Ace.app/Contents/MacOS/Sequel Ace",
+            "Sequel Ace.app/Contents/MacOS/SequelAceTunnelAssistant",
+            "Sequel Ace.app/Contents/Info.plist",
+            "Sequel Ace.app/Contents/PkgInfo",
+            "Sequel Ace.app/Contents/Resources/Assets.car",
+            "Sequel Ace.app/Contents/Resources/AppIcon.icns",
+            "Sequel Ace.app/Contents/Resources/MainMenu.nib",
+            "Sequel Ace.app/Contents/Resources/ProgressWindowController.storyboardc/Info.plist",
+            "Sequel Ace.app/Contents/Resources/SPUserManager.mom",
+            "Sequel Ace.app/Contents/Resources/Firebase_FirebaseCrashlytics.bundle/Contents/Info.plist",
+            "Sequel Ace.app/Contents/Frameworks/SPMySQL.framework/Versions/A/SPMySQL",
+            "Sequel Ace.app/Contents/Frameworks/SPMySQL.framework/Versions/A/libmysqlclient.24.dylib",
+            "Sequel Ace.app/Contents/Frameworks/QueryKit.framework/Versions/A/QueryKit",
+            "Sequel Ace.app/Contents/Frameworks/ShortcutRecorder.framework/Versions/A/ShortcutRecorder",
+        ],
+        // A cold build here took 610 s with four jobs on a machine busy with other work;
+        // `prepare` 32-43 s over a warm SwiftPM cache. Each has this budget, which leaves
+        // room for a cold cache's 957 MB of fetching and for the nightly's runner, which is
+        // also a workstation.
+        buildTimeout: 25 * 60,
+        // ibtool is not a function of its input for two of the app's documents (B-154): the
+        // storyboard's compile names its view controllers by fresh UUIDs and orders its
+        // nibs' keys afresh, and `ImportAccessory.xib`'s ambiguous constraints are laid out
+        // to one of several frames. The app's seal over its resources, and so the
+        // executable's signature, differ with them. A bug report, not a fix.
+        mayDiffer: ["Sequel Ace.app/Contents/Resources/ImportAccessory.nib",
+                    "Sequel Ace.app/Contents/Resources/ProgressWindowController.storyboardc/Info.plist",
+                    "Sequel Ace.app/Contents/Resources/ProgressWindowController.storyboardc/ProgressViewController.nib",
+                    "Sequel Ace.app/Contents/Resources/ProgressWindowController.storyboardc/ProgressWindowController.nib",
+                    "Sequel Ace.app/Contents/_CodeSignature/CodeResources",
+                    "Sequel Ace.app/Contents/MacOS/Sequel Ace"],
+        twoMounts: false,
+        perturbed: false,
+        onlyUnder: "Sequel Ace.app",
+        // The two built frameworks' binaries are libraries, which the linker leaves without
+        // the x bits (`SwiftLinker`), where Xcode's are 755: loaded all the same.
+        executables: [
+            "Sequel Ace.app/Contents/MacOS/Sequel Ace",
+            "Sequel Ace.app/Contents/MacOS/SequelAceTunnelAssistant",
+        ],
+        exported: { out in
+            let app = out.appendingPathComponent("Sequel Ace.app")
+            let executable = app.appendingPathComponent("Contents/MacOS/Sequel Ace")
+            // The frameworks the referenced projects build, by the install names Xcode
+            // gives them, and the vendored one through the runpath.
+            for installName in ["@executable_path/../Frameworks/SPMySQL.framework/Versions/A/SPMySQL",
+                                "@executable_path/../Frameworks/QueryKit.framework/Versions/A/QueryKit",
+                                "@rpath/ShortcutRecorder.framework/Versions/A/ShortcutRecorder"] {
+                try AppInspection.checkLoadsEmbeddedFramework(executable: executable, installName: installName)
+            }
+            try SignedBundleCheck.verified(app)
+            for signed in ["Contents/MacOS/Sequel Ace", "Contents/Frameworks/SPMySQL.framework/Versions/A/SPMySQL",
+                           "Contents/Frameworks/QueryKit.framework/Versions/A/QueryKit"] {
+                try SignedBundleCheck.signedAsPartOfTheBundle(app.appendingPathComponent(signed))
+            }
+            // The tool is signed by itself, with the hardened runtime and its own sandbox.
+            let tool = app.appendingPathComponent("Contents/MacOS/SequelAceTunnelAssistant").path
+            let details = try AppInspection.run(["codesign", "-dv", tool])
+            guard details.contains("flags=0x10002(adhoc,runtime)") else {
+                throw EndToEndFailure(step: "codesign -dv", message: "the tunnel assistant is not signed ad-hoc with the runtime:\n\(details)")
+            }
+            let entitlements = try AppInspection.run(["codesign", "-d", "--entitlements", ":-", tool])
+            guard entitlements.contains("com.apple.security.inherit") else {
+                throw EndToEndFailure(step: "codesign -d --entitlements", message: "the tunnel assistant lacks its entitlements:\n\(entitlements)")
+            }
+        })
+
     /// Point-Free's swift-dependencies (B-80 item 3) at the commit its `1.17.0` tag names,
     /// the last whose `Package.swift` a Swift 6.3 toolchain reads (1.17.1's asks for tools
     /// 6.4). Its `DependenciesMacrosPlugin` is a package macro built from swift-syntax — every
@@ -546,6 +633,6 @@ enum Projects {
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftCPackage, swiftHelloApp, swiftBinaryTargetApp,
                                       swiftMacroApp]
     static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, simdjson, foodTruck, foodTruckMac, netNewsWireMac, netNewsWireIOS,
-                                      codeEdit, swiftDependencies]
+                                      codeEdit, sequelAce, swiftDependencies]
     static let all: [Project] = fixtures + external
 }
