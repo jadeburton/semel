@@ -28,39 +28,43 @@ import SQLite3
 ///
 /// GRDB drops a statement from its cache when a step fails, since SQLite cannot reset one
 /// that failed, so a failure here costs a prepare on the next call and nothing else.
+///
+/// Public because one set of queries lives outside this package: the cache's, in
+/// `SemelCore`'s `SQLiteCacheStore`, which speaks the cache's types and so cannot live
+/// below the node kit.
 extension Database {
 
     /// Every row of `sql`.
-    func cachedRows(_ sql: String, arguments: StatementArguments = StatementArguments()) throws -> [Row] {
+    public func cachedRows(_ sql: String, arguments: StatementArguments = StatementArguments()) throws -> [Row] {
         try Row.fetchAll(cachedStatement(sql: sql), arguments: arguments)
     }
 
     /// Every row of `sql`, as records.
-    func cachedRecords<Record: FetchableRecord>(_ sql: String,
+    public func cachedRecords<Record: FetchableRecord>(_ sql: String,
                                                 arguments: StatementArguments = StatementArguments()) throws -> [Record] {
         try Record.fetchAll(cachedStatement(sql: sql), arguments: arguments)
     }
 
     /// The first row of `sql`, as a record, or nil.
-    func cachedRecord<Record: FetchableRecord>(_ sql: String,
+    public func cachedRecord<Record: FetchableRecord>(_ sql: String,
                                                arguments: StatementArguments = StatementArguments()) throws -> Record? {
         try Record.fetchOne(cachedStatement(sql: sql), arguments: arguments)
     }
 
     /// The first column of the first row of `sql`, or nil.
-    func cachedValue<Value: DatabaseValueConvertible & StatementColumnConvertible>(
+    public func cachedValue<Value: DatabaseValueConvertible & StatementColumnConvertible>(
         _ sql: String, arguments: StatementArguments = StatementArguments()) throws -> Value? {
         try Value.fetchOne(cachedStatement(sql: sql), arguments: arguments)
     }
 
     /// The first column of every row of `sql`.
-    func cachedValues<Value: DatabaseValueConvertible & StatementColumnConvertible>(
+    public func cachedValues<Value: DatabaseValueConvertible & StatementColumnConvertible>(
         _ sql: String, arguments: StatementArguments = StatementArguments()) throws -> [Value] {
         try Value.fetchAll(cachedStatement(sql: sql), arguments: arguments)
     }
 
     /// Runs `sql`, which changes rows and returns none.
-    func cachedExecute(_ sql: String, arguments: StatementArguments = StatementArguments()) throws {
+    public func cachedExecute(_ sql: String, arguments: StatementArguments = StatementArguments()) throws {
         try cachedStatement(sql: sql).execute(arguments: arguments)
     }
 }

@@ -80,7 +80,8 @@ final class ManifestPushScaleTests: XCTestCase {
         engine = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
         engine.startProcessingLoop()
-        let handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        let handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite",
+                                     engineConfigurationFile: URL(fileURLWithPath: "/tmp/test-semel.engine.config"))
         connection  = CountingConnection(InProcessConnection(handler: handler))
         interpreter = CommandInterpreter(connection: connection, baseDirectory: externalRoot.path)
         interpreter.output = { [weak self] line in self?.lines.append(line) }

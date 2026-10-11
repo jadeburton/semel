@@ -12,6 +12,7 @@
 
 import Foundation
 import SemelProtocol
+import SemelTransport
 
 public final class InProcessConnection: SemelConnection, EventSink {
 

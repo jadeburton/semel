@@ -9,6 +9,7 @@ import SemelCore
 import SemelDatabaseModels
 import SemelNodeKit
 import SemelProtocol
+import SemelTransport
 
 extension RequestHandler {
 

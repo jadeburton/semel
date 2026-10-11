@@ -1,25 +1,14 @@
 // ReplyStream.swift
 // SemelServer
 //
-// Where a handler sends the parts of a reply ahead of its last (B-137), and the slicer that
-// decides when a part is due. Three replies stream — `list`, `remove` and `errors`, the
+// The slicer that decides when a part of a reply is due (B-137); where a part goes is the
+// transport's `ReplyStream`. Three replies stream — `list`, `remove` and `errors`, the
 // ones that carry the graph in their JSON — and the rule on `DaemonResponse` is the
 // contract: the same case repeated, every part but the last marked as continuing.
 
 import Foundation
 import SemelProtocol
-
-/// One request's way back to its client for the parts of a streamed reply. A value per
-/// request rather than one per connection, because a part has to carry the request's
-/// correlation ID and a connection may have several requests in hand at once (`wait`
-/// runs on its own thread).
-public protocol ReplyStream: AnyObject {
-
-    /// Sends one part ahead of the reply's last. Throws when the part cannot be sent,
-    /// which ends the request: the handler answers its error as the last frame. Only a
-    /// case that `mayStream` is a part; sending another is a bug, caught in a debug build.
-    func send(part: Response) throws
-}
+import SemelTransport
 
 /// Fills one streamable reply item by item, and sends what it holds as a part whenever the
 /// next item would take the reply over a frame's JSON section, so a reply's size is bounded

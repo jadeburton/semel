@@ -28,6 +28,42 @@ public struct ByteCount: Codable, Hashable, Comparable, Sendable, CustomStringCo
         lhs.bytes < rhs.bytes
     }
 
+    // MARK: - As a person writes one
+
+    /// A size as a person writes one: bytes, or a number with `K`, `M` or `G` after it, in
+    /// either case, binary as every size Semel prints is — `512M`, `1.5G`, `20g`. The prompt's
+    /// `cache limit <size>` and the home's `semel.engine.config` read this one form, so a
+    /// value a person copies from one to the other means the same in both.
+    public init?(parsing text: String) {
+        let multipliers: [Character: Int] = ["K": Self.kibibyte, "M": Self.mebibyte, "G": Self.gibibyte]
+        var number = Substring(text)
+        var multiplier = 1
+        if let last = text.last, let unit = multipliers[Character(last.uppercased())] {
+            multiplier = unit
+            number = number.dropLast()
+        }
+        guard !number.isEmpty, number.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") }),
+              let value = Double(number), value.isFinite, value >= 0 else {
+            return nil
+        }
+        let bytes = value * Double(multiplier)
+        guard bytes < Double(Int.max) else {
+            return nil
+        }
+        self.init(bytes: Int(bytes.rounded()))
+    }
+
+    /// The size in that form, exactly: the largest unit that divides it, so it reads back as
+    /// the same number of bytes — `10G`, `1536M`, `4097`. `description` rounds, for a reader;
+    /// this is for a file.
+    public var exactText: String {
+        let units: [(divisor: Int, suffix: String)] = [(Self.gibibyte, "G"), (Self.mebibyte, "M"), (Self.kibibyte, "K")]
+        for unit in units where bytes > 0 && bytes % unit.divisor == 0 {
+            return "\(bytes / unit.divisor)\(unit.suffix)"
+        }
+        return "\(bytes)"
+    }
+
     /// One decimal in the largest binary unit that keeps the number at least one: `512 B`,
     /// `28.6 MB`, `10.0 GB`. Binary units under the decimal names, as every size the
     /// engine reports is written.

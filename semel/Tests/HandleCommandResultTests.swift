@@ -6,6 +6,7 @@
 @testable import SemelCLI
 import Foundation
 import SemelProtocol
+import SemelTransport
 import XCTest
 
 /// A connection that fails every send, so the interpreter's catch-all reporting path runs.

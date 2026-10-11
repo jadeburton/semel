@@ -33,7 +33,8 @@ final class ExplainRequestTests: XCTestCase {
         engine  = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
         engine.startProcessingLoop()
-        handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite",
+                                 engineConfigurationFile: URL(fileURLWithPath: "/tmp/test-semel.engine.config"))
         engine.waitUntilIdleBlocking()
     }
 
@@ -123,7 +124,8 @@ final class ExplainRequestTests: XCTestCase {
     func test_withNoSettleBehindItTheAnswerIsNil() throws {
         let fresh = try BuildEngine(database: try DatabaseLayer(), startProcessingLoop: false)
         BuildEngine.shared = fresh
-        let freshHandler = RequestHandler(engine: fresh, database: fresh.database, databasePath: "/tmp/fresh.sqlite")
+        let freshHandler = RequestHandler(engine: fresh, database: fresh.database, databasePath: "/tmp/fresh.sqlite",
+                                          engineConfigurationFile: URL(fileURLWithPath: "/tmp/test-semel.engine.config"))
         defer { BuildEngine.shared = engine }
         _ = freshHandler.handle(.daemon(.pushFile(path: "a.txt", mode: 0o644)), body: Data("a".utf8), session: session)
 

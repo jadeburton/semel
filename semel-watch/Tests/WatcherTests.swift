@@ -40,7 +40,8 @@ final class WatcherTests: XCTestCase {
         BuildEngine.shared = engine
         engine.startProcessingLoop()
         self.engine = engine
-        handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite",
+                                 engineConfigurationFile: URL(fileURLWithPath: "/tmp/test-semel.engine.config"))
     }
 
     override func tearDownWithError() throws {

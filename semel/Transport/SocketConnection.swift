@@ -1,7 +1,10 @@
 // SocketConnection.swift
-// semel
+// SemelTransport
 //
-// SemelConnection over a Unix-domain socket. `send` is synchronous: it registers a waiter
+// SemelConnection over a socket: a Unix-domain one to the engine on this machine, or TCP to
+// a server on another. Every client of a Semel server uses this one implementation of the
+// wire — the prompt, the watcher, the monitor, and an engine reaching a cache. `send` is
+// synchronous: it registers a waiter
 // under the correlation ID, writes the frame, and parks on a semaphore until the reader
 // delivers that ID's reply — each part of a streamed one, then the last. Several threads
 // may be parked at once, each on its own waiter, which is the shape the engine's cache
@@ -13,12 +16,12 @@
 import Foundation
 import Network
 import SemelProtocol
-import SemelTransport
 
 /// `LocalizedError` as well as `CustomStringConvertible`: the interpreter prints
 /// `localizedDescription`, and a Swift error that does not conform reaches the prompt as
 /// "the operation couldn't be completed", a type name and a case number.
 public enum ConnectionError: Error, Equatable, CustomStringConvertible, LocalizedError {
+    /// Nothing answered at the endpoint: a socket path, or `host:port`.
     case unavailable(path: String, underlying: String)
     case pathTooLong(path: String, length: Int, limit: Int)
     case closed
@@ -77,19 +80,26 @@ public final class SocketConnection: SemelConnection {
 
     // MARK: - Connecting
 
-    /// Opens the socket and waits until it is ready, or fails with the path so the user
-    /// knows what to start. Nothing is sent; the caller sends `hello`.
+    /// Opens the socket at `path` and waits until it is ready: `connect(to: .unix(path:))`.
     public static func connect(to path: String, timeout: TimeInterval = 5) throws -> SocketConnection {
+        try connect(to: .unix(path: path), timeout: timeout)
+    }
+
+    /// Opens the connection and waits until it is ready, or fails naming the endpoint so the
+    /// user knows what to start. Nothing is sent; the caller sends `hello`.
+    public static func connect(to endpoint: Endpoint, timeout: TimeInterval = 5) throws -> SocketConnection {
         // Named on its own: an over-long path is a misconfiguration to correct, not a
         // server to start.
-        do {
-            try UnixSocketPath.check(path)
-        } catch {
-            throw ConnectionError.pathTooLong(path: path,
-                                              length: path.utf8.count,
-                                              limit: UnixSocketPath.maximumLength)
+        if case .unix(let path) = endpoint {
+            do {
+                try UnixSocketPath.check(path)
+            } catch {
+                throw ConnectionError.pathTooLong(path: path,
+                                                  length: path.utf8.count,
+                                                  limit: UnixSocketPath.maximumLength)
+            }
         }
-        let connection = NWConnection(to: .unix(path: path), using: .tcp)
+        let connection = NWConnection(to: endpoint.networkEndpoint, using: .tcp)
         let queue      = DispatchQueue(label: "semel.socket-connection")
         let ready      = DispatchSemaphore(value: 0)
         var failure: String?
@@ -120,7 +130,8 @@ public final class SocketConnection: SemelConnection {
         let reason  = queue.sync { failure }
         guard arrived == .success, reason == nil else {
             connection.cancel()
-            throw ConnectionError.unavailable(path: path, underlying: reason ?? "timed out after \(Int(timeout)) s")
+            throw ConnectionError.unavailable(path: endpoint.description,
+                                              underlying: reason ?? "timed out after \(Int(timeout)) s")
         }
 
         // The stream takes over the state handler from here.

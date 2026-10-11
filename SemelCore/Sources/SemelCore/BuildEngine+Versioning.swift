@@ -74,7 +74,7 @@ extension BuildEngine {
             try foldTheDerivedValuesOfEveryPreservedFolder()
             try giveEveryPreservedFileItsMode()
             // The one reset nobody asked for, so the one whose copy would otherwise appear
-            // in the home unexplained. This runs from `BuildEngine.start()`, before a
+            // in the home unexplained. This runs from `BuildEngine.start(cacheLimit:)`, before a
             // server installs its reporter and before any client can be listening, so the
             // line goes to `noticeReporter`'s default and lands on the process's own
             // stdout — `semelserv`'s terminal. That default is the channel here, chosen

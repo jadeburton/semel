@@ -34,7 +34,8 @@ final class CheckpointTests: XCTestCase {
         try TypeRegistry.register(types: [CountingLineCounter.self])
         BuildEngine.shared = engine
         engine.startProcessingLoop()
-        let handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        let handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite",
+                                     engineConfigurationFile: URL(fileURLWithPath: "/tmp/test-semel.engine.config"))
         interpreter = CommandInterpreter(connection: InProcessConnection(handler: handler), baseDirectory: externalRoot.path)
         _ = try interpreter.connect()
         interpreter.output = { [lines] in lines.append($0) }

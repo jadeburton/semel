@@ -14,6 +14,9 @@
       location = "group:SemelProtocol">
    </FileRef>
    <FileRef
+      location = "group:SemelCache">
+   </FileRef>
+   <FileRef
       location = "group:SemelSwift">
    </FileRef>
    <FileRef

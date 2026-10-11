@@ -15,6 +15,7 @@
 import SemelDatabaseModels
 import SemelNodeKit
 import SemelProtocol
+import SemelTransport
 import XCTest
 
 final class ServerTests: RequestHandlerTestCase {
@@ -394,7 +395,8 @@ final class ServerTests: RequestHandlerTestCase {
             DatabaseLayer.shared = fixtureDatabase
         }
         let liveHandler = RequestHandler(engine: liveEngine, database: liveDatabase,
-                                         databasePath: "/tmp/test-graph.sqlite")
+                                         databasePath: "/tmp/test-graph.sqlite",
+                                         engineConfigurationFile: URL(fileURLWithPath: "/tmp/test-semel.engine.config"))
         let livePath    = directory.appendingPathComponent("live.sock").path
         let liveServer  = Server(handler: liveHandler, socketPath: livePath)
         try liveServer.start()
@@ -509,7 +511,8 @@ final class ServerTests: RequestHandlerTestCase {
             try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: blockedDirectory.path)
         }
 
-        let blockedHandler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        let blockedHandler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite",
+                                            engineConfigurationFile: URL(fileURLWithPath: "/tmp/test-semel.engine.config"))
         let blockedServer  = Server(handler: blockedHandler, socketPath: blockedPath)
 
         XCTAssertThrowsError(try blockedServer.start()) { error in
@@ -603,7 +606,8 @@ final class ServerTests: RequestHandlerTestCase {
         for (what, remove) in removals {
             let home = directory.appendingPathComponent("early", isDirectory: true)
             try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-            let earlyHandler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+            let earlyHandler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite",
+                                              engineConfigurationFile: URL(fileURLWithPath: "/tmp/test-semel.engine.config"))
             let early = Server(handler: earlyHandler, socketPath: home.appendingPathComponent("early.sock").path)
             let reported = expectation(description: "removal of \(what) reported")
             early.onSocketFileRemoved = { reported.fulfill() }

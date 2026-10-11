@@ -50,7 +50,8 @@ final class ToolsCommandTests: XCTestCase {
         // The real registrations, so the namespaces printed are the ones the toolchains own.
         try SemelSwift.register()
         try SemelClang.register()
-        let handler = RequestHandler(engine: BuildEngine.shared, database: database, databasePath: "/tmp/test-graph.sqlite")
+        let handler = RequestHandler(engine: BuildEngine.shared, database: database, databasePath: "/tmp/test-graph.sqlite",
+                                     engineConfigurationFile: URL(fileURLWithPath: "/tmp/test-semel.engine.config"))
         connection  = InProcessConnection(handler: handler)
         context     = TestCommandContext(connection: connection, baseDirectory: NSTemporaryDirectory())
     }

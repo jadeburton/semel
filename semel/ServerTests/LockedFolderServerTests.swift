@@ -14,6 +14,7 @@
 import SemelDatabaseModels
 import SemelNodeKit
 import SemelProtocol
+import SemelTransport
 import XCTest
 
 final class LockedFolderServerTests: RequestHandlerTestCase {

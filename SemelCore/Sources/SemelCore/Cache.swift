@@ -4,8 +4,14 @@
 //
 //  Created by Jade Burton on 14.06.26.
 //
+//  The engine's side of the cache: the material a node's key is taken of, built from the
+//  node and its inputs, and the two hooks a run goes through — the lookup before it and
+//  the write after. What an entry is, how a key is hashed and how the store is kept are
+//  `SemelCache`'s, shared with a cache server.
+//
 
 import Foundation
+import SemelCache
 import SemelNodeKit
 
 extension Node {
@@ -108,11 +114,8 @@ extension Node {
             return nil
         }
 
-        guard let cacheEntry = try database.cacheEntry.select(hash: cacheKey) else {
-            return nil
-        }
-
-        guard let decodedCacheEntry = try? JSONDecoder().decode(ProcessCacheEntry.self, from: cacheEntry.content) else {
+        // A row whose bytes are not an entry this Semel reads is a miss, as no row is.
+        guard let decodedCacheEntry = try database.cacheEntry.entry(forKey: cacheKey) else {
             return nil
         }
 
@@ -180,8 +183,6 @@ extension Node {
               Self.isWorthStoring(outputValues: output.outputValues, keyMaterial: keyMaterial) else {
             return
         }
-        let cacheKey = try keyMaterial.cacheKey()
-
         if descriptor.staticInputPorts.isEmpty {
             return
         }
@@ -193,17 +194,14 @@ extension Node {
         let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues,
                                            specTable: output.specTable,
                                            keyMaterial: keyMaterial)
-        let cacheEntryData = Data(try cacheEntry.toJSON().utf8)
 
         // Replaces rather than refuses: a key whose row this Semel could not read is a key
         // it just missed on, and the build that missed is the one thing that can put a
         // readable entry there.
-        try database.cacheEntry.save(hash: cacheKey,
-                                     nodeType: keyMaterial.nodeType,
-                                     cost: Int(processingDuration * 1000.0),
-                                     content: cacheEntryData,
-                                     objects: BuildEngine.heldObjects(outputValues: output.outputValues,
-                                                                      in: DataObjectStore.shared))
+        try database.cacheEntry.put(cacheEntry,
+                                    cost: CacheCost.milliseconds(of: processingDuration),
+                                    objects: BuildEngine.heldObjects(outputValues: output.outputValues,
+                                                                     in: DataObjectStore.shared))
     }
 }
 
@@ -245,129 +243,6 @@ extension Node {
             return false
         }
     }
-}
-
-/// One line of a key's material: the word that says what the line is about, and the thing
-/// itself as JSON. Keys sorted so the text is the same on two machines, slashes left alone
-/// so a wire's path reads as the path it is, and JSON rather than plain text so a value
-/// holding a newline stays on its line and cannot forge another.
-private func cacheKeyLine(_ keyword: String, _ item: some Encodable) throws -> String {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-    return "\(keyword) \(String(decoding: try encoder.encode(item), as: UTF8.self))"
-}
-
-/// One wired input as it contributes to a cache key: which port and which wire it arrived
-/// on, and what it carried. All three are part of the build's identity.
-///
-/// Coded by hand so that a line reads `"value":"<hash>"` rather than the two wrappers the
-/// synthesized encoding of a two-case enum over a string gives — the field a reader of a
-/// diff scans is the one worth keeping short. A wire carrying no value keeps its reason
-/// whole under a key of its own: which case it is *and* what that case carries, because
-/// two failures with different messages are two different builds and must not hash alike.
-struct CacheKeyEntry: Codable {
-    let port: String
-    let wire: String
-    let value: NodeValue
-
-    init(port: String, wire: String, value: NodeValue) {
-        self.port  = port
-        self.wire  = wire
-        self.value = value
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case port
-        case wire
-        case value
-        case noValue
-    }
-
-    func encode(to encoder: any Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(port, forKey: .port)
-        try container.encode(wire, forKey: .wire)
-        switch value {
-        case .value(let hash):
-            try container.encode(hash, forKey: .value)
-        case .noValue(let reason):
-            try container.encode(reason, forKey: .noValue)
-        }
-    }
-
-    init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        port = try container.decode(String.self, forKey: .port)
-        wire = try container.decode(String.self, forKey: .wire)
-        if let hash = try container.decodeIfPresent(DataObjectHash.self, forKey: .value) {
-            value = .value(hash)
-        } else {
-            value = .noValue(reason: try container.decode(NoValueReason.self, forKey: .noValue))
-        }
-    }
-}
-
-/// One of the node's own properties as it contributes to a cache key.
-struct CacheKeyProperty: Codable {
-    let key: String
-    let value: String
-}
-
-/// What a node reads from outside its inputs, as the node itself describes it — an SDK's
-/// fingerprint and the like. A struct rather than a bare string so the text is JSON on one
-/// line of the material, whatever the node put in it.
-struct CacheKeyFingerprint: Codable {
-    let fingerprint: String
-}
-
-/// Everything a cache key is taken of, as structure. Stored with the entry the key names,
-/// so a mismatch between two builds is a diff of two of these and a key can be recomputed
-/// where neither graph is.
-///
-/// The order of `inputs` is part of the key and is the order `buildCacheKeyMaterial`
-/// builds them in — static ports sorted, then dynamic ports sorted, wires sorted within
-/// each port. An array, not a dictionary, so what is stored is the order that was hashed.
-struct CacheKeyMaterial: Codable {
-    let nodeType: String
-    let implementationVersion: Int
-    let properties: [CacheKeyProperty]
-    /// What `Node.cacheKeyMaterial(input:)` declared, or nil where a node reads nothing
-    /// outside its inputs — which is most of them.
-    let fingerprint: String?
-    let inputs: [CacheKeyEntry]
-
-    /// The text the key is the hash of: one line per thing the key covers, each named by
-    /// the word it starts with and each carrying JSON, so a value holding a newline cannot
-    /// forge a line and two materials differing in one input differ in one line.
-    func canonicalText() throws -> String {
-        var lines = ["node \(nodeType)@\(implementationVersion)"]
-        lines += try properties.map { try cacheKeyLine("property", $0) }
-        if let fingerprint {
-            lines.append(try cacheKeyLine("fingerprint", CacheKeyFingerprint(fingerprint: fingerprint)))
-        }
-        lines += try inputs.map { try cacheKeyLine("input", $0) }
-        return lines.joined(separator: "\n") + "\n"
-    }
-
-    /// The cache key itself. The one place a key is computed.
-    func cacheKey() throws -> String {
-        Sha256.hash(Array(try canonicalText().utf8))
-    }
-}
-
-/// A cached ProcessOutput as stored, with the material its key was taken of. Lives with
-/// the cache rather than with the node protocol. A field added here is non-optional, so an
-/// entry written before it fails to decode and misses, rather than decoding short with a
-/// default and hitting wrongly.
-///
-/// The demanded specs are stored as a table, each distinct spec node once (B-121): spelled
-/// out as trees, one entry of a product builder's held the settings chain thousands of
-/// times over and ran to 15 MB. The table is the one the run's output was applied from,
-/// and a hit applies it again as it stands.
-struct ProcessCacheEntry: Codable {
-    let outputValues: [String: NodeValue]
-    let specTable: GraphSpecTable
-    let keyMaterial: CacheKeyMaterial
 }
 
 /// An output as the graph applies it: the values for the node's ports, and its demands as

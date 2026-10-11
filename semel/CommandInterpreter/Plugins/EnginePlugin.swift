@@ -421,26 +421,10 @@ final class EnginePlugin: CommandPlugin {
         return line
     }
 
-    /// A size as typed at the prompt: bytes, or a number with `K`, `M` or `G` after it, in
-    /// either case, binary as every size Semel prints is — `512M`, `1.5G`, `20g`. The only
-    /// place a suffix is read: what reaches the server is bytes.
+    /// A size as typed at the prompt: `ByteCount(parsing:)`, the one reader of the form,
+    /// which `semel.engine.config` is read with too. What reaches the server is bytes.
     static func size(parsing text: String) -> ByteCount? {
-        let multipliers: [Character: Int] = ["K": ByteCount.kibibyte, "M": ByteCount.mebibyte, "G": ByteCount.gibibyte]
-        var number = Substring(text)
-        var multiplier = 1
-        if let last = text.last, let unit = multipliers[Character(last.uppercased())] {
-            multiplier = unit
-            number = number.dropLast()
-        }
-        guard !number.isEmpty, number.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") }),
-              let value = Double(number), value.isFinite, value >= 0 else {
-            return nil
-        }
-        let bytes = value * Double(multiplier)
-        guard bytes < Double(Int.max) else {
-            return nil
-        }
-        return ByteCount(bytes: Int(bytes.rounded()))
+        ByteCount(parsing: text)
     }
 
     // MARK: - check

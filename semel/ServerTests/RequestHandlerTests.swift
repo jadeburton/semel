@@ -164,6 +164,32 @@ final class RequestHandlerTests: RequestHandlerTestCase {
                        .cacheLimit(limit: ByteCount.gibibytes(20), isDefault: false, trim: nil))
     }
 
+    /// The limit set at the prompt is the home's: written to `semel.engine.config`, and
+    /// read back from there by the next server, whose engine starts with it — here the
+    /// same engine, its limit forgotten first as a new process would not have it.
+    func test_aLimitSetIsWrittenToTheHomeAndTheNextStartReadsItBack() throws {
+        try daemon(.cacheLimit(limit: ByteCount.gibibytes(20)))
+
+        let text = try String(contentsOf: engineConfigurationFile, encoding: .utf8)
+        XCTAssertTrue(text.hasPrefix("# "), "the file says what it is")
+        XCTAssertTrue(text.contains("\ncache.limit  20G\n"), text)
+
+        engine.applyCacheLimit(nil)
+        XCTAssertEqual(try daemon(.cacheLimit(limit: nil)).0,
+                       .cacheLimit(limit: BuildEngine.defaultCacheLimit, isDefault: true, trim: nil))
+
+        engine.applyCacheLimit(try EngineConfiguration.read(from: engineConfigurationFile).cacheLimit)
+        XCTAssertEqual(try daemon(.cacheLimit(limit: nil)).0,
+                       .cacheLimit(limit: ByteCount.gibibytes(20), isDefault: false, trim: nil))
+    }
+
+    /// Asking for the limit writes nothing: a home that never set one has no file.
+    func test_askingForTheLimitLeavesTheHomeAlone() throws {
+        try daemon(.cacheLimit(limit: nil))
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: engineConfigurationFile.path))
+    }
+
     /// A limit below what the cache holds evicts at once and says what it evicted.
     func test_aLimitBelowWhatTheCacheHoldsEvictsAtOnce() throws {
         try storeOneCacheEntry()

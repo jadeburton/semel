@@ -42,8 +42,9 @@ let package = Package(
             ],
             path: "semel/CommandInterpreter"
         ),
-        // The server half: owns the engine behind one request handler. No sockets here;
-        // the listener arrives with the semelserv executable.
+        // The server half: owns the engine behind one request handler, and answers each
+        // client through the transport's listener with a session of its own. What a request
+        // means is here; how it travels is the transport's.
         .target(
             name: "SemelServer",
             dependencies: [
@@ -54,8 +55,12 @@ let package = Package(
             ],
             path: "semel/Server"
         ),
-        // Frames over a socket. Both halves use it, so it is one target; it is not part of
-        // SemelProtocol because the protocol package stays transport-free.
+        // Frames over a socket, a Unix-domain one or TCP: the connection every client uses,
+        // with correlation, streamed replies and pipelining, and the listener every server
+        // uses, with one connection per client. One implementation of the wire for the
+        // prompt, the watcher, the monitor, the engine's server and a cache's. It is not part
+        // of SemelProtocol because the protocol package stays transport-free, and it knows
+        // `Request` and `Response` but not what a server does with them.
         .target(
             name: "SemelTransport",
             dependencies: [
@@ -194,6 +199,7 @@ let package = Package(
             dependencies: [
                 "SemelWatch",
                 "SemelCLI",
+                "SemelTransport",
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
             ],
@@ -221,6 +227,7 @@ let package = Package(
             name: "SemelMonitor",
             dependencies: [
                 "SemelCLI",
+                "SemelTransport",
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
             ],

@@ -9,6 +9,7 @@
 import Foundation
 import SemelCLI
 import SemelProtocol
+import SemelTransport
 
 public final class EngineSubscription {
 

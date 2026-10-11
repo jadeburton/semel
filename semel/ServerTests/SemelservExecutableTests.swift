@@ -4,14 +4,17 @@
 //
 //  The binary, as a subprocess, with SEMEL_HOME and SEMEL_SOCKET pointing into a
 //  temporary directory so it never opens the user's graph or socket. What is pinned:
-//  it comes up and answers hello, a second instance is refused, and SIGTERM stops it
-//  cleanly with the socket file gone.
+//  it comes up and answers hello, a second instance is refused, SIGTERM stops it cleanly
+//  with the socket file gone, and the cache limit is read from and written to the home's
+//  engine settings.
 //
 
 import Foundation
 @testable import SemelCLI
+import SemelNodeKit
 import SemelProtocol
 import SemelTestSupport
+import SemelTransport
 import XCTest
 
 final class SemelservExecutableTests: XCTestCase {
@@ -78,6 +81,50 @@ final class SemelservExecutableTests: XCTestCase {
         server.terminate() // SIGTERM
         XCTAssertEqual(server.waitForExit(timeout: 30), 0)
         XCTAssertFalse(FileManager.default.fileExists(atPath: socketPath))
+    }
+
+    /// The cache limit is the home's, in `semel.engine.config`: a server started over a home
+    /// whose file names one starts with it, and one set at the prompt is in the file when
+    /// the server has gone.
+    func test_theCacheLimitRoundTripsThroughTheHomesEngineSettings() throws {
+        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: binary.path),
+                          "semelserv is not built beside the test bundle at \(binary.path)")
+        let socketPath = try XCTUnwrap(self.socketPath)
+        let settings   = home.appendingPathComponent("semel.engine.config")
+        try Data("# by hand\ncache.limit  3M\n".utf8).write(to: settings)
+
+        let server = try launch()
+        XCTAssertTrue(SocketWait.wait(forSocketAt: socketPath), "the server never created \(socketPath)")
+        let client = try SocketConnection.connect(to: socketPath)
+        _ = try client.send(.hello(Hello(role: .daemon)), body: nil)
+
+        let (asked, _) = try client.send(.daemon(.cacheLimit(limit: nil)), body: nil)
+        XCTAssertEqual(asked, .daemon(.cacheLimit(limit: ByteCount(bytes: 3 * ByteCount.mebibyte), isDefault: false, trim: nil)))
+
+        _ = try client.send(.daemon(.cacheLimit(limit: ByteCount.gibibytes(20))), body: nil)
+        client.close()
+        server.terminate()
+        XCTAssertEqual(server.waitForExit(timeout: 30), 0)
+
+        let written = try String(contentsOf: settings, encoding: .utf8)
+        XCTAssertTrue(written.hasSuffix("\ncache.limit  20G\n"), written)
+    }
+
+    /// A settings file the server cannot read stops it before it opens the graph, naming
+    /// the file and the line.
+    func test_anUnreadableEngineSettingsFileStopsTheStart() throws {
+        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: binary.path),
+                          "semelserv is not built beside the test bundle at \(binary.path)")
+        try Data("cache.limit  plenty\n".utf8).write(to: home.appendingPathComponent("semel.engine.config"))
+
+        let server = try launch()
+
+        XCTAssertEqual(server.waitForExit(timeout: 30), 1)
+        let output = server.output
+        XCTAssertTrue(output.contains("semel.engine.config"), output)
+        XCTAssertTrue(output.contains("line 1: 'plenty' is not a size for 'cache.limit'"), output)
+        XCTAssertFalse(output.contains("Graph:"), output)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(socketPath)))
     }
 
     func test_bannerIsOnDiskBeforeShutdownWhenStdoutIsRedirectedToAFile() throws {

@@ -19,7 +19,11 @@ public final class BuildEngine {
     /// graph another version built is reset here, and a database with the wrong schema
     /// never gets as far as processing. Tests construct engines over prepared databases
     /// all the time, so the constructor must not have that side effect.
-    public static func start() throws {
+    ///
+    /// `cacheLimit` is the home's, as `semelserv` read it from `semel.engine.config`, and it
+    /// is in force before the loop starts: the first idle trims, and a trim to the default
+    /// in the moment before the home's limit arrived would evict what the home kept.
+    public static func start(cacheLimit: ByteCount?) throws {
         // Beside the object store, absolute, whatever the current directory is: the two
         // refer to each other, and a database named relative to the launch directory
         // silently started an empty graph against the shared store.
@@ -34,6 +38,7 @@ public final class BuildEngine {
             FatalErrors.check(error)
             throw error
         }
+        engine.applyCacheLimit(cacheLimit)
         engine.startProcessingLoop()
     }
 
@@ -384,6 +389,11 @@ public final class BuildEngine {
     /// persisted, as the settle record is not. Written by the loop and by `cache limit`,
     /// read by a server's request.
     @Locked var lastCacheTrim: CacheTrim?
+
+    /// The home's cache limit, nil when it set none and the default applies (B-148). Set by
+    /// `semelserv` from `semel.engine.config` when it starts and by `cache limit`; never
+    /// stored in the graph, because it is the engine's setting and no build's input.
+    @Locked var configuredCacheLimit: ByteCount?
 
     /// Where `reportUnclaimedConfigKeys` sends its lines. A closure rather than a bare
     /// `print` call so a test can capture what would be printed instead of scraping stdout —

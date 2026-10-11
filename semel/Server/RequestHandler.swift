@@ -15,6 +15,7 @@ import SemelCore
 import SemelDatabaseModels
 import SemelNodeKit
 import SemelProtocol
+import SemelTransport
 
 public final class RequestHandler {
 
@@ -22,6 +23,10 @@ public final class RequestHandler {
     let database: DatabaseLayer
 
     private let databasePath: String
+
+    /// `semel.engine.config`, which a setting changed at the prompt is written to before it
+    /// is applied, so the next `semelserv` starts with it.
+    private let engineConfigurationFile: URL
     private let queue = DispatchQueue(label: "semelserv.requests")
 
     /// Where events go. Weak, because the in-process connection is both the sink and the
@@ -31,10 +36,11 @@ public final class RequestHandler {
     /// connection keeps it alive itself, or events vanish without an error.
     public weak var eventSink: EventSink?
 
-    public init(engine: BuildEngine, database: DatabaseLayer, databasePath: String) {
-        self.engine       = engine
-        self.database     = database
-        self.databasePath = databasePath
+    public init(engine: BuildEngine, database: DatabaseLayer, databasePath: String, engineConfigurationFile: URL) {
+        self.engine                  = engine
+        self.database                = database
+        self.databasePath            = databasePath
+        self.engineConfigurationFile = engineConfigurationFile
         installReporters()
         // A batch left open by the process before this one can no longer be committed or
         // refused; what it pushed stands, as it did before batches had journals.
@@ -182,9 +188,14 @@ public final class RequestHandler {
                         try MessageCoder.encode(Self.cacheEntryRecords(report)))
             case .cacheLimit(let limit):
                 guard let limit else {
-                    let (current, isDefault) = try engine.cacheLimit()
+                    let (current, isDefault) = engine.cacheLimit()
                     return (.daemon(.cacheLimit(limit: current, isDefault: isDefault, trim: nil)), nil)
                 }
+                // Written before it is applied: a limit the file could not keep would hold
+                // only until the server stopped, and the reply would not say so.
+                var configuration = try EngineConfiguration.read(from: engineConfigurationFile)
+                configuration.cacheLimit = limit
+                try configuration.write(to: engineConfigurationFile)
                 let trim = try engine.setCacheLimit(limit)
                 return (.daemon(.cacheLimit(limit: limit, isDefault: false, trim: Self.trimRecord(trim))), nil)
             case .tools(let platformName):
