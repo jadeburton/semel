@@ -47,6 +47,31 @@ final class TreeBuilderTests: SemelCoreTestCase {
         XCTAssertEqual(manifest.entry(at: "Loose/Tiny"), TreeManifestEntry(path: "Loose/Tiny", hash: try "binary".intern(), mode: 0o755))
     }
 
+    /// `links` puts the links a versioned framework has beside its files: `Versions/Current`
+    /// to `A`, and each top-level name into it; one naming nothing in the tree is left out,
+    /// and a property that is not a JSON dictionary of strings is an error naming it
+    /// (B-77 item 4).
+    func test_theLinksPropertyLaysAFrameworksLinksBesideItsFiles() throws {
+        let links = #"{"Kit.framework/Versions/Current":"A","Kit.framework/Kit":"Versions/Current/Kit","Kit.framework/Modules":"Versions/Current/Modules"}"#
+        let node = try TreeBuilder(thisNode: NodeRecord(id: 1, kind: TreeBuilder.kind, name: nil,
+                                                        properties: [TreeBuilder.linksProperty: links], scheduled: false, identity: nil))
+        let output = try node.process(input: ProcessInput(inputValues: [
+            TreeBuilder.inputPort: ["Kit.framework/Versions/A/Kit": .value(try "binary".intern())],
+        ]))
+
+        let json = try XCTUnwrap(output.outputValues[TreeBuilder.outputPort]).expectValue().resolveAsString()
+        let manifest: TreeManifest = try TypeRegistry.decodeAndCast(encodedJSON: json)
+        XCTAssertEqual(manifest.entries.map(\.path), ["Kit.framework/Kit", "Kit.framework/Versions/A/Kit", "Kit.framework/Versions/Current"])
+        XCTAssertEqual(manifest.entry(at: "Kit.framework/Versions/Current")?.symbolicLinkTarget, "A")
+        XCTAssertEqual(manifest.entry(at: "Kit.framework/Kit")?.symbolicLinkTarget, "Versions/Current/Kit")
+
+        let malformed = try TreeBuilder(thisNode: NodeRecord(id: 1, kind: TreeBuilder.kind, name: nil,
+                                                             properties: [TreeBuilder.linksProperty: "[]"], scheduled: false, identity: nil))
+        XCTAssertThrowsError(try malformed.process(input: ProcessInput(inputValues: [TreeBuilder.inputPort: [:]]))) { error in
+            XCTAssertEqual(error as? ErrorCondition, .propertyNotOfForm(type: "TreeBuilder", property: "links", form: .jsonStringDictionary))
+        }
+    }
+
     /// A file that failed stops the tree, and the tree says so as its own state rather than
     /// repeating the compiler's sentence: a report folds it onto the node that failed.
     func test_aFileWithoutAValueStopsTheTreeAsACarriedState() throws {

@@ -75,6 +75,13 @@ public struct ClangCompiler: Node {
 
     static let configuration = "configuration"
     static let input = "input"
+    /// Trees of frameworks, merged under `frameworks`, which is the `-F`: what the
+    /// preprocessed text names by `#pragma clang module import` — a framework module the
+    /// target links, one of the project's own (B-77) — the compiler loads again, from the
+    /// framework's module map and headers.
+    static let frameworkTrees = "frameworkTrees"
+    /// The module trees of the package products the target links (`ClangModuleTrees`).
+    static let moduleTrees = "moduleTrees"
     static let output = "output"
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
@@ -86,7 +93,7 @@ public struct ClangCompiler: Node {
     }
 
     public static let descriptor = NodeDescriptor(
-        inputPorts: [.required(configuration), .required(input)],
+        inputPorts: [.required(configuration), .required(input), .optional(frameworkTrees, .many), .optional(moduleTrees, .many)],
         outputPorts: [output, errorLog, infoLog]
     )
 
@@ -95,8 +102,14 @@ public struct ClangCompiler: Node {
     struct ClangCompilerInputs {
         let configuration: ClangCompilerConfiguration
         let inputSourceFile: FileNameAndContent
+        /// Every file of every framework tree, merged under `frameworks`.
+        let frameworkFiles: [FileNameAndContent]
+        let modules: ClangModuleTrees
 
         init(input: ProcessInput) throws {
+            frameworkFiles = try TreeManifest.mergedInputFiles(in: input, port: ClangCompiler.frameworkTrees,
+                                                               under: ClangPreprocessor.frameworksFolder)
+            modules = try ClangModuleTrees(input: input, port: ClangCompiler.moduleTrees)
             let configurationString = try input.onlyWire(onRequiredPort: ClangCompiler.configuration).value.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
@@ -162,6 +175,10 @@ public struct ClangCompiler: Node {
             settings.append(.clangSysroot(key: "\(ClangCompilerConfiguration.settingNamespace).sdkPath", value: sdkPath))
         }
         arguments.append(contentsOf: inputs.configuration.features.arguments(forLanguage: language))
+        arguments.append(contentsOf: inputs.modules.arguments)
+        if !inputs.frameworkFiles.isEmpty {
+            arguments.append("-F"); arguments.append(ClangPreprocessor.frameworksFolder)
+        }
 
         arguments.append(contentsOf: inputs.configuration.arguments)
 
@@ -171,7 +188,8 @@ public struct ClangCompiler: Node {
         let result = try tool.execute(
             arguments: arguments,
             environment: inputs.configuration.environment,
-            inputFiles: [.init(filePath: inputs.inputSourceFile.filePath, hash: inputs.inputSourceFile.hash)],
+            inputFiles: [.init(filePath: inputs.inputSourceFile.filePath, hash: inputs.inputSourceFile.hash)]
+                      + inputs.frameworkFiles + inputs.modules.files,
             expectedOutputFileNames: [outputFilename])
 
         let subject = ErrorDocument.Subject.source(path: ClangPreprocessor.sourcePath(ofPreprocessed: inputs.inputSourceFile.filePath))

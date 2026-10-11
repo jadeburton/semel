@@ -661,7 +661,7 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
 
         XCTAssertTrue(formula.contains("func preprocess_NetNewsWire(path) =\n    ClangPreprocessor("), formula)
         XCTAssertTrue(formula.contains("SettingsLiteral(cStandard: 'gnu11', cxxStandard: 'gnu++14', defines: 'DEBUG=1,SKIP_APP_GROUP_ACCESS=1', "
-                                       + "modules: 'true', objectiveCARC: 'true', target: 'arm64-apple-macosx15.0')"), formula)
+                                       + "headerMapProduct: 'NetNewsWire', modules: 'true', objectiveCARC: 'true', target: 'arm64-apple-macosx15.0')"), formula)
         XCTAssertTrue(formula.contains("'input:/nnw/Mac': Folder(path: 'input:/nnw/Mac').manifest"), formula)
         XCTAssertTrue(formula.contains("'input:/nnw/Mac/NSOpenPanel+Extras.m.o': ClangCompiler("), formula)
         XCTAssertTrue(formula.contains(",\n        bridgingHeader: ['Mac/NetNewsWire-Bridging-Header.h': "
@@ -963,5 +963,50 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
                                                      xcconfigs: [developerSettings: "ORGANIZATION_IDENTIFIER = org.example"])
         let presentFormula = try XCTUnwrap(present.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
         XCTAssertTrue(presentFormula.contains("\"PRODUCT_BUNDLE_IDENTIFIER\":\"org.example.NetNewsWire-Evergreen-DEBUG\""), presentFormula)
+    }
+
+    // MARK: - Referenced projects (B-77 item 4)
+
+    /// Sequel Ace's project file, the lex files and the Core Data model out of its sources
+    /// phase, as the fixture tests step around them.
+    private func sequelAceProject() throws -> NodeValue {
+        var text = try String(contentsOf: SequelAceFixtureTests.sequelAce.appendingPathComponent("sequel-ace.xcodeproj/project.pbxproj"),
+                              encoding: .utf8)
+        for line in ["179F15060F7C433C00579954 /* SPEditorTokens.l in Sources */,", "BCD0AD490FBBFC340066EA5C /* SPSQLTokenizer.l in Sources */,",
+                     "4D90B79E101E0CF200D116A1 /* SPUserManager.xcdatamodel in Sources */,"] {
+            text = text.replacingOccurrences(of: line, with: "")
+        }
+        return .value(try text.intern())
+    }
+
+    /// The project file of each project the app links a product of is demanded beside the
+    /// folders, and the formula waits for both; once they are in, a project that is there
+    /// has its framework built, and one nobody pushed — a value that will never come — is
+    /// said not to be, the conversion going on without it, as the folder a search path names
+    /// is read as holding nothing when it is not there.
+    func test_theProjectsTheAppLinksProductsOfAreDemandedAndRead() throws {
+        let path = "input:/sa/sequel-ace.xcodeproj"
+        let spMySQL = "input:/sa/Frameworks/SPMySQLFramework/SPMySQLFramework.xcodeproj/project.pbxproj"
+        let queryKit = "input:/sa/Frameworks/QueryKit/QueryKit.xcodeproj/project.pbxproj"
+        let node = try XcodeProjectConverter(thisNode: NodeRecord(id: 1, kind: XcodeProjectConverter.kind, name: nil,
+                                                                  properties: ["path": path, "sdk": "macosx"], scheduled: false, identity: nil))
+        var inputs: [String: [String: NodeValue]] = [XcodeProjectConverter.projectFile: ["\(path)/project.pbxproj": try sequelAceProject()]]
+
+        let first = try node.process(input: ProcessInput(inputValues: inputs))
+        XCTAssertEqual(first.inputWireSpecs[XcodeProjectConverter.subprojects]?.keys.sorted(), [queryKit, spMySQL])
+        XCTAssertEqual(first.inputWireSpecs[XcodeProjectConverter.folders]?.keys.sorted(), ["input:/sa/Frameworks"],
+                       "the framework search path's folder is walked")
+        XCTAssertTrue(isPending(first))
+        XCTAssertTrue(XcodeProjectConverter.descriptor.toleratesAbsentValue(onInputPort: XcodeProjectConverter.subprojects))
+
+        let spMySQLText = try String(contentsOf: SequelAceFixtureTests.sequelAce
+            .appendingPathComponent("Frameworks/SPMySQLFramework/SPMySQLFramework.xcodeproj/project.pbxproj"), encoding: .utf8)
+        inputs[XcodeProjectConverter.subprojects] = [spMySQL: .value(try spMySQLText.intern()), queryKit: .noValue(reason: .initializing)]
+        inputs[XcodeProjectConverter.folders] = ["input:/sa/Frameworks": .noValue(reason: .initializing)]
+        let converted = try node.process(input: ProcessInput(inputValues: inputs))
+        let formula = try XCTUnwrap(converted.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
+        XCTAssertTrue(formula.contains("func builtFramework_SPMySQL() =\n    TreeBuilder(links: "), formula)
+        XCTAssertTrue(formula.contains("// QueryKit.framework, built by QueryKit in Frameworks/QueryKit/QueryKit.xcodeproj, is linked by Sequel Ace and not built"),
+                      formula)
     }
 }

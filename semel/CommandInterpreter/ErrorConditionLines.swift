@@ -61,6 +61,8 @@ struct ConditionLines {
                          details: [Detail(label: "reason", value: reason)])
         case .toolOutputNotRead(let file):
             return Drawn(headline: "the tool's output \(file) cannot be read back")
+        case .toolOutputNamesItsSandbox(let tool, let file):
+            return Drawn(headline: "\(tool) wrote the folder it ran in into \(file), which would differ from one run to the next")
         case .toolLaunchFailed(let reason):
             return Drawn(headline: "the tool cannot be started", details: [Detail(label: "reason", value: reason)])
 

@@ -3,6 +3,7 @@
 //  SemelCore
 //
 
+import Foundation
 import SemelNodeKit
 
 /// N files as one tree, each entry named by its wire's key and carrying its mode.
@@ -45,6 +46,14 @@ struct TreeBuilder: Node {
         cachesOutputs: false
     )
 
+    /// `links`: symbolic links the tree holds beside its files, a JSON dictionary of each
+    /// link's path to what it holds — `{"Kit.framework/Versions/Current": "A"}`. What makes
+    /// a framework a project builds the versioned bundle a Mac loads and `codesign` signs,
+    /// its top-level names links into `Versions/Current` (B-77 item 4). A property, since a
+    /// link has no content to arrive on a wire; one whose target is not in the tree is left
+    /// out, as `TreeManifest(placing:folderLinks:)` leaves out every such link.
+    static let linksProperty = "links"
+
     public func process(input: ProcessInput) throws -> ProcessOutput {
         let metadata = input.inputValues[Self.fileMetadataInputPort] ?? [:]
         var files: [TreeManifest.PlacedFile] = []
@@ -53,7 +62,18 @@ struct TreeBuilder: Node {
             // what stood in the way, and it writes the state that follows.
             files.append(.init(path: key, hash: try value.expectValue(), metadata: FileMetadata.metadata(of: metadata[key])))
         }
-        let tree = TreeManifest(placing: files)
+        let tree = TreeManifest(placing: files, folderLinks: try links())
         return .init(outputValues: [Self.outputPort: .value(try tree.toJSON().intern())], inputWireSpecs: [:])
+    }
+
+    /// The `links` property, read; none when the property is not there.
+    private func links() throws -> [String: String] {
+        guard let text = thisNode.properties[Self.linksProperty] else {
+            return [:]
+        }
+        guard let links = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String] else {
+            throw ErrorCondition.propertyNotOfForm(type: "TreeBuilder", property: Self.linksProperty, form: .jsonStringDictionary)
+        }
+        return links
     }
 }

@@ -89,6 +89,11 @@ final class ErrorRenderingTests: XCTestCase {
         XCTAssertEqual(block(.toolOutputNotRead(file: "out.o")), ["the tool's output out.o cannot be read back"])
     }
 
+    func test_toolOutputNamesItsSandbox() {
+        XCTAssertEqual(block(.toolOutputNamesItsSandbox(tool: "swiftc", file: "App-Swift.h")),
+                       ["swiftc wrote the folder it ran in into App-Swift.h, which would differ from one run to the next"])
+    }
+
     func test_toolLaunchFailed() {
         XCTAssertEqual(block(.toolLaunchFailed(reason: "no such file")),
                        ["the tool cannot be started", "  reason: no such file"])
@@ -868,7 +873,7 @@ final class ErrorRenderingTests: XCTestCase {
         func covered(_ condition: ErrorCondition) -> Bool {
             switch condition {
             case .toolExitedSilently, .toolWroteNothing, .toolNotInstalled, .toolNotFound, .toolNotExecutable,
-                 .toolInputNotWritten, .toolOutputNotRead, .toolLaunchFailed,
+                 .toolInputNotWritten, .toolOutputNotRead, .toolOutputNamesItsSandbox, .toolLaunchFailed,
                  .settingsMissing, .settingNotAccepted, .settingNotAList, .sdkNotFound, .sdkVersionDiffers, .settingNotSupported,
                  .notPushed, .removed, .inputInError, .documentUnreadable,
                  .unlinkedKind, .unknownTypeName, .requiredPortUnwired, .severalWiresOnOneWirePort, .portNotDeclared,

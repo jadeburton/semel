@@ -272,12 +272,18 @@ struct XcodeBuildSettings {
 
     /// What Xcode itself sets from the project and the kind of target, beneath every level
     /// the project writes: the development language, the package type a product type
-    /// carries — `APPL` for an application, `XPC!` for an extension — and, for an
+    /// carries — `APPL` for an application, `XPC!` for an extension, `FMWK` for a framework — and, for an
     /// application, that its bundle gets a `PkgInfo` (the application package type's
     /// `GENERATE_PKGINFO_FILE = YES`; no extension's has one).
     private static func providedByXcode(project: XcodeProject, target: XcodeProject.Target) -> [String: String] {
-        ["DEVELOPMENT_LANGUAGE": project.developmentRegion,
-         "PRODUCT_BUNDLE_PACKAGE_TYPE": target.isExtension ? "XPC!" : "APPL",
-         "GENERATE_PKGINFO_FILE": target.isApplication ? "YES" : "NO"]
+        let packageType: String
+        switch (target.isExtension, target.isFramework) {
+        case (true, _):     packageType = "XPC!"
+        case (false, true): packageType = "FMWK"
+        default:            packageType = "APPL"
+        }
+        return ["DEVELOPMENT_LANGUAGE": project.developmentRegion,
+                "PRODUCT_BUNDLE_PACKAGE_TYPE": packageType,
+                "GENERATE_PKGINFO_FILE": target.isApplication ? "YES" : "NO"]
     }
 }

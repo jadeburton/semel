@@ -23,9 +23,9 @@ class SemelClangTestCase: XCTestCase {
         DataObjectStore.shared        = DataObjectStore(storeRoot: Self.temporaryStoreRoot())
         ToolRunnerRegistry.instance = ToolRunnerRegistry()
 
-        // FolderManifest is decoded by the compiler node, and TypeRegistry resolves it
+        // FolderManifest and TreeManifest are decoded by the clang nodes, and TypeRegistry resolves them
         // through the same process-global registry production uses.
-        try TypeRegistry.register(types: [FolderManifest.self, FolderSubtreeManifest.self, ErrorDocument.self])
+        try TypeRegistry.register(types: [FolderManifest.self, FolderSubtreeManifest.self, TreeManifest.self, ErrorDocument.self])
         try SemelClang.register()
     }
 
@@ -47,6 +47,8 @@ final class RecordingToolRunner: ToolRunner {
         let arguments: [String]
         let environment: [String: String]
         let inputFileNames: [String]
+        /// Each input laid as a symbolic link, by its path, with what it holds.
+        let inputLinks: [String: String]
         let expectedOutputFileNames: [String]
         let expectedOutputFolders: [String]
     }
@@ -74,6 +76,8 @@ final class RecordingToolRunner: ToolRunner {
         invocations.append(.init(arguments: arguments,
                                  environment: environment,
                                  inputFileNames: inputFiles.map(\.filePath),
+                                 inputLinks: Dictionary(inputFiles.compactMap { file in file.symbolicLinkTarget.map { (file.filePath, $0) } },
+                                                        uniquingKeysWith: { first, _ in first }),
                                  expectedOutputFileNames: expectedOutputFileNames,
                                  expectedOutputFolders: expectedOutputFolders))
 
