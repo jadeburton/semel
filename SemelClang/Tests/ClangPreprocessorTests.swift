@@ -583,6 +583,35 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         XCTAssertEqual(placed.filter { $0 == "input:/app/Source/Main.m" }.count, 1, "the source is placed once: \(placed)")
     }
 
+    /// `headerMapProduct` makes each header of the quote trees reachable as `<Product>/Foo.h`
+    /// too, through a link under `header-map`, an `-I`: a link to the placed file and not a
+    /// copy, so clang takes `<QueryKit/QKQuery.h>` and `"QKQuery.h"` for one file and imports
+    /// it once. The first of a name in path order is the one linked.
+    func test_theHeaderMapsProductNamesAreLinksToThePlacedHeaders() throws {
+        var inputValues = try makeInput(sourcePath: "input:/kit/Source/QKQuery.m",
+                                        otherSettings: ["headerMapProduct": "QueryKit"]).inputValues
+        inputValues[ClangPreprocessor.quoteHeaderTrees] = ["input:/kit": try tree(["Source/QKQuery.h", "Source/Other/QKQuery.h", "Source/QKTypes.h"])]
+        _ = try makeTool().process(input: ProcessInput(inputValues: inputValues))
+
+        let arguments = executor.lastArguments
+        XCTAssertEqual(zip(arguments, arguments.dropFirst()).filter { $0.0 == "-I" }.map(\.1), ["header-map", "."], "got \(arguments)")
+        let links = try XCTUnwrap(executor.invocations.last).inputLinks
+        XCTAssertEqual(links["header-map/QueryKit/QKQuery.h"], "../../input:/kit/Source/Other/QKQuery.h")
+        XCTAssertEqual(links["header-map/QueryKit/QKTypes.h"], "../../input:/kit/Source/QKTypes.h")
+    }
+
+    /// The package products' module trees are merged under `modules`, and each folder
+    /// holding a module map is an `-I`: `@import FMDB;` loads FMDB's module (B-77 item 4).
+    func test_moduleTreesAreMergedAndEachModuleMapsFolderIsASearchPath() throws {
+        var inputValues = try makeInput(sourcePath: "input:/app/Main.m").inputValues
+        inputValues[ClangPreprocessor.moduleTrees] = ["FMDB": try tree(["FMDB.swiftmodule", "FMDB/module.modulemap", "FMDB/FMDB.h"])]
+        _ = try makeTool().process(input: ProcessInput(inputValues: inputValues))
+
+        let arguments = executor.lastArguments
+        XCTAssertTrue(zip(arguments, arguments.dropFirst()).contains { $0.0 == "-I" && $0.1 == "modules/FMDB" }, "got \(arguments)")
+        XCTAssertTrue(try XCTUnwrap(executor.invocations.last).inputFileNames.contains("modules/FMDB/FMDB.h"))
+    }
+
     /// With none of the four the command line is what it was.
     func test_withoutTheTargetsHeadersNoSearchPathIsAdded() throws {
         _ = try makeTool().process(input: try makeInput())

@@ -79,12 +79,16 @@ struct ClangPreprocessorConfiguration {
     /// `modules`, `objectiveCARC` and `moduleName` (B-77).
     let features: ClangLanguageFeatures
     let target: String  // e.g. "arm64-apple-macos14.0"
+    /// `headerMapProduct`: the product a target's headers on `quoteHeaderTrees` are also
+    /// imported under, `<Product>/Foo.h` (B-77 item 4). A literal from the converter.
+    let headerMapProduct: String?
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
         toolDescriptor = .init(required: &required, properties: properties)
         target = required.value("target")
         try required.check()
+        headerMapProduct = properties["headerMapProduct"].flatMap { $0.isEmpty ? nil : $0 }
 
         defines   = (properties["defines"] ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
         arguments = clangArguments(properties)
@@ -201,6 +205,8 @@ public struct ClangPreprocessor: Node {
     static let frameworkTrees = "frameworkTrees"
     /// The sandbox folder the framework trees are merged into.
     static let frameworksFolder = "frameworks"
+    /// The module trees of the package products the target links (`ClangModuleTrees`).
+    static let moduleTrees = "moduleTrees"
     static let output = "output"
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
@@ -221,6 +227,7 @@ public struct ClangPreprocessor: Node {
             .optional(quoteHeaderTrees, .many),
             .optional(headerTrees, .many),
             .optional(frameworkTrees, .many),
+            .optional(moduleTrees, .many),
             .dynamic(headerFolderTrees),
         ],
         outputPorts: [output, errorLog, infoLog],
@@ -263,10 +270,10 @@ public struct ClangPreprocessor: Node {
             headerFolderManifests = FolderTreeWalk.manifests(in: input, port: ClangPreprocessor.headerFolders)
                 .map { ($0.key, $0.manifest) }
             headerFolderTrees = FolderTreeWalk.trees(in: input, port: ClangPreprocessor.headerFolderTrees)
-            placed = try PlacedHeaders(input: input)
 
             let configurationString = try input.onlyWire(onRequiredPort: ClangCompiler.configuration).value.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
+            placed = try PlacedHeaders(input: input, headerMapProduct: configuration.headerMapProduct)
 
             let sourceFileInput = try input.onlyWire(onRequiredPort: ClangPreprocessor.sourceFileInput)
             inputSourceFile = .init(filePath: sourceFileInput.key, hash: try sourceFileInput.value.expectValue())
@@ -307,16 +314,29 @@ public struct ClangPreprocessor: Node {
         var files: [FileNameAndContent] = []
         /// Each folder holding a file of a tree on `quoteHeaderTrees`, sorted: the `-iquote`s.
         var quoteFolders: [String] = []
-        /// The keys of `headerTrees`, sorted: the `-I`s.
+        /// The header map's folder when there is one, then the keys of `headerTrees`,
+        /// sorted: the `-I`s.
         var includeFolders: [String] = []
         /// Whether a framework tree placed anything under `frameworks`: the `-F`.
         var hasFrameworks = false
+        /// Each folder of the module trees holding a module map, sorted: `-I`s after the trees'.
+        var moduleSearchPaths: [String] = []
         /// The prefix header's path, `-include`'s argument.
         var prefixHeader: String?
 
         init() {}
 
-        init(input: ProcessInput) throws {
+        /// The sandbox folder the header map's `<Product>/Foo.h` names are laid under.
+        static let headerMapFolder = "header-map"
+
+        /// `headerMapProduct` names the product a target's headers are imported under as
+        /// well as by name: each header of the quote trees is reachable as `<Product>/Foo.h`
+        /// too, the first of each name in path order, through a link under `header-map`, an
+        /// `-I`. A link and not a copy: clang knows a header by the file it is, so
+        /// `#import <QueryKit/QKQueryTypes.h>` and `#import "QKQueryTypes.h"` are one import
+        /// of one file, where two copies would define everything in it twice — as Xcode's
+        /// header map points both names at the one header.
+        init(input: ProcessInput, headerMapProduct: String? = nil) throws {
             var byPath: [String: FileNameAndContent] = [:]
             func place(_ file: FileNameAndContent) {
                 if byPath[file.filePath] == nil {
@@ -340,6 +360,21 @@ public struct ClangPreprocessor: Node {
                 }
             }
             quoteFolders = foldersHoldingAHeader.sorted()
+            if let headerMapProduct, !foldersHoldingAHeader.isEmpty {
+                let headers = byPath.keys.sorted().filter { path in
+                    byPath[path]?.symbolicLinkTarget == nil && foldersHoldingAHeader.contains(Path(path).deletingLastComponent?.string ?? "")
+                }
+                var names = Set<String>()
+                for header in headers {
+                    guard let name = Path(header).lastComponent, names.insert(name).inserted else {
+                        continue
+                    }
+                    // From `header-map/<Product>/` back to the sandbox's root, then down.
+                    place(FileNameAndContent(symbolicLinkAt: "\(Self.headerMapFolder)/\(headerMapProduct)/\(name)",
+                                             target: "../../\(header)"))
+                }
+                includeFolders.append(Self.headerMapFolder)
+            }
             for (key, value) in (input.inputValues[ClangPreprocessor.headerTrees] ?? [:]).sorted(by: { $0.key < $1.key }) {
                 let tree: TreeManifest = try TypeRegistry.decodeAndCast(encodedJSON: try value.expectValue().resolveAsString())
                 tree.entries.forEach { place($0.placed(under: Path(key)).asInputFile) }
@@ -349,6 +384,9 @@ public struct ClangPreprocessor: Node {
                                                                    under: ClangPreprocessor.frameworksFolder)
             frameworkFiles.forEach(place)
             hasFrameworks = !frameworkFiles.isEmpty
+            let modules = try ClangModuleTrees(input: input, port: ClangPreprocessor.moduleTrees)
+            modules.files.forEach(place)
+            moduleSearchPaths = modules.searchPaths
             files = byPath.keys.sorted().compactMap { byPath[$0] }
         }
 
@@ -357,6 +395,7 @@ public struct ClangPreprocessor: Node {
         var searchArguments: [String] {
             quoteFolders.flatMap { ["-iquote", $0] }
                 + includeFolders.flatMap { ["-I", $0] }
+                + moduleSearchPaths.flatMap { ["-I", $0] }
                 + (hasFrameworks ? ["-F", ClangPreprocessor.frameworksFolder] : [])
         }
     }

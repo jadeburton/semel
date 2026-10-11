@@ -59,6 +59,11 @@ struct SwiftCompilerConfiguration {
     /// compiler writes the Objective-C interface of the module's `@objc` declarations under
     /// that name, which the target's Objective-C imports; a literal from the converter.
     let objectiveCHeaderName: String?
+    /// `importsUnderlyingModule=true`: the module's own Objective-C, the clang module of the
+    /// same name a framework on `frameworkTrees` declares, is imported into its Swift, as
+    /// Xcode compiles a framework target's Swift beside its Objective-C — SPMySQL's
+    /// `SAProxyReconnectCoordinator` names `SPMySQLConnectionProxy` (B-77 item 4).
+    let importsUnderlyingModule: Bool
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
@@ -86,6 +91,7 @@ struct SwiftCompilerConfiguration {
         excludedPaths = Self.pathList(properties["excludedPaths"])
         resourceBundleName = properties["resourceBundleName"].flatMap { $0.isEmpty ? nil : $0 }
         objectiveCHeaderName = properties["objectiveCHeaderName"].flatMap { $0.isEmpty ? nil : $0 }
+        importsUnderlyingModule = properties["importsUnderlyingModule"] == "true"
     }
 
     /// The source SwiftPM generates for a target with resources, as this build lays the
@@ -290,6 +296,11 @@ struct SwiftCompiler: Node {
     static let headerTrees           = "headerTrees"
     /// The folder the bridging header and the header trees are placed under.
     static let objectiveCFolder      = "objc"
+    /// Trees each placed under its wire's key with no search path of their own: what a
+    /// module map on `inputModuleMapFolders` names by a path relative to itself — SPMySQL's
+    /// `MySQLClient` map, `header "../../MySQL Client Libraries/include/mysql.h"` — laid where
+    /// that path reaches (B-77 item 4).
+    static let includeTrees          = "includeTrees"
     /// The executables of the package macros the target uses, one wire each keyed by the
     /// macro's module name, as `SwiftFormulaConverter` links them (B-80). Each is placed
     /// under `macros/` at its key and handed to `-load-plugin-executable` as
@@ -328,6 +339,7 @@ struct SwiftCompiler: Node {
             .optional(inputModuleMapFolders, .many),
             .optional(bridgingHeader),
             .optional(headerTrees, .many),
+            .optional(includeTrees, .many),
             .optional(macroExecutables, .many),
             .dynamic(inputSourceFiles),
             .dynamic(inputFolderTrees),
@@ -358,6 +370,8 @@ struct SwiftCompiler: Node {
         let bridgingHeader: FileNameAndContent?
         /// Every file of every header tree, under `objc/`, less the bridging header itself.
         let objectiveCHeaderFiles: [FileNameAndContent]
+        /// Every file of every include tree, each tree under its wire's key.
+        let includeTreeFiles: [FileNameAndContent]
         /// Each macro executable under `macros/`, laid executable, with the module it
         /// implements, ordered by module.
         let macroExecutables: [(module: String, file: FileNameAndContent)]
@@ -428,6 +442,17 @@ struct SwiftCompiler: Node {
             objectiveCHeaderFiles = try TreeManifest.mergedInputFiles(in: input, port: SwiftCompiler.headerTrees,
                                                                       under: SwiftCompiler.objectiveCFolder)
                 .filter { $0.filePath != bridging?.filePath }
+            var includeFiles: [String: FileNameAndContent] = [:]
+            for (key, value) in (input.inputValues[SwiftCompiler.includeTrees] ?? [:]).sorted(by: { $0.key < $1.key }) {
+                let tree: TreeManifest = try TypeRegistry.decodeAndCast(encodedJSON: try value.expectValue().resolveAsString())
+                for entry in tree.entries {
+                    let file = entry.placed(under: Path(key)).asInputFile
+                    if includeFiles[file.filePath] == nil {
+                        includeFiles[file.filePath] = file
+                    }
+                }
+            }
+            includeTreeFiles = includeFiles.keys.sorted().compactMap { includeFiles[$0] }
 
             macroExecutables = try (input.inputValues[SwiftCompiler.macroExecutables] ?? [:])
                 .sorted { $0.key < $1.key }
@@ -516,6 +541,29 @@ struct SwiftCompiler: Node {
 
     // MARK: - Processing
 
+    /// The Objective-C interface with the bridging header imported by its name, or an error
+    /// when it names the sandbox anywhere else.
+    ///
+    /// swiftc writes `#import "<sandbox>/objc/Source/App-Bridging-Header.h"` into the
+    /// interface of a module compiled with a bridging header: the absolute path it read the
+    /// header from, which is this run's folder and a different one every run (B-77 item 4).
+    /// The import names the header by its file name instead, which the target's sources find
+    /// it by through their header map, as they find every other header of the target.
+    static func interfaceNamingNoSandbox(hash: String, headerName: String, sandboxPath: String,
+                                         bridgingHeader: String?) throws -> NodeValue {
+        var text = try hash.resolveAsString()
+        if let bridgingHeader, let name = Path(bridgingHeader).lastComponent {
+            // Imported for Objective-C and included for C, each by the one path.
+            text = text.replacingOccurrences(of: "\"\(sandboxPath)/\(bridgingHeader)\"", with: "\"\(name)\"")
+        }
+        let unprivate = sandboxPath.hasPrefix("/private/") ? String(sandboxPath.dropFirst("/private".count)) : sandboxPath
+        guard !text.contains(sandboxPath), !text.contains(unprivate) else {
+            return try ErrorDocument.engine(.toolOutputNamesItsSandbox(tool: "swiftc", file: headerName),
+                                            subject: .source(path: headerName)).published()
+        }
+        return .value(try text.intern())
+    }
+
     /// A compile's failure belongs to the module it builds.
     public func errorSubject(input: ProcessInput?) -> ErrorDocument.Subject? {
         input?.reportedSetting("moduleName", onPort: Self.configuration).map { .target(name: $0) }
@@ -599,6 +647,10 @@ struct SwiftCompiler: Node {
         }
         for define in inputs.configuration.defines {
             arguments.append("-D");                          arguments.append(define)
+        }
+
+        if inputs.configuration.importsUnderlyingModule {
+            arguments.append("-import-underlying-module")
         }
 
         if inputs.configuration.parseAsLibrary {
@@ -701,14 +753,19 @@ struct SwiftCompiler: Node {
             environment: inputs.configuration.environment,
             inputFiles: inputs.sourceFiles + inputs.moduleFiles + inputs.moduleTreeFiles + inputs.frameworkTreeFiles
                       + inputs.moduleMapFiles + inputs.objectiveCHeaderFiles + (inputs.bridgingHeader.map { [$0] } ?? [])
+                      + inputs.includeTreeFiles.filter { included in !inputs.moduleMapFiles.contains { $0.filePath == included.filePath } }
                       + inputs.macroExecutables.map(\.file),
             expectedOutputFileNames: [objectOutput, moduleOutput] + (inputs.configuration.objectiveCHeaderName.map { [$0] } ?? []))
 
         // Stored by the runner; an output the tool did not write is the empty object.
         let objectHash = result.outputFiles[objectOutput] ?? ""
         let moduleHash = result.outputFiles[moduleOutput] ?? ""
-        let objectiveCHeader: NodeValue = .value(try inputs.configuration.objectiveCHeaderName
-            .map { result.outputFiles[$0] ?? "" } ?? "".intern())
+        var objectiveCHeader: NodeValue = .value(try "".intern())
+        if let headerName = inputs.configuration.objectiveCHeaderName, let hash = result.outputFiles[headerName] {
+            objectiveCHeader = try Self.interfaceNamingNoSandbox(hash: hash, headerName: headerName,
+                                                                 sandboxPath: result.resolvedSandboxPath,
+                                                                 bridgingHeader: inputs.bridgingHeader?.filePath)
+        }
 
         guard result.exitCode == 0 else {
             let error = try result.failureDocument(tool: "swiftc", subject: .target(name: moduleName), settings: settings).published()
