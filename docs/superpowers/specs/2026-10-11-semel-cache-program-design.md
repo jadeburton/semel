@@ -89,9 +89,10 @@ the repository working.
    B-148's limit and eviction, `purge`, and `semel-cache status` printing entries, bytes,
    hits and misses since start. Tested against an in-memory store with no socket, then
    over a real TCP socket on localhost.
-3. **The engine as a client.** `semel.machine.config` names the server (`cache.server
-   host:port`, and `cache.identity`); the two hooks gain the remote path with the
-   population queue and the fetch policy; the machine-derived-input audit; `cache` at the
+3. **The engine as a client.** `semel.engine.config` in the home names the server
+   (`cache.server`, `cache.identity`), never the machine file; the two hooks gain the
+   remote path with the population queue and the fetch policy; the machine-derived-input
+   audit; `cache` at the
    prompt shows the remote's hits, misses, bytes fetched and the queue's depth beside the
    local figures. Degradation tests with the server stopped mid-build.
 4. **The acceptance test.** Two homes on one Mac with `semel-cache` on localhost: home A
@@ -114,14 +115,25 @@ the repository working.
 
 ## Settings
 
-Fewer than the word suggests.
+Fewer than the word suggests, and none of them inside the graph.
 
-- **The engine's side**, in `semel.machine.config`, the machine's half: `cache.server`
-  (host and port) and `cache.identity` (the name this client gives in `Hello`). With no
-  `cache.server` line the engine uses its local cache alone, which is today's behaviour.
-  Nothing else in the first version; an estimate of the link's rate for the fetch policy
-  becomes a setting only if a LAN turns out not to be the only case.
-- **The server's side**, as arguments and a small file in its home: the home folder, the
+- **The rule.** A setting that must not affect a build never enters `input:` and never
+  enters a key. The machine file (`semel.machine.config`) is pushed into `input:` and read
+  by nodes through config filters, so it is exactly the wrong place for the cache's
+  address; the same goes for `semel.config`. The cache settings live in a file in the
+  Semel home beside `semel.base` — `semel.engine.config`, in the `key value` form the
+  home's other files use — read by `semelserv` when it starts and rewritten by the prompt.
+  B-148's `cache limit`, which stores its value in the graph database today, moves to this
+  file in phase 1 so that the home has one place for the engine's own settings.
+- **The engine's side**, in `semel.engine.config`: `cache.server` (host and port),
+  `cache.identity` (the name this client gives in `Hello`), `cache.limit` (B-148's). With
+  no `cache.server` line the engine uses its local cache alone, which is today's
+  behaviour. At the prompt, `cache server <host:port>`, `cache identity <name>` and
+  `cache limit <size>` write the file and apply at once through a request to the running
+  server; `cache` prints them with the figures. Nothing else in the first version; an
+  estimate of the link's rate for the fetch policy becomes a setting only if a LAN turns
+  out not to be the only case.
+- **The server's side**, as arguments and a file in its own home: the home folder, the
   address and port it listens on, the size limit (B-148's), and who may write.
 
 ## Decided on review (2026-10-11)
