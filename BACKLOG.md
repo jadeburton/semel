@@ -666,48 +666,47 @@ executables are byte-reproducible. actool's is not, so `AssetCatalogCompiler` pu
 each `Assets.car` in a canonical form that `assetutil` reads as the file actool wrote, and
 a signed bundle is byte-reproducible whole (B-89).
 
-**B-152** `done` — **ibtool and actool failed on every machine-wide client after one
-catalog: `ibtoold` stayed in a sandbox Semel had removed.** Seen 2026-10-10 and again
-2026-10-11 (B-77 item 4, Sequel Ace): every xib, storyboard and catalog of a build failed
-with `IBCurrentDirectoryPath … currentDirectoryPath is unexpectedly nil`, and so did
-`xcrun ibtool --compile` run by hand from a folder that existed, and the SemelApple suite's
-real-ibtool tests, until the daemons went. One of the nine `ibtoold
---sending-client-environment` processes then running had as its working directory
-`…/T/TemporaryItems/NSIRD_semelserv_…`, a tool-run folder `LocalFileSystemTool` had made
-and removed.
+**B-152** `done` — **ibtool and actool failed for every client on the machine: the pooled
+`ibtoold` kept the working directory of a sandbox Semel had removed.** Seen 2026-10-10
+and again 2026-10-11 (B-77 item 4, Sequel Ace). Every xib, storyboard and catalog of a
+build failed with `IBCurrentDirectoryPath … currentDirectoryPath is unexpectedly nil`. So
+did `xcrun ibtool --compile` run by hand from a folder that existed, and so did the
+SemelApple suite's real-ibtool tests, until the daemons went. One of the nine `ibtoold
+--sending-client-environment` processes then running had its working directory in
+`…/T/TemporaryItems/NSIRD_semelserv_…`, a tool-run folder that `LocalFileSystemTool` had
+made and then removed.
 
 The cause, found by experiment on Xcode 26.6 from folders that were kept: `ibtool` and
-`actool` hand their work to a per-user pool of `ibtoold` daemons. A daemon starts in `/`,
-whichever folder the client that started it ran in, and `ibtool --version` and `actool
---version` start one and leave it there. For a request it changes its working directory to
-the client's, and after an `actool` request it stays there: six `actool` runs from six
-folders left five daemons in five of them. With those folders removed, twelve `ibtool`
-runs of twelve, from a folder that existed, failed as above. An idle daemon exits after about
-two minutes, which is why the failure cleared by itself between sessions and came back with
-the next build: `LocalFileSystemTool` ran every tool in a fresh temporary folder and removed
-it after the run, so every catalog a build compiled left a daemon in a folder that was gone.
-The first slice of B-77 item 4 put this down to something outside Semel. It was Semel.
+`actool` are clients of a per-user pool of `ibtoold` daemons shared by every run on the
+machine. A daemon starts in `/`, whichever folder its client ran in; `ibtool --version`
+starts one. An `actool` request leaves its daemon in the client's working directory. Six
+`actool` runs from six folders left five daemons in five of them. With those folders
+removed, twelve `ibtool` runs out of twelve failed as above, from a folder that existed,
+until the daemons exited after about two minutes idle. That is why the failure cleared
+between sessions and came back with the next build: `LocalFileSystemTool` removed every
+run's folder. The first slice of B-77 item 4 put this down to something outside Semel. It
+was Semel.
 
-Fixed 2026-10-11. A tool can be declared to run in a sandbox folder that is reused instead of
-removed (`ToolFinder.reusesSandboxFolders`, `ReusedSandboxFolders`): `slot-N` folders under
-`~/Library/Application Support/semel/tool-sandboxes`, whatever `SEMEL_HOME` says, since a
-test's home goes when the test ends. Each run takes a slot under an advisory lock on its
-`slot-N.lock`, so a server and a test run on one machine never share one. The slot is
-emptied before the run and after it, and the folder is never removed. `actool` and
-`ibtool` are declared so. The command line and what the tool writes are unchanged: every
-path is still relative to a folder that starts each run empty. The folder's contents are
-never an input, since a slot is emptied before a run takes it and after, so hermeticity is
-unchanged. The slots are outside `SEMEL_HOME` on purpose: a home goes with the test or the
-session that made it, and a daemon left in a slot of a removed home would be this failure
-again; one set per user, as the daemons are one pool per user.
+A first fix ran the two tools in sandbox folders that were emptied and reused rather than
+removed. That exposed the second half of the same fault. A pooled daemon left by an
+`actool` run in one folder resolves a later `ibtool` client's relative paths against that
+folder, not the client's own. Eleven of Sequel Ace's xibs failed with `Interface Builder
+could not open the document … because it does not exist`, naming the folder of the
+catalog compiled before them. Setting `PWD`, or passing the full environment, made no
+difference. Starting the daemon first from a lasting folder could not help either, since
+the daemon starts in `/` and each request moves it.
 
-Two other fixes were weighed. Starting the daemon first from a lasting folder does nothing,
-since the daemon starts in `/` and follows the client per request. Running the client from a
-lasting folder with absolute paths into the sandbox would put the sandbox on the command
-line, which `ToolSandbox` forbids. The real-tool tests that ran actool from a folder they
-then removed (the asset symbols test) run through the same runner now, and the others name
-the reused folders.
+Fixed 2026-10-11 by never using the pool. `ibtool` and `actool` both read
+`IBToolNeverDeque=YES` from the environment (it is in the binary's strings, beside
+`IBCLIServerNeverDequeue`), and with it a client starts a daemon of its own that leaves
+nothing behind. Measured: six parallel `ibtool` runs and three `actool` runs, with
+relative paths, all passed while a pooled daemon sat in a folder none of them used. No
+new daemon outlived them, and the pooled one did not move. `IBToolCompiler` and
+`AssetCatalogCompiler` pass it on every run (`InterfaceBuilderDaemon.environment`), and so
+do the real-tool tests. With a pooled daemon sitting in a foreign folder, the SemelApple
+suite passed. Each run's folder is a temporary one removed after the run, as for every
+other tool, and the command line keeps its relative paths. It costs a daemon started per
+run, about 0.6 s, where a pooled daemon answers at once.
 
-The residual risk is outside Semel's code. A user who removes that folder while a daemon
-sits in it, or another program on the machine doing what Semel did, poisons the daemons
-until they exit. The remedy is to wait two minutes or to end the `ibtoold` processes.
+Residual: something else on the machine running `ibtool` or `actool` with the pool can
+still poison the pool for its own later clients, but never Semel's.

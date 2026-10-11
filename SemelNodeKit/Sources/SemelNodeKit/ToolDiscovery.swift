@@ -29,18 +29,9 @@ public struct ToolFinder {
     /// plugin its toolchain and its platforms ship (B-80): code the expansion follows that
     /// the binary's bytes do not cover, so it is part of what the descriptor fingerprints.
     public let companionFingerprint: (String) -> String?
-    /// Whether the tool runs in a sandbox folder that is emptied and reused rather than
-    /// removed: `ibtool` and `actool`, whose daemon stays in the folder a run had (B-152).
-    public var reusesSandboxFolders = false
 
     public init(name: String, locate: @escaping () -> String?, version: @escaping (String) -> String?) {
         self.init(name: name, locate: locate, version: version, companionFingerprint: { _ in nil })
-    }
-
-    public init(name: String, locate: @escaping () -> String?, version: @escaping (String) -> String?,
-                reusesSandboxFolders: Bool) {
-        self.init(name: name, locate: locate, version: version, companionFingerprint: { _ in nil })
-        self.reusesSandboxFolders = reusesSandboxFolders
     }
 
     public init(name: String,
@@ -107,9 +98,7 @@ public enum ToolDiscovery {
                                   architecture: MachineQuery.hostArchitecture,
                                   recursiveHash: toolFingerprint(binary:     toolBinaryFingerprint(ofFileAt: path),
                                                                  companions: finder.companionFingerprint(path))),
-                toolExecutor: try LocalFileSystemTool(localPath: path,
-                                                      reusingSandboxFoldersUnder: finder.reusesSandboxFolders
-                                                          ? SemelPaths.reusedSandboxFolders : nil))
+                toolExecutor: try LocalFileSystemTool(localPath: path))
         }
     }
 }

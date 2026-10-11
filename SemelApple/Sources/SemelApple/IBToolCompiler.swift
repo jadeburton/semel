@@ -146,7 +146,7 @@ public struct IBToolCompiler: Node {
         let tool = try ToolRunnerRegistry.instance.tool(descriptor: configuration.toolDescriptor,
                                                         namespace:  IBToolCompilerConfiguration.settingNamespace)
         let result = try tool.execute(arguments: arguments,
-                                      environment: [:],
+                                      environment: InterfaceBuilderDaemon.environment,
                                       inputFiles: [documentFile],
                                       expectedOutputFileNames: [],
                                       expectedOutputFolders: [Self.outputFolder])

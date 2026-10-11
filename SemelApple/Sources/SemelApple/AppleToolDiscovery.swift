@@ -18,9 +18,8 @@ enum AppleToolDiscovery {
     /// The tools this package runs, each located through the active toolchain.
     static var finders: [ToolFinder] {
         [
-            // Both hand their work to `ibtoold`, which stays in the folder a run had (B-152).
-            ToolFinder(name: "actool", locate: { locate("actool") }, version: actoolVersion(at:), reusesSandboxFolders: true),
-            ToolFinder(name: "ibtool", locate: { locate("ibtool") }, version: ibtoolVersion(at:), reusesSandboxFolders: true),
+            ToolFinder(name: "actool", locate: { locate("actool") }, version: actoolVersion(at:)),
+            ToolFinder(name: "ibtool", locate: { locate("ibtool") }, version: ibtoolVersion(at:)),
             ToolFinder(name: "xcstringstool", locate: { locate("xcstringstool") }, version: { _ in xcodeVersion() }),
             ToolFinder(name: "codesign", locate: { locate("codesign") }, version: codesignVersion(at:)),
             // momc answers no `--version`; the Xcode that ships it decides its output.

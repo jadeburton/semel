@@ -123,6 +123,8 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
             "--output-format", "human-readable-text",
         ])
         XCTAssertEqual(executor.invocations.last?.expectedOutputFolders, ["out"])
+        // A daemon of its own, never one of the pool another run left in its folder (B-152).
+        XCTAssertEqual(executor.invocations.last?.environment, ["IBToolNeverDeque": "YES"])
         XCTAssertEqual(executor.invocations.last?.expectedOutputFileNames, ["partial.plist"])
     }
 
@@ -196,9 +198,10 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
     func test_actoolWritesTheSameSymbolsForTheSameCatalog() throws {
         let actool = try XCTUnwrap(AppleToolDiscovery.locate("actool"), "no actool on this machine")
         var written: [String] = []
-        // Through the runner the node uses, in a reused sandbox folder: a run from a folder
-        // removed afterwards leaves ibtoold in it, and every client after it fails (B-152).
-        let runner = try LocalFileSystemTool(localPath: actool, reusingSandboxFoldersUnder: SemelPaths.reusedSandboxFolders)
+        // Through the runner the node uses and with the environment it gives actool: a run
+        // from a folder removed afterwards, on a daemon of the pool, would leave the daemon
+        // in it, and every client after it would fail (B-152).
+        let runner = try LocalFileSystemTool(localPath: actool)
         for order in [["Zeta", "amber", "folderBlue"], ["folderBlue", "amber", "Zeta"]] {
             var inputs = [FileNameAndContent(filePath: "Assets.xcassets/Contents.json",
                                              hash: try #"{"info":{"author":"xcode","version":1}}"#.intern())]
@@ -218,7 +221,7 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
                             "--target-device", "mac", "--output-partial-info-plist", "partial.plist"]
                            + symbols.arguments(writingTo: "GeneratedAssetSymbols.swift")
                            + ["--output-format", "human-readable-text"],
-                environment: [:],
+                environment: InterfaceBuilderDaemon.environment,
                 inputFiles: inputs,
                 expectedOutputFileNames: ["GeneratedAssetSymbols.swift", "partial.plist"],
                 expectedOutputFolders: ["out"])
@@ -231,7 +234,7 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
         XCTAssertEqual(written[0], written[1])
         XCTAssertTrue(written[0].contains("static let amber = "), written[0])
         XCTAssertTrue(written[0].contains("extension SwiftUI.Color"), written[0])
-        XCTAssertFalse(written[0].contains("slot-"), "no path is in the text")
+        XCTAssertFalse(written[0].contains("/var/folders/"), "no path is in the text")
     }
 
     func test_withoutAnAppIconNoneIsAskedFor() throws {

@@ -69,6 +69,8 @@ final class IBToolCompilerTests: SemelAppleTestCase {
                                                 "--sdk", "/SDKs/MacOSX.sdk",
                                                 "--compile", "out/Base.lproj/MainMenu.nib", "Base.lproj/MainMenu.xib"])
         XCTAssertEqual(executor.invocations.last?.expectedOutputFolders, ["out"])
+        // A daemon of its own, never one of the pool another run left in its folder (B-152).
+        XCTAssertEqual(executor.invocations.last?.environment, ["IBToolNeverDeque": "YES"])
         XCTAssertEqual(try treeManifest(from: output.outputValues[IBToolCompiler.output]).entries.map(\.path), ["Base.lproj/MainMenu.nib"])
     }
 
@@ -147,7 +149,7 @@ final class IBToolCompilerTests: SemelAppleTestCase {
     func test_theRealIBToolCompilesNetNewsWiresMainWindowToTheSameBytesTwice() throws {
         let ibtool = try XCTUnwrap(AppleToolDiscovery.locate("ibtool"), "ibtool must be discoverable via xcrun")
         let sdkPath = try XCTUnwrap(SemelApple.sdkPath(forPlatform: .macos))
-        ToolRunnerRegistry.instance.registerTool(descriptor: descriptor, toolExecutor: try LocalFileSystemTool(localPath: ibtool, reusingSandboxFoldersUnder: SemelPaths.reusedSandboxFolders))
+        ToolRunnerRegistry.instance.registerTool(descriptor: descriptor, toolExecutor: try LocalFileSystemTool(localPath: ibtool))
         let xib = XcodeBuildSettingsTests.netNewsWire.appendingPathComponent("Mac/MainWindow/Base.lproj/MainWindow.xib")
         let configuration = self.configuration().replacingOccurrences(of: "/SDKs/MacOSX.sdk", with: sdkPath)
 

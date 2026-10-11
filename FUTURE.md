@@ -3487,20 +3487,20 @@ application target, simulator only, all library code in packages. In suggested o
       the two Firebase products out of the app with the two sources that use them
       (`SAAnalyticsConsentPolicy+Firebase.swift`, `ReportExceptionApplication.m`, the
       app's principal class) and two calls in `SPAppController.m`.
-   13. **ibtool and actool not run** — `open`; the cause was Semel's own, B-152. Every
+   13. **ibtool and actool not run** — `open`. The cause was Semel's own, B-152. Every
       xib, the storyboard and the catalog failed with `IBCurrentDirectoryPath …
       currentDirectoryPath is unexpectedly nil — Operation not permitted`, and so did
-      `xcrun ibtool --compile` run by hand. This slice's first account put it outside
-      Semel and the project, and that was wrong. ibtool and actool hand their work to a
-      per-user pool of `ibtoold` daemons. A daemon moves into the client's working
-      directory for a request and, after an `actool` request, stays there. Semel ran
-      every tool in a temporary folder it removed after the run, so each catalog left a
-      daemon in a folder that was gone, and every client on the machine failed until the
-      daemons went idle and exited, about two minutes later (measured 2026-10-11, B-152).
-      Fixed by running actool and ibtool in sandbox folders that are emptied and reused,
-      never removed (`ReusedSandboxFolders`). Stepped around for the compile with
-      `ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO`, so the Swift does not wait
-      for actool's symbols. Next: rebuild and see what the xibs and the catalog ask for.
+      `xcrun ibtool --compile` run by hand. This slice's first account put that outside
+      Semel and the project, and it was wrong. ibtool and actool share a per-user pool of
+      `ibtoold` daemons. An actool request leaves its daemon in the client's working
+      directory. Semel removed each run's folder, so the daemon sat in a folder that was
+      gone, and every client after it failed until the daemons went idle and exited. A
+      later ibtool client also has its relative paths resolved against that daemon's
+      folder (measured 2026-10-11, B-152). Fixed: the two tools are run with
+      `IBToolNeverDeque=YES`, so each run starts a daemon of its own and never takes one
+      from the pool. Stepped around for the compile with
+      `ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO`, so the Swift does not wait for
+      actool's symbols. Next: rebuild and see what the xibs and the catalog ask for.
    14. **`SequelAceTunnelAssistant`** — `open`. A tool target of the project the app's
       copy-files phase puts beside its executable; only the application and its
       extensions are built, and the formula says the copy is not made. Next: a

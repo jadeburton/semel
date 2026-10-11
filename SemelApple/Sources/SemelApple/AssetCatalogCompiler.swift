@@ -260,7 +260,7 @@ public struct AssetCatalogCompiler: Node {
         let tool = try ToolRunnerRegistry.instance.tool(descriptor: configuration.toolDescriptor,
                                                         namespace:  AssetCatalogCompilerConfiguration.settingNamespace)
         let result = try tool.execute(arguments: arguments,
-                                      environment: [:],
+                                      environment: InterfaceBuilderDaemon.environment,
                                       inputFiles: inputFiles,
                                       expectedOutputFileNames: [Self.partialInfoPlistFile],
                                       expectedOutputFolders: [Self.outputFolder])
@@ -274,7 +274,7 @@ public struct AssetCatalogCompiler: Node {
         if let symbols = configuration.swiftAssetSymbols, result.exitCode == 0 {
             symbolsResult = try tool.execute(arguments: common + symbols.arguments(writingTo: Self.swiftAssetSymbolsFile)
                                                       + ["--output-format", "human-readable-text"],
-                                             environment: [:],
+                                             environment: InterfaceBuilderDaemon.environment,
                                              inputFiles: inputFiles,
                                              expectedOutputFileNames: [Self.swiftAssetSymbolsFile],
                                              expectedOutputFolders: [])

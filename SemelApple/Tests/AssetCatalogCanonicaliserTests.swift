@@ -89,12 +89,12 @@ final class AssetCatalogCanonicaliserTests: SemelAppleTestCase {
             FileNameAndContent(filePath: "Icon.icon/\(path)",
                                hash: try DataObjectStore.shared.store(fileAt: icon.appendingPathComponent(path)))
         }
-        let result = try LocalFileSystemTool(localPath: actool, reusingSandboxFoldersUnder: SemelPaths.reusedSandboxFolders).execute(
+        let result = try LocalFileSystemTool(localPath: actool).execute(
             arguments: ["Icon.icon", "--compile", "out", "--platform", "iphonesimulator",
                         "--minimum-deployment-target", "18.0", "--target-device", "iphone",
                         "--app-icon", "Icon", "--output-partial-info-plist", "partial.plist",
                         "--output-format", "human-readable-text"],
-            environment: [:],
+            environment: InterfaceBuilderDaemon.environment,
             inputFiles: inputs,
             expectedOutputFileNames: ["partial.plist"],
             expectedOutputFolders: ["out"])
