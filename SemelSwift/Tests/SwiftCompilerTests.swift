@@ -154,6 +154,13 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         XCTAssertEqual(try sourceSpecs(output), [])
     }
 
+    /// A listed path is the folder it names however the manifest writes it: Firebase's
+    /// `sources: ["Crashlytics/Rollouts/"]` (B-77 item 4).
+    func test_aListedPathIsReadAsTheWalkSpellsIt() {
+        XCTAssertEqual(SwiftCompilerConfiguration.relativePathList("Crashlytics/Rollouts/,./Sources/Kit,Plain.swift,,/"),
+                       ["Crashlytics/Rollouts", "Sources/Kit", "Plain.swift"])
+    }
+
     // MARK: - Compiling once the walk has finished (B-112)
 
     /// A run that asks for a tree or a file not yet wired has not seen every source: a

@@ -141,8 +141,12 @@ struct SwiftFormulaConverter: Node {
     /// error (B-80).
     /// 24: a `.headerSearchPath` climbing out of the target's folder is resolved against it,
     /// and a header folder when it reaches a folder the walk found or an ancestor of the
-    /// target inside its package (B-77 item 4).
-    public static let implementationVersion = 24
+    /// target inside its package; an Objective-C target's compiler loads the modules of the
+    /// C targets it reaches (B-77 item 4).
+    /// 25: an Objective-C target's preprocessor is given the module maps SwiftPM writes for
+    /// the C targets it reaches, and both stages the Objective-C interface of each Swift
+    /// target it reaches, which a product now compiles and links (B-77 item 4).
+    public static let implementationVersion = 25
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -1891,6 +1895,15 @@ struct SwiftFormulaConverter: Node {
 
         var blocks: [String] = []
         var emittedFuncs = Set<String>()
+        // Every Swift target an Objective-C target reaches, which writes its Objective-C
+        // interface for it to import (B-77 item 4). Sorted walks, so the set is the same
+        // on every run.
+        var importedByObjectiveC = Set<String>()
+        for target in allTargetsByName.values.sorted(by: { $0.name < $1.name }) where target.clangInfo?.hasObjectiveC == true {
+            for swiftTarget in collectSwiftTargetsReachedThroughClang(root: target, lookupAll: allTargetsNamed) {
+                importedByObjectiveC.formUnion(collectTransitiveTargets(root: swiftTarget, lookupAll: allTargetsNamed).map(\.name))
+            }
+        }
         // Every binary target a product reaches whose artifact cannot be used, by its key,
         // with the products reaching it.
         var unbuiltBinaryTargets: [String: (target: SPMTarget, location: BinaryArtifactLocation, reachingProducts: Set<String>)] = [:]
@@ -1970,6 +1983,25 @@ struct SwiftFormulaConverter: Node {
                     }
                 }
             }
+            // A Swift target reached only through a C target is the product's too, compiled
+            // and linked: Firebase's Objective-C `FirebaseCore` depends on the Swift
+            // `FirebaseCoreInternal`, and imports it (B-77 item 4). The walk above stops at a
+            // C target, so the C targets are walked again for what they reach, until nothing
+            // new is found.
+            var unwalked = clangTargets
+            while let clangTarget = unwalked.popLast() {
+                for swiftTarget in collectSwiftTargetsReachedThroughClang(root: clangTarget, lookupAll: allTargetsNamed) {
+                    for target in collectTransitiveTargets(root: swiftTarget, lookupAll: allTargetsNamed)
+                    where collected.insert(target.name).inserted {
+                        allTargets.append(target)
+                        for reached in collectTransitiveClangTargets(root: target, lookupAll: allTargetsNamed)
+                        where collectedClang.insert(reached.name).inserted {
+                            clangTargets.append(reached)
+                            unwalked.append(reached)
+                        }
+                    }
+                }
+            }
 
             // A product that reduces to no compilable targets — GRDB's `GRDBSQLite`
             // library vends nothing but a .systemLibrary — has no object files to link.
@@ -2011,7 +2043,8 @@ struct SwiftFormulaConverter: Node {
                                                packageFolder: rootPackageFolder,
                                                platform: platform,
                                                lookupAll: allTargetsNamed,
-                                               binaryTargets: usableBinaryTargets(from: target)))
+                                               binaryTargets: usableBinaryTargets(from: target),
+                                               writesObjectiveCInterface: importedByObjectiveC.contains(target.name)))
                 emittedFuncs.insert(fn)
             }
 
@@ -2578,6 +2611,59 @@ struct SwiftFormulaConverter: Node {
         "'\(targetName)': \(headerTreeFuncName(for: targetName))().files"
     }
 
+    /// The sandbox folder a preprocessor lays the Swift targets' Objective-C interfaces
+    /// under, one folder each, an `-I` each.
+    static let objectiveCInterfacesFolder = "swift-interfaces"
+
+    /// `<Module>-Swift.h`, the name SwiftPM gives a Swift target's Objective-C interface.
+    private static func objectiveCInterfaceName(of target: SPMTarget) -> String {
+        "\(target.moduleName)-Swift.h"
+    }
+
+    /// A Swift target's Objective-C interface and the map SwiftPM writes over it, as a tree,
+    /// below `folder` (none for ""): what an Objective-C `@import FirebaseCoreInternal;`
+    /// loads (B-77 item 4).
+    private func objectiveCInterfaceTree(of target: SPMTarget, under folder: String) -> String {
+        let header = Self.objectiveCInterfaceName(of: target)
+        let prefix = folder.isEmpty ? "" : "\(folder)/"
+        return "TreeBuilder(input: ['\(prefix)\(header)': \(compilerFuncName(for: target.name))().objectiveCHeader, "
+             + "'\(prefix)\(PackageClangTarget.moduleMapFileName)': "
+             + "ModuleMapWriter(moduleName: '\(target.moduleName)', umbrellaHeader: '\(header)').output]).files"
+    }
+
+    /// The `ModuleMapWriter` for the map SwiftPM writes for a C target, nil for one whose
+    /// public headers carry their own or that has no module.
+    private func generatedModuleMap(of target: SPMTarget) -> String? {
+        switch target.clangInfo?.moduleMap {
+        case .umbrellaHeader(let header)?: return "ModuleMapWriter(moduleName: '\(target.moduleName)', umbrellaHeader: '\(header)').output"
+        case .umbrellaDirectory?:          return "ModuleMapWriter(moduleName: '\(target.moduleName)', umbrellaDirectory: '.').output"
+        case .provided?, nil:              return nil
+        }
+    }
+
+    /// Every Swift target `root` reaches through its dependencies, whether through C
+    /// targets or Swift ones, in encounter order: what an Objective-C target may import.
+    private func collectSwiftTargetsReachedThroughClang(root: SPMTarget, lookupAll: (String) -> [SPMTarget]) -> [SPMTarget] {
+        var found: [SPMTarget] = []
+        var visited = Set<String>([root.name])
+        var pending = [root]
+        while let current = pending.popLast() {
+            for dependency in current.dependencies {
+                guard let name = dependency.targetName else {
+                    continue
+                }
+                for reached in lookupAll(name) where !reached.isSystemLibrary && !reached.isMacro && !reached.isBinary
+                && visited.insert(reached.name).inserted {
+                    if !reached.isClangTarget {
+                        found.append(reached)
+                    }
+                    pending.append(reached)
+                }
+            }
+        }
+        return found
+    }
+
     private func sliceFuncName(for targetName: String) -> String {
         "slice\(sanitizedIdentifier(targetName))"
     }
@@ -2707,8 +2793,34 @@ struct SwiftFormulaConverter: Node {
         }
         let folderWires = folders.map { "            '\($0)': Folder(path: '\($0)').manifest" }
 
+        // With modules, the maps SwiftPM writes for the C targets the source reaches, its own
+        // among them, laid in their public-headers folders where the files are, so an
+        // `@import FirebaseCore;` finds the module the headers belong to; and the Objective-C
+        // interface of each Swift target it reaches, under a map of its own (B-77 item 4).
+        var headerTrees: [String] = []
+        if target.clangInfo?.hasObjectiveC == true {
+            for reached in [target] + collectTransitiveClangTargets(root: target, lookupAll: lookupAll) {
+                guard let map = generatedModuleMap(of: reached) else {
+                    continue
+                }
+                let publicFolder = headerFolder(of: reached, packageFolder: packageFolder)
+                headerTrees.append("            '\(publicFolder)': TreeBuilder(input: ['\(PackageClangTarget.moduleMapFileName)': \(map)]).files")
+            }
+            for swiftTarget in collectSwiftTargetsReachedThroughClang(root: target, lookupAll: lookupAll) {
+                headerTrees.append("            '\(Self.objectiveCInterfacesFolder)/\(swiftTarget.moduleName)': "
+                                   + objectiveCInterfaceTree(of: swiftTarget, under: ""))
+            }
+        }
+
         var literals = objectiveCLiterals(target: target, includingModuleName: true)
         literals["defines"] = (["\(Self.swiftPackageCondition)=1"] + target.cDefines).joined(separator: ",")
+        // A search path above the target's folder, the package's root, is searched for its
+        // headers alone: the root of a package Firebase's size holds thousands of files, each
+        // a wire on every preprocess (B-77 item 4).
+        let headersOnly = (target.clangInfo?.headerSearchPaths ?? []).filter { PackageResources.isAtOrUnder(folder, $0) && $0 != folder }
+        if !headersOnly.isEmpty {
+            literals["headersOnlyFolders"] = headersOnly.joined(separator: ",")
+        }
         let configExpr = Self.configurationExpression(namespace: Self.clangPreprocessorNamespace,
                                                       packageFolder: buildRoot(defaultingTo: packageFolder),
                                                       literals: literals)
@@ -2716,8 +2828,9 @@ struct SwiftFormulaConverter: Node {
                "    ClangPreprocessor(\n" +
                "        configuration: ['config': \(configExpr)],\n" +
                "        input: [path: StaticFile(path: path)],\n" +
-               "        headerFolders: [\n" + folderWires.joined(separator: ",\n") + "\n        ]\n" +
-               "    )"
+               "        headerFolders: [\n" + folderWires.joined(separator: ",\n") + "\n        ]" +
+               (headerTrees.isEmpty ? "" : ",\n        headerTrees: [\n" + headerTrees.joined(separator: ",\n") + "\n        ]") +
+               "\n    )"
     }
 
     /// The linker's object entries for one C target: one for-each over the target's
@@ -2737,9 +2850,15 @@ struct SwiftFormulaConverter: Node {
             return []
         }
         let folder = target.folder(in: target.overridePackageFolder ?? packageFolder)
+        // With modules the compile builds what the text imports again, under the target's
+        // defines, which it is given as the preprocessor is (B-77 item 4).
+        var compilerLiterals = objectiveCLiterals(target: target, includingModuleName: false)
+        if clangInfo.hasObjectiveC {
+            compilerLiterals["defines"] = (["\(Self.swiftPackageCondition)=1"] + target.cDefines).joined(separator: ",")
+        }
         let configExpr = Self.configurationExpression(namespace: Self.clangCompilerNamespace,
                                                       packageFolder: buildRoot(defaultingTo: packageFolder),
-                                                      literals: objectiveCLiterals(target: target, includingModuleName: false))
+                                                      literals: compilerLiterals)
         func quoted(_ relative: String) -> String { "'\(folder)/\(relative)'" }
         func items(_ patterns: [String]) -> String {
             var items = patterns.map(quoted).joined(separator: ", ")
@@ -2753,6 +2872,9 @@ struct SwiftFormulaConverter: Node {
             let modules = collectTransitiveClangTargets(root: target, lookupAll: lookupAll)
                 .filter { $0.clangInfo?.moduleMap != nil }
                 .map { headerTreeWire(for: $0.name) }
+                + collectSwiftTargetsReachedThroughClang(root: target, lookupAll: lookupAll).map {
+                    "'\($0.name) interface': " + objectiveCInterfaceTree(of: $0, under: $0.moduleName)
+                }
             moduleTrees = modules.isEmpty ? "" : ", moduleTrees: [" + modules.joined(separator: ", ") + "]"
         }
         var entries: [String] = []
@@ -2777,12 +2899,18 @@ struct SwiftFormulaConverter: Node {
                               packageFolder: String,
                               platform: String?,
                               lookupAll: (String) -> [SPMTarget],
-                              binaryTargets: [SPMTarget] = []) throws -> String {
+                              binaryTargets: [SPMTarget] = [],
+                              writesObjectiveCInterface: Bool = false) throws -> String {
         let pkgRoot     = target.overridePackageFolder ?? packageFolder
         let sourcesPath = target.folder(in: pkgRoot)
         // moduleName is what makes a target itself, and a config file must not be able to
         // rename it -- so it is a literal property, which is what makes it win over the file.
         var derived = ["moduleName": target.moduleName]
+        // The Objective-C interface an Objective-C target that reaches this one imports,
+        // under the name SwiftPM gives it (B-77 item 4).
+        if writesObjectiveCInterface {
+            derived["objectiveCHeaderName"] = Self.objectiveCInterfaceName(of: target)
+        }
         if target.type == "executable" {
             derived["parseAsLibrary"] = "false"
         }
@@ -2840,8 +2968,18 @@ struct SwiftFormulaConverter: Node {
         // load all of them to load it: compiling SemelCLI, which imports only
         // SemelCore, fails with "missing required modules: 'SemelDatabaseModels', 'GRDB'"
         // unless those are on its import path too.
+        // And every Swift target reached through a C one: Firebase's `FirebaseSessions`
+        // imports `FirebaseCoreInternal`, which it reaches through `FirebaseCore`, an
+        // Objective-C target, as SwiftPM puts it on the import path (B-77 item 4).
+        var reachedModules = collectTransitiveTargets(root: target, lookupAll: lookupAll)
+        var reachedNames = Set(reachedModules.map(\.name))
+        for swiftTarget in collectSwiftTargetsReachedThroughClang(root: target, lookupAll: lookupAll) {
+            for reached in collectTransitiveTargets(root: swiftTarget, lookupAll: lookupAll) where reachedNames.insert(reached.name).inserted {
+                reachedModules.append(reached)
+            }
+        }
         var moduleWires: [String] = []
-        for depTarget in collectTransitiveTargets(root: target, lookupAll: lookupAll)
+        for depTarget in reachedModules
         where depTarget.name != target.name {
             // Named for the module, not the target: the compiler writes the wire's name
             // plus `.swiftmodule`, and swiftc looks for the file under the module's name.

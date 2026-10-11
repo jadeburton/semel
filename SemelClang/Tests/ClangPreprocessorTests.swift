@@ -539,6 +539,26 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         XCTAssertTrue(executor.invocations.isEmpty, "nothing runs until the headers are on the wire")
     }
 
+    /// Below a headers-only folder — a package's root, which Firebase names above its
+    /// targets — only the headers are asked for, unless another header folder holds the
+    /// file as well (B-77 item 4).
+    func test_aHeadersOnlyFolderPlacesItsHeadersAlone() throws {
+        let root    = try folderManifest("input:/pkg", files: ["Package.swift", "top.h"], folders: ["src", "docs"])
+        let src     = try folderManifest("input:/pkg/src", files: ["blocks.c", "parser.h", "table.inc"], folders: [])
+        let docs    = try folderManifest("input:/pkg/docs", files: ["index.md", "api.h"], folders: [])
+        var inputValues = try makeFolderInput().inputValues
+        inputValues[ClangPreprocessor.headerFolders] = ["input:/pkg": root, "input:/pkg/src": src]
+        inputValues[ClangPreprocessor.headerFolderTrees] = try trees(of: ["input:/pkg": root, "input:/pkg/src": src],
+                                                                     below: ["input:/pkg/docs": docs])
+        let configuration = try inputValues[ClangPreprocessor.configuration]?.values.first?.expectValue().resolveAsString() ?? ""
+        inputValues[ClangPreprocessor.configuration] = ["configuration": .value(try (configuration + "\nheadersOnlyFolders=input:/pkg").intern())]
+
+        let output = try makeTool().process(input: ProcessInput(inputValues: inputValues))
+
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[ClangPreprocessor.headerInputFiles]).keys.sorted(),
+                       ["input:/pkg/docs/api.h", "input:/pkg/src/parser.h", "input:/pkg/src/table.inc", "input:/pkg/top.h"])
+    }
+
     /// With every file on its wire the run places the nested ones at their paths, and
     /// only the folders on `headerFolders` are search paths.
     func test_nestedHeadersArePlacedAtTheirPathsAndOnlyTheGivenFoldersAreSearchPaths() throws {

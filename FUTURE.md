@@ -3477,33 +3477,36 @@ application target, simulator only, all library code in packages. In suggested o
       `ClangCompiler`'s command line is unchanged, so it is not bumped. Pinned by
       `ClangAuditedRegionsTests`, whose real-clang test compiles the cast across the two
       stages.
-   12. **Firebase** — `open`, the Swift converter's. A fresh clone's build failed
-      on 180 package sources at the start of this slice, and fails on 13 now.
-      (a) ~~`.headerSearchPath("../..")`~~ done. GoogleUtilities, GoogleDataTransport
-      and Firebase include `"Crashlytics/Crashlytics/Components/…h"` from the package's
-      root. A search path is now resolved against the target's folder, and kept when it
-      reaches a folder the walk found or an ancestor of the target inside its package
-      (`PackageClangTarget`, `SwiftFormulaConverter` 24). Each preprocess of those
-      targets then places the package's tree, up to 4,993 files for firebase-ios-sdk,
-      which is most of why the cold build went from 314 s to 541 s. *ISSUE:* a header
-      folder places every file below it, not just the headers.
-      (b) ~~FBLPromises' import of its own module~~ done. In its own preprocessed text,
-      `-E` writes `#pragma clang module import FBLPromises` where a header of the module
-      is imported again after its text came in. `ClangPreprocessor` (12) takes it out
-      with the module's begin and end. Its dependents' imports of it, and of every C
-      target they reach that has a module map, now load at the compile stage: an
-      Objective-C target's compiler is given those targets' header trees on
-      `moduleTrees`.
-      (c) The wall: an Objective-C package target importing a module that SwiftPM writes
-      the map for. `@import FirebaseCore;` in `FirebaseCoreInternal.h` (9 sources)
-      names a C target whose map SwiftPM generates, which the preprocessor's header
-      folders do not hold; and `@import FirebaseCoreInternal;` and
-      `@import FirebaseCrashlyticsSwift;` (4 sources) name Swift targets, which the
-      Objective-C reaches through the module SwiftPM writes over the `-Swift.h` its
-      compiler emits. Next: give the preprocessor the same module trees as the compiler,
-      and write a Swift target's Objective-C interface and a module map over it for an
-      Objective-C target that depends on it. Not reached: linking the binary
-      xcframeworks (abseil, gRPC, GoogleAppMeasurement). nanopb's C compiled.
+   12. ~~**Firebase**~~ Done (second slice), in the Swift converter. A fresh clone's
+      build failed on 180 package sources at the start of this slice and now builds
+      FirebaseAnalyticsCore and FirebaseCrashlytics whole: every target compiled, the
+      binary xcframeworks (GoogleAppMeasurement, abseil) linked, nanopb's C and the
+      resource bundles in the app.
+      (a) `.headerSearchPath("../..")`. GoogleUtilities, GoogleDataTransport and Firebase
+      include `"Crashlytics/Crashlytics/Components/…h"` from the package's root. A search
+      path is now resolved against the target's folder, and kept when it reaches a folder
+      the walk found or an ancestor of the target inside its package. An ancestor is
+      searched for its headers alone (`ClangPreprocessor.headersOnlyFolders`), since
+      firebase-ios-sdk's root holds 4,993 files, 1,415 of them headers, and every
+      preprocess took each one as a wire.
+      (b) FBLPromises' import of its own module. In its own preprocessed text, `-E`
+      writes `#pragma clang module import FBLPromises` where a header of the module is
+      imported again after its text came in. `ClangPreprocessor` (12) takes it out, with
+      the module's begin and end.
+      (c) Objective-C importing modules SwiftPM writes. An Objective-C package target's
+      preprocessor is given the maps SwiftPM generates for the C targets it reaches, its
+      own among them, laid in their public folders (`@import FirebaseCore;`). It also
+      gets the Objective-C interface of each Swift target it reaches, `<Module>-Swift.h`
+      under a map of its own (`@import FirebaseCoreInternal;`). The compiler is given
+      the same, the C targets' header trees and the Swift interfaces, on `moduleTrees`,
+      and the target's defines, under which the modules it loads are built: nanopb
+      declares `pb_release` only under GoogleDataTransport's `PB_ENABLE_MALLOC`
+      (`ClangCompiler` 7). A Swift target reached only through an Objective-C one
+      (`FirebaseCoreInternal`, `FirebaseCrashlyticsSwift`) is the product's, compiled and
+      linked, and writes its interface. It is also on the import path of a Swift target
+      that reaches it through a C one (`FirebaseSessions`).
+      `SwiftCompiler` (9) reads a listed path with a slash behind as the folder it names:
+      `sources: ["Crashlytics/Rollouts/"]` compiled nothing. `SwiftFormulaConverter` 25.
    13. **ibtool and actool not run** — `open`. The cause was Semel's own, B-152. Every
       xib, the storyboard and the catalog failed with `IBCurrentDirectoryPath …
       currentDirectoryPath is unexpectedly nil — Operation not permitted`, and so did
