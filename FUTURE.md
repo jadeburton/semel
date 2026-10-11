@@ -3346,14 +3346,25 @@ application target, simulator only, all library code in packages. In suggested o
       the two Firebase products out of the app with the two sources that use them
       (`SAAnalyticsConsentPolicy+Firebase.swift`, `ReportExceptionApplication.m`, the
       app's principal class) and two calls in `SPAppController.m`.
-   13. **ibtool and actool here** — `open`, not Semel's. Every xib, the storyboard and the
-      catalog fail `IBCurrentDirectoryPath … currentDirectoryPath is unexpectedly nil —
-      Operation not permitted`; `xcrun ibtool --compile out.nib X.xib` fails the same way
-      outside Semel, in any directory, under `launchd` as well, and succeeds with absolute
-      paths — a state of this machine's Interface Builder tools on 2026-10-11, which
-      every roster project with a catalog would meet. Stepped around for the compile with
-      `ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO`, so the Swift does not wait for
-      actool's symbols. Next: check on a machine whose tools work before blaming a node.
+   13. **ibtool and actool not run** — not reached; the xibs, the storyboard and the
+      catalog failed in this session for a reason outside Semel and outside the project.
+      Every run said `IBCurrentDirectoryPath … currentDirectoryPath is unexpectedly nil —
+      Operation not permitted`, and so did `xcrun ibtool --compile` run by hand. That was
+      not a deleted working directory: each run's directory existed, and so did the
+      session's shells. It was not Semel either. The roster's nightly compiled
+      NetNewsWire's xibs and every catalog on this machine that night. The SemelApple
+      suite, including the real-ibtool and real-actool tests, passed at about 01:45, and
+      so did the root suite's `swift-binary-target-app` fixture, which has a catalog. At
+      02:31 those same tests and that fixture failed with the same message. ibtool and
+      actool hand their work to a per-user `ibtoold` daemon (`--sending-client-environment`).
+      Through 02:47 the one serving every client had been started at 02:31 from another
+      agent's worktree. `Operation not permitted` (not "no such file") suggests that
+      daemon inherited a restrictive sandbox from whatever launched it; that was not
+      confirmed. Semel runs every tool in a directory it creates for the run and removes
+      after, so no Semel code path runs a tool from a deleted directory. Stepped around
+      for the compile with `ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO`, so the
+      Swift does not wait for actool's symbols. Next: rebuild with a fresh `ibtoold` and
+      see what the xibs and the catalog ask for.
    14. **`SequelAceTunnelAssistant`** — `open`. A tool target of the project the app's
       copy-files phase puts beside its executable; only the application and its
       extensions are built, and the formula says the copy is not made. Next: a
