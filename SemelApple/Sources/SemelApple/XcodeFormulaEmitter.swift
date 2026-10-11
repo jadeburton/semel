@@ -36,6 +36,9 @@ struct XcodeFormulaEmitter {
     /// Every local package of the project, relative to its folder: those it declares and
     /// those found in its synchronized folders (`LocalPackageSearch`).
     let localPackagePaths: [String]
+    /// The framework targets of referenced projects the application links (B-77 item 4),
+    /// each with the emitter over its own project.
+    var builtFrameworks: [BuiltFramework] = []
 
     /// Where the parts of a bundle go, by platform (B-77). An iOS bundle is flat: the
     /// executable, the Info.plist and every resource at its root, extensions under
@@ -197,6 +200,10 @@ struct XcodeFormulaEmitter {
         let extensions = Array(project.bundleTargets(of: application).dropFirst())
         var blocks: [String] = ["// Written by XcodeProjectConverter: \(application.name) and \(extensions.count) embedded extension(s)."]
         blocks += includes(for: [application] + extensions)
+        // The frameworks of referenced projects, each built once whoever links it.
+        for framework in builtFrameworks {
+            blocks += try framework.emitter.frameworkBlocks(for: framework)
+        }
         let applicationSettings = try settings(application)
         let applicationBundle = try TargetIdentity(target: application, settings: applicationSettings, sdk: build.sdk).bundleName
 
@@ -578,7 +585,7 @@ struct XcodeFormulaEmitter {
         // The target's headers as one tree, by their paths relative to the project's folder:
         // what its bridging header imports from — the shape a package's C target hands a
         // Swift importer, `headers_<Target>()` — and its C-family sources' header map.
-        let headerTree = objectiveC.headersBesideTheBridgingHeader
+        let headerTree = objectiveC.headers
         let hasHeaderTree = !headerTree.isEmpty && (objectiveC.bridgingHeader != nil || !objectiveC.sources.isEmpty)
         if hasHeaderTree {
             blocks.append(Self.treeBuilder(named: "headers_\(name)", files: headerTree))
@@ -609,6 +616,22 @@ struct XcodeFormulaEmitter {
             blocks.append(Self.frameworkMerger(named: "searchedFrameworks_\(name)", frameworks: projectFrameworks.searched,
                                                projectFolder: build.projectFolder))
             compiledFrameworkTrees.append("        \(Self.quoted("\(target.name) searched")): searchedFrameworks_\(name)().files")
+        }
+        // A framework a referenced project's target builds, as the tree that target makes:
+        // compiled against, linked, and embedded like a vendored one (B-77 item 4).
+        var builtFrameworkTrees: [String] = []
+        for product in target.linkedProducts {
+            guard builtFrameworks.contains(where: { $0.product == product }) else {
+                blocks.append("// \(product.fileName), built by \(product.targetName) in \(product.projectPath), is linked by "
+                              + "\(target.name) and not built: only a framework target of a referenced project is (B-77 item 4).")
+                continue
+            }
+            builtFrameworkTrees.append("        \(Self.quoted(product.fileName)): \(Self.frameworkFunction(for: product.fileName))().files")
+        }
+        compiledFrameworkTrees += builtFrameworkTrees
+        for copied in target.copiedProducts {
+            blocks.append("// \(copied), a product of this project's own targets, is copied into \(target.name) by a phase "
+                          + "and not built: only the application and its extensions are (B-77 item 4).")
         }
 
         // ── resources ────────────────────────────────────────────────────────
@@ -760,23 +783,17 @@ struct XcodeFormulaEmitter {
             })
             if hasHeaderTree {
                 headerWires += ",\n        quoteHeaderTrees: [\(Self.quoted(build.projectFolder)): headers_\(name)().files]"
-                blocks.append(Self.treeBuilder(named: "targetHeaders_\(name)", files: objectiveC.targetHeaders(product: identity.productName)))
             }
-            var includeTrees: [String] = []
             if let objectiveCHeaderName {
-                includeTrees.append("'\(Self.generatedHeadersFolder)': TreeBuilder(input: [\(Self.quoted(objectiveCHeaderName)): "
-                                    + "compiler_\(name)().objectiveCHeader]).files")
-            }
-            if hasHeaderTree {
-                includeTrees.append("'\(Self.targetHeadersFolder)': targetHeaders_\(name)().files")
-            }
-            if !includeTrees.isEmpty {
-                headerWires += ",\n        headerTrees: [" + includeTrees.joined(separator: ", ") + "]"
+                headerWires += ",\n        headerTrees: [" + Self.generatedHeaders(objectiveCHeaderName, product: identity.productName,
+                                                                               compiler: "compiler_\(name)") + "]"
             }
             if let prefixHeader = objectiveC.prefixHeader {
                 headerWires += ",\n        prefixHeader: [\(Self.quoted(prefixHeader)): StaticFile(path: \(Self.quoted(prefixHeader))).output]"
             }
             headerWires += Self.wires("frameworkTrees", compiledFrameworkTrees + frameworkTrees)
+            // The package products' modules: `@import FMDB;` in Sequel Ace's Objective-C.
+            headerWires += Self.wires("moduleTrees", moduleTrees)
             if !objectiveC.searchPathsOutside.isEmpty {
                 blocks.append("// Search paths and a prefix header outside the project, which no push can fill, are left out (B-77 item 4): "
                               + objectiveC.searchPathsOutside.joined(separator: ", "))
@@ -792,8 +809,10 @@ struct XcodeFormulaEmitter {
             blocks.append(preprocessor(named: "preprocess_\(name)", literals: objectiveC.preprocessorLiterals))
             let compilerConfiguration = configuration(namespace: Self.clangCompilerNamespace, literals: objectiveC.compilerLiterals)
             let compilerFrameworks = compiledFrameworkTrees + frameworkTrees
-            let compilerFrameworkWires = compilerFrameworks.isEmpty ? ""
-                : ", frameworkTrees: [" + compilerFrameworks.map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: ", ") + "]"
+            let compilerFrameworkWires = (compilerFrameworks.isEmpty ? ""
+                : ", frameworkTrees: [" + compilerFrameworks.map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: ", ") + "]")
+                + (moduleTrees.isEmpty ? ""
+                : ", moduleTrees: [" + moduleTrees.map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: ", ") + "]")
             // A source with flags of its own (`additionalCompilerFlagsByRelativePath`) is
             // preprocessed and compiled by nodes of its own, the flags after the target's,
             // as Xcode passes them after `OTHER_CFLAGS`.
@@ -834,6 +853,7 @@ struct XcodeFormulaEmitter {
         }
         let linkedFrameworkTrees = frameworkTrees
             + (projectFrameworks.linked.isEmpty ? [] : ["        \(Self.quoted("\(target.name) linked")): linkedFrameworks_\(name)().files"])
+            + builtFrameworkTrees
         // Passed as an `-rpath` only when the frameworks trees hold a framework.
         if !linkedFrameworkTrees.isEmpty {
             linkerLiterals["frameworksRunpath"] = layout.frameworksRunpath
@@ -862,6 +882,9 @@ struct XcodeFormulaEmitter {
         let embeddedProjectFrameworks = projectFrameworks.linked.filter {
             target.embeddedFrameworks.contains(($0 as NSString).lastPathComponent)
         }.map { "        \(Self.quoted(($0 as NSString).lastPathComponent)): \(Self.frameworkTree(at: $0, projectFolder: build.projectFolder))" }
+            + target.linkedProducts.filter { product in
+                target.embeddedFrameworks.contains(product.fileName) && builtFrameworks.contains { $0.product == product }
+            }.map { "        \(Self.quoted($0.fileName)): \(Self.frameworkFunction(for: $0.fileName))().files" }
         if !embeddedFrameworkTrees.isEmpty || !embeddedProjectFrameworks.isEmpty {
             let inputs = embeddedFrameworkTrees + embeddedProjectFrameworks
             products.append(.tree(folder: layout.frameworksFolder, inputs: "\n" + inputs.joined(separator: ",\n") + "\n    "))
@@ -1008,11 +1031,18 @@ struct XcodeFormulaEmitter {
         "\n    ]).files"
     }
 
-    /// The sandbox folder a target's headers by name are laid under, `<folder>/<Product>/Foo.h`.
-    static let targetHeadersFolder = "target-headers"
     /// The sandbox folder the headers a build writes are laid under — the `-Swift.h` — as
     /// Xcode's `DerivedSources` is a search path.
     static let generatedHeadersFolder = "derived-headers"
+
+    /// The `headerTrees` wire of the Objective-C interface `compiler` writes: by its name,
+    /// as Xcode's `DerivedSources` holds it, and under the product, `<SPMySQL/SPMySQL-Swift.h>`,
+    /// as a framework's own sources import it from its headers (B-77 item 4). The header
+    /// guards itself, so the two are one import.
+    static func generatedHeaders(_ headerName: String, product: String, compiler: String) -> String {
+        "'\(generatedHeadersFolder)': TreeBuilder(input: [\(quoted(headerName)): \(compiler)().objectiveCHeader, "
+            + "\(quoted("\(product)/\(headerName)")): \(compiler)().objectiveCHeader]).files"
+    }
 
     /// A framework of the project's tree, relative to its folder, as the tree it is, under
     /// its own name: `FolderTreeBuilder` keeps a versioned framework's links as links.
@@ -1316,26 +1346,9 @@ struct XcodeFormulaEmitter {
         /// groups reference, by its path relative to the project's folder (the key) and in
         /// the input file system (the path). Sorted. What Xcode's header map finds a quoted
         /// import in (B-77 item 4).
+        /// The bridging header among them: the Objective-C interface of the target's Swift
+        /// imports it by name, and the Swift compiler places it once.
         var headers: [(key: String, path: String)] = []
-
-        /// The headers less the bridging header, which the Swift compiler is handed by
-        /// itself: the tree `headers_<Target>()` holds.
-        var headersBesideTheBridgingHeader: [(key: String, path: String)] {
-            headers.filter { $0.key != bridgingHeader }
-        }
-
-        /// The headers by file name under `<product>/`, the first of each name in path
-        /// order: the header map's `#import <Product/Foo.h>`.
-        func targetHeaders(product: String) -> [(key: String, path: String)] {
-            var seen = Set<String>()
-            return headers.compactMap { header in
-                let name = (header.key as NSString).lastPathComponent
-                guard seen.insert(name).inserted else {
-                    return nil
-                }
-                return (key: "\(product)/\(name)", path: header.path)
-            }
-        }
 
         /// The preprocessor's literals for a source with flags of its own: the target's
         /// `OTHER_CFLAGS`, then the source's.
@@ -1485,6 +1498,11 @@ struct XcodeFormulaEmitter {
         result.compilerLiterals = ObjectiveCSources.withArguments(literals, Self.compileStageFlags(result.otherFlags))
         if !result.defines.isEmpty {
             literals["defines"] = result.defines.joined(separator: ",")
+        }
+        // The header map's other half: each header by name under the product,
+        // `<QueryKit/QKQuery.h>`, which the preprocessor lays as links (B-77 item 4).
+        if !result.headers.isEmpty {
+            literals["headerMapProduct"] = identity.productName
         }
         result.preprocessorLiterals = ObjectiveCSources.withArguments(literals, result.otherFlags)
         return result

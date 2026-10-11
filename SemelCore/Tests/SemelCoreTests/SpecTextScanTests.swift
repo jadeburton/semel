@@ -35,6 +35,7 @@ final class SpecTextScanTests: XCTestCase {
         "ApplePrelude.swift":         "a prelude is formula text",
         "SwiftFormulaConverter.swift": "emits a package's formula",
         "XcodeFormulaEmitter.swift":  "emits a project's formula",
+        "XcodeFrameworkEmitter.swift": "emits a referenced project's framework target into a project's formula",
         "GeneratedFiles.swift":       "prepare writes a project's formula",
     ]
 

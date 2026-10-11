@@ -76,7 +76,10 @@ public struct XcodeProjectConverter: Node {
     /// passed after the target's, the SDK's libraries linked by name, and a framework of
     /// the project's tree compiled and linked against as the tree it is and embedded where
     /// a copy-files phase puts it (B-77 item 4).
-    public static let implementationVersion = 20
+    /// 21: a framework target of a project the application references (`PBXReferenceProxy`)
+    /// is built — its project file demanded on the new `subprojects` port — linked against
+    /// and embedded, laid out as a versioned Mac framework (B-77 item 4).
+    public static let implementationVersion = 21
 
     // MARK: Ports
 
@@ -90,6 +93,11 @@ public struct XcodeProjectConverter: Node {
     /// synchronized folder of the project — the folders directly in which are where local
     /// packages are found — keyed by path (B-135).
     static let folders = "folders"
+    /// The `project.pbxproj` of each project a target links a product of through a
+    /// reference proxy, keyed by path (B-77 item 4): Sequel Ace's `SPMySQLFramework` and
+    /// `QueryKit`. One nobody pushed arrives without a value, and its product is said in
+    /// the formula not to be built.
+    static let subprojects = "subprojects"
     static let formulaOutput = "formula"
     static let infoLog = "infoLog"
 
@@ -148,9 +156,9 @@ public struct XcodeProjectConverter: Node {
     /// absent file is still demanded, not dropped once known absent: the wire is what a
     /// later push of it wakes the converter through.
     public static let descriptor = NodeDescriptor(
-        inputPorts: [.dynamic(projectFile), .dynamic(xcconfigs), .dynamic(folders)],
+        inputPorts: [.dynamic(projectFile), .dynamic(xcconfigs), .dynamic(folders), .dynamic(subprojects)],
         outputPorts: [formulaOutput, infoLog],
-        inputPortsToleratingAbsentValue: [xcconfigs]
+        inputPortsToleratingAbsentValue: [xcconfigs, subprojects]
     )
 
     // MARK: Properties
@@ -206,6 +214,7 @@ public struct XcodeProjectConverter: Node {
             Self.projectFile: [projectFilePath: .staticFile(at: projectFilePath)],
             Self.xcconfigs: [:],
             Self.folders: [:],
+            Self.subprojects: [:],
         ]
 
         // ── the project file, a pass later than the node's creation ─────────
@@ -371,8 +380,35 @@ public struct XcodeProjectConverter: Node {
             return searched[path].map(LocalPackageSearch.Contents.init)
         }
 
+        // ── the projects the targets link products of (B-77 item 4) ──────────
+        // Demanded with the folders, so the waits overlap.
+        let linkedProducts = bundleTargets.flatMap(\.linkedProducts)
+        var subprojects: [String: XcodeProject] = [:]
+        var subprojectsWaiting = false
+        for projectPath in Set(linkedProducts.map(\.projectPath)).sorted() {
+            guard let path = Self.inputPath(of: projectPath, in: projectFolder) else {
+                continue
+            }
+            let filePath = "\(path)/project.pbxproj"
+            specs[Self.subprojects]?[filePath] = .staticFile(at: filePath)
+            switch input.inputValues[Self.subprojects]?[filePath] {
+            case .value(let hash):
+                guard let bytes = try DataObjectStore.shared.read(hash: hash) else {
+                    continue
+                }
+                subprojects[projectPath] = try XcodeProject(pbxproj: Data(bytes))
+            case nil, .noValue(.pending):
+                subprojectsWaiting = true
+            case .noValue:
+                continue
+            }
+        }
+
         guard !expansions.values.contains(where: \.isWaiting) else {
             return pending("waiting for the xcconfig files", specs: specs)
+        }
+        guard !subprojectsWaiting else {
+            return pending("waiting for the projects the targets link products of", specs: specs)
         }
         guard walkedRoots.allSatisfy({ trees[$0] != nil }) else {
             return pending("waiting for the target's folders", specs: specs)
@@ -414,7 +450,12 @@ public struct XcodeProjectConverter: Node {
         // ── the formula ──────────────────────────────────────────────────────
         let build = XcodeFormulaEmitter.Build(root: try buildRoot, projectFolder: projectFolder,
                                               configuration: configurationName, sdk: sdk)
-        let emitter = XcodeFormulaEmitter(project: project, build: build, localPackagePaths: packageSearch.packagePaths)
+        var emitter = XcodeFormulaEmitter(project: project, build: build, localPackagePaths: packageSearch.packagePaths)
+        do {
+            emitter.builtFrameworks = try Self.builtFrameworks(of: linkedProducts, in: subprojects, build: build)
+        } catch let failure as XcodeProjectError {
+            return failed(failure.errorCondition, specs: specs)
+        }
         let formula: String
         do {
             formula = try emitter.formula(for: application, settings: evaluatedSettings, listing: { listings[$0] })
@@ -429,6 +470,35 @@ public struct XcodeProjectConverter: Node {
                                     Self.infoLog: try infoLogValue(application: application, embedded: embedded, project: project,
                                                                    projectFolder: projectFolder, expansions: expansions)],
                      inputWireSpecs: specs)
+    }
+
+    /// The framework targets of the referenced projects that build `products`, each once,
+    /// with an emitter over its own project and its settings for this build's configuration
+    /// and SDK. A product whose project is not there, or whose target is no framework, is
+    /// left to the formula to name as not built.
+    ///
+    /// ISSUE: a referenced project's xcconfig files are not read; Sequel Ace's two name none.
+    static func builtFrameworks(of products: [XcodeProject.BuiltProduct], in subprojects: [String: XcodeProject],
+                         build: XcodeFormulaEmitter.Build) throws -> [XcodeFormulaEmitter.BuiltFramework] {
+        var frameworks: [XcodeFormulaEmitter.BuiltFramework] = []
+        for product in products where !frameworks.contains(where: { $0.product == product }) {
+            guard let subproject = subprojects[product.projectPath],
+                  let target = subproject.targets.first(where: { $0.name == product.targetName && $0.isFramework }),
+                  let folder = Self.inputPath(of: product.projectPath, in: build.projectFolder)
+                    .flatMap({ Path($0).deletingLastComponent?.string }) else {
+                continue
+            }
+            let projectName = ((Path(product.projectPath).lastComponent ?? "") as NSString).deletingPathExtension
+            let settings = try XcodeBuildSettings.resolve(project: subproject, target: target, configuration: build.configuration,
+                                                          sdk: build.sdk, xcconfig: { _ in nil },
+                                                          extra: ["TARGET_NAME": target.name, "PROJECT_NAME": projectName])
+            let emitter = XcodeFormulaEmitter(project: subproject,
+                                              build: .init(root: build.root, projectFolder: folder,
+                                                           configuration: build.configuration, sdk: build.sdk),
+                                              localPackagePaths: [])
+            frameworks.append(.init(product: product, emitter: emitter, target: target, settings: settings))
+        }
+        return frameworks
     }
 
     /// What the conversion says about the package plugins its targets run, which it does

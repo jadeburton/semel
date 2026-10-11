@@ -229,6 +229,18 @@ struct XcodeProject {
         }
     }
 
+    /// A product a target of another project builds, which this project names through a
+    /// reference proxy (B-77 item 4): Sequel Ace links and embeds `SPMySQL.framework`, the
+    /// product of the `SPMySQL.framework` target of `Frameworks/SPMySQLFramework/SPMySQLFramework.xcodeproj`.
+    struct BuiltProduct: Equatable {
+        /// The project holding the target, relative to this project's folder.
+        let projectPath: String
+        /// The product's file name: `SPMySQL.framework`.
+        let fileName: String
+        /// The target that builds it, by name.
+        let targetName: String
+    }
+
     /// What a frameworks phase links besides the SDK's frameworks and package products, by
     /// where the file is: the SDK's, named; the project's own tree, by path.
     struct LinkedFiles: Equatable {
@@ -282,6 +294,21 @@ struct XcodeProject {
         /// The file names a copy-files phase embeds under `Frameworks`:
         /// `ShortcutRecorder.framework`.
         var embeddedFrameworks: [String] = []
+        /// The products of other projects' targets the frameworks phase links (B-77 item 4).
+        var linkedProducts: [BuiltProduct] = []
+        /// A framework's headers phase, by the attribute each has: the public ones land in
+        /// its `Headers`, the private in `PrivateHeaders`, the rest — project headers — in
+        /// neither. Paths relative to the project's folder.
+        var publicHeaders: [String] = []
+        var privateHeaders: [String] = []
+        /// Files of the project's tree a copy-files phase puts beside the executable
+        /// (`dstSubfolderSpec = 6`): for a framework, in `Versions/<version>`. Relative to the
+        /// project's folder.
+        var executableCopies: [String] = []
+        /// Products of the project's own targets a copy-files phase copies — Sequel Ace's
+        /// `SequelAceTunnelAssistant` tool, beside its executable — by file name. No such
+        /// target is built (B-77 item 4).
+        var copiedProducts: [String] = []
         /// Product file names the copy-files phase embeds under `PlugIns`.
         let embeddedExtensions: [String]
         /// File references in the resources phase, relative to the project folder, each
@@ -351,6 +378,7 @@ struct XcodeProject {
 
         var isApplication: Bool { productType == "com.apple.product-type.application" }
         var isExtension: Bool { productType == "com.apple.product-type.app-extension" }
+        var isFramework: Bool { productType == "com.apple.product-type.framework" }
 
         func configuration(named name: String) -> BuildConfiguration? {
             configurations.first { $0.name == name }
@@ -741,6 +769,26 @@ struct XcodeProject {
             return path(of: id).map { [$0] } ?? []
         }
 
+        /// The product a reference proxy stands for: another project's target, by the
+        /// container proxy it points through — the project's file reference
+        /// (`containerPortal`) and the target's name (`remoteInfo`). Nil for anything else.
+        func builtProduct(_ id: String) -> BuiltProduct? {
+            guard let proxy = objects[id], proxy["isa"] as? String == "PBXReferenceProxy",
+                  let fileName = proxy["path"] as? String,
+                  let container = object(proxy["remoteRef"] as? String),
+                  let targetName = container["remoteInfo"] as? String,
+                  let projectPath = (container["containerPortal"] as? String).flatMap({ path(of: $0) }) else {
+                return nil
+            }
+            // Sequel Ace's groups reach `Frameworks/` from `Source/` by `..`; resolved below a
+            // stand-in for the project's folder, which a `..` may not climb out of.
+            let anchor = "project"
+            let resolved = (Path("\(anchor)/\(projectPath)").resolvingDotSegments?.string)
+                .flatMap { path in path.hasPrefix(anchor + "/") ? String(path.dropFirst(anchor.count + 1)) : nil }
+            return BuiltProduct(projectPath: resolved ?? projectPath, fileName: (fileName as NSString).lastPathComponent,
+                                targetName: targetName)
+        }
+
         /// What one entry of a frameworks phase links, by where its file is.
         enum LinkedFile {
             case sdkFramework(String)
@@ -841,8 +889,13 @@ struct XcodeProject {
             var productDependencyIDs = target["packageProductDependencies"] as? [String] ?? []
             var frameworks: [String] = []
             var linkedFiles = LinkedFiles()
+            var linkedProducts: [BuiltProduct] = []
             var embeddedFrameworks: [String] = []
             var embeddedExtensions: [String] = []
+            var executableCopies: [String] = []
+            var copiedProducts: [String] = []
+            var publicHeaders: [String] = []
+            var privateHeaders: [String] = []
             var sourceFiles: [BuildFile] = []
             var resourceFiles: [BuildFile] = []
             for phaseID in target["buildPhases"] as? [String] ?? [] {
@@ -872,6 +925,10 @@ struct XcodeProject {
                 switch isa {
                 case "PBXFrameworksBuildPhase":
                     for fileRefID in fileRefIDs {
+                        if let product = builtProduct(fileRefID) {
+                            linkedProducts.append(product)
+                            continue
+                        }
                         switch linkedFile(fileRefID) {
                         case .sdkFramework(let name):  frameworks.append(name)
                         case .sdkLibrary(let name):    linkedFiles.sdkLibraries.append(name)
@@ -890,6 +947,25 @@ struct XcodeProject {
                     }
                     if destination == "10" {
                         embeddedFrameworks += fileRefs.compactMap { ($0["path"] as? String).map { ($0 as NSString).lastPathComponent } }
+                    }
+                    if destination == "6" {
+                        executableCopies += fileRefIDs.compactMap { path(of: $0) }
+                    }
+                    // A product of this project's own targets, copied rather than built here.
+                    copiedProducts += fileRefs.filter { $0["sourceTree"] as? String == "BUILT_PRODUCTS_DIR" && $0["isa"] as? String == "PBXFileReference" }
+                        .compactMap { $0["path"] as? String }
+                        .filter { !$0.hasSuffix(".appex") }
+                case "PBXHeadersBuildPhase":
+                    for buildFile in buildFiles {
+                        guard let fileRefID = buildFile["fileRef"] as? String, let path = path(of: fileRefID) else {
+                            continue
+                        }
+                        let attributes = (buildFile["settings"] as? [String: Any])?["ATTRIBUTES"] as? [String] ?? []
+                        switch (attributes.contains("Public"), attributes.contains("Private")) {
+                        case (true, _):     publicHeaders.append(path)
+                        case (false, true): privateHeaders.append(path)
+                        default:            break
+                        }
                     }
                 case "PBXSourcesBuildPhase":
                     // A target that lists its files rather than owning a folder (B-77):
@@ -935,6 +1011,11 @@ struct XcodeProject {
                                sourceFiles: sourceFiles.sorted { $0.path < $1.path })
             built.linkedFiles = linkedFiles
             built.embeddedFrameworks = embeddedFrameworks.sorted()
+            built.linkedProducts = linkedProducts
+            built.executableCopies = executableCopies
+            built.copiedProducts = copiedProducts.sorted()
+            built.publicHeaders = publicHeaders.sorted()
+            built.privateHeaders = privateHeaders.sorted()
             // A plugin is a target dependency on a product Xcode names `plugin:<name>`.
             built.plugins = (target["dependencies"] as? [String] ?? []).compactMap { dependencyID -> String? in
                 guard let productName = object(object(dependencyID)?["productRef"] as? String)?["productName"] as? String,

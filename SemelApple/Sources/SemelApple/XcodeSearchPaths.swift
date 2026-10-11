@@ -29,6 +29,9 @@ struct XcodeSearchPaths: Equatable {
     var userHeaderSearchPaths: [Entry] = []
     /// `FRAMEWORK_SEARCH_PATHS`: where a framework is found by name, `-F` each.
     var frameworkSearchPaths: [Entry] = []
+    /// `SWIFT_INCLUDE_PATHS`: where the Swift compiler finds a module map — SPMySQL's
+    /// `Source/MySQLClient` — an `-I` each.
+    var swiftIncludePaths: [Entry] = []
     /// The entries naming no folder of the project, as the setting spells them after
     /// evaluation: `/Applications/…/Library/Frameworks`, `$(PLATFORM_DIR)/…`.
     var outside: [String] = []
@@ -39,6 +42,7 @@ struct XcodeSearchPaths: Equatable {
         headerSearchPaths     = Self.entries(settings.list("HEADER_SEARCH_PATHS"), outside: &outside)
         userHeaderSearchPaths = Self.entries(settings.list("USER_HEADER_SEARCH_PATHS"), outside: &outside)
         frameworkSearchPaths  = Self.entries(settings.list("FRAMEWORK_SEARCH_PATHS"), outside: &outside)
+        swiftIncludePaths     = Self.entries(settings.list("SWIFT_INCLUDE_PATHS"), outside: &outside)
     }
 
     /// Every folder of the project the settings name, recursive or not, each once, in the

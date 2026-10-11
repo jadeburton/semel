@@ -131,14 +131,14 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertFalse(formula.contains("headerFolders:"), formula)
         XCTAssertTrue(formula.contains("func headers_Food_Truck() =\n    TreeBuilder(input: [\n"
                                        + "        'Util.h': StaticFile(path: 'input:/repo/Util.h').output\n    ]).files"), formula)
-        XCTAssertTrue(formula.contains("func targetHeaders_Food_Truck() =\n    TreeBuilder(input: [\n"
-                                       + "        'Food Truck/Util.h': StaticFile(path: 'input:/repo/Util.h').output\n    ]).files"), formula)
+        XCTAssertTrue(formula.contains("SettingsLiteral(headerMapProduct: 'Food Truck', target: 'arm64-apple-ios16.4-simulator')"),
+                      "the preprocessor lays the headers under the product too: \(formula)")
         XCTAssertTrue(formula.contains("        quoteHeaderTrees: ['input:/repo': headers_Food_Truck().files],\n"
-                                       + "        headerTrees: ['derived-headers': TreeBuilder(input: ['Food_Truck-Swift.h': compiler_Food_Truck().objectiveCHeader]).files, "
-                                       + "'target-headers': targetHeaders_Food_Truck().files]"), formula)
+                                       + "        headerTrees: ['derived-headers': TreeBuilder(input: ['Food_Truck-Swift.h': compiler_Food_Truck().objectiveCHeader, "
+                                       + "'Food Truck/Food_Truck-Swift.h': compiler_Food_Truck().objectiveCHeader]).files]"), formula)
         XCTAssertTrue(formula.contains("'input:/repo/Shared/Sources/Util.m.o': ClangCompiler("), formula)
         XCTAssertTrue(formula.contains("input: ['input:/repo/Shared/Sources/Util.m.p': preprocess_Food_Truck(path: 'input:/repo/Shared/Sources/Util.m')], "
-                                       + "frameworkTrees: ['FoodKit': frameworks_FoodKit().files]).output"),
+                                       + "frameworkTrees: ['FoodKit': frameworks_FoodKit().files], moduleTrees: ['FoodKit': modules_FoodKit().files]).output"),
                       formula)
     }
 
@@ -450,7 +450,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(formula.contains("func preprocess_IceCubesApp(path) =\n    ClangPreprocessor(\n"
                                        + "        configuration: ['config': ConfigMerger(base: ['settings': ConfigFilter(prefix: 'clang.preprocessor', "),
                       formula)
-        XCTAssertTrue(formula.contains("SettingsLiteral(cStandard: 'gnu11', defines: 'DEBUG=1,FEATURE', modules: 'true', objectiveCARC: 'true', "
+        XCTAssertTrue(formula.contains("SettingsLiteral(cStandard: 'gnu11', defines: 'DEBUG=1,FEATURE', headerMapProduct: 'Ice Cubes', modules: 'true', objectiveCARC: 'true', "
                                        + "target: 'arm64-apple-ios18.5-simulator')"), formula)
         XCTAssertTrue(formula.contains("        input: [path: StaticFile(path: path)],\n        headerFolders: [\n"
                                        + "            'input:/repo/IceCubesApp': Folder(path: 'input:/repo/IceCubesApp').manifest\n        ]"),
@@ -512,6 +512,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         let formula = try formula(listing: objectiveCListing, xcconfig: objectiveCSettings)
 
         XCTAssertTrue(formula.contains("func headers_IceCubesApp() =\n    TreeBuilder(input: [\n"
+                                       + "        'IceCubesApp/App-Bridging-Header.h': StaticFile(path: 'input:/repo/IceCubesApp/App-Bridging-Header.h').output,\n"
                                        + "        'IceCubesApp/Legacy/Greeter.h': StaticFile(path: 'input:/repo/IceCubesApp/Legacy/Greeter.h').output,\n"
                                        + "        'IceCubesApp/Legacy/Private/Secret.h': StaticFile(path: 'input:/repo/IceCubesApp/Legacy/Private/Secret.h').output\n"
                                        + "    ]).files"), formula)
@@ -1051,9 +1052,9 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         let formula = try exceptionProbeFormula()
 
         let shared = try block("func preprocess_Probe(path) =", in: formula)
-        XCTAssertTrue(shared.contains("SettingsLiteral(arguments: '-DPROBE_OTHER_C', modules: 'true', target: 'arm64-apple-macosx15.0')"), shared)
+        XCTAssertTrue(shared.contains("SettingsLiteral(arguments: '-DPROBE_OTHER_C', headerMapProduct: 'Probe', modules: 'true', target: 'arm64-apple-macosx15.0')"), shared)
         let own = try block("func preprocess_Probe_0(path) =", in: formula)
-        XCTAssertTrue(own.contains("SettingsLiteral(arguments: '-DPROBE_OTHER_C,-DPROBE_FLAG=7', modules: 'true', target: 'arm64-apple-macosx15.0')"), own)
+        XCTAssertTrue(own.contains("SettingsLiteral(arguments: '-DPROBE_OTHER_C,-DPROBE_FLAG=7', headerMapProduct: 'Probe', modules: 'true', target: 'arm64-apple-macosx15.0')"), own)
         XCTAssertTrue(formula.contains("'input:/probe/App/Helper.c.o': ClangCompiler(configuration: ['config': ConfigMerger(base: ['settings': "
                                        + "ConfigFilter(prefix: 'clang.compiler', "), formula)
         XCTAssertTrue(formula.contains("SettingsLiteral(arguments: '-DPROBE_OTHER_C,-DPROBE_FLAG=7', modules: 'true', target: 'arm64-apple-macosx15.0')"

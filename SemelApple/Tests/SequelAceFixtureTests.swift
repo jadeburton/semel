@@ -38,10 +38,20 @@ final class SequelAceFixtureTests: SemelAppleTestCase {
         "4D90B79E101E0CF200D116A1 /* SPUserManager.xcdatamodel in Sources */,",
     ]
 
+    /// The sub-project the fixture holds; `QueryKit`'s is not there, as a clone that had not
+    /// pushed it would not have it.
+    static let spMySQLProject = "Frameworks/SPMySQLFramework/SPMySQLFramework.xcodeproj"
+
+    private func spMySQL() throws -> XcodeProject {
+        try XcodeProject(pbxproj: try Data(contentsOf: Self.sequelAce.appendingPathComponent("\(Self.spMySQLProject)/project.pbxproj")))
+    }
+
     private func formula(pbxproj text: String,
                          listing: @escaping (String) -> XcodeFormulaEmitter.FolderListing? = { _ in nil }) throws -> String {
         let project = try XcodeProject(pbxproj: Data(text.utf8))
-        let emitter = XcodeFormulaEmitter(project: project, build: Self.build, localPackagePaths: [])
+        var emitter = XcodeFormulaEmitter(project: project, build: Self.build, localPackagePaths: [])
+        emitter.builtFrameworks = try XcodeProjectConverter.builtFrameworks(
+            of: project.targets.flatMap(\.linkedProducts), in: [Self.spMySQLProject: try spMySQL()], build: Self.build)
         let application = try XCTUnwrap(project.applications.first { $0.name == "Sequel Ace" })
         return try emitter.formula(
             for: application,
@@ -90,22 +100,20 @@ final class SequelAceFixtureTests: SemelAppleTestCase {
     // MARK: - Header lookup
 
     /// Every header the project references is in the app's header map: one tree by path,
-    /// whose folders are the preprocessor's `-iquote`s, and the same headers by name under
-    /// the product. `SPConstants.h` is in `Source/Other/Data`; every source imports it as
-    /// `"SPConstants.h"` from wherever it is.
+    /// whose folders are the preprocessor's `-iquote`s, and — `headerMapProduct` — the
+    /// same headers by name under the product. `SPConstants.h` is in `Source/Other/Data`;
+    /// every source imports it as `"SPConstants.h"` from wherever it is. The bridging header
+    /// is in the tree too: the Swift's Objective-C interface imports it by name.
     func test_theProjectsHeadersAreTheAppsHeaderMap() throws {
         let formula = try appFormula()
 
         let headers = try block("func headers_Sequel_Ace() =", in: formula)
         XCTAssertTrue(headers.contains("'Source/Other/Data/SPConstants.h': StaticFile(path: 'input:/repo/Source/Other/Data/SPConstants.h').output"),
                       headers)
-        XCTAssertFalse(headers.contains("Sequel-Ace-Bridging-Header.h"), "the bridging header goes by itself: \(headers)")
-        let byName = try block("func targetHeaders_Sequel_Ace() =", in: formula)
-        XCTAssertTrue(byName.contains("'Sequel Ace/SPConstants.h': StaticFile(path: 'input:/repo/Source/Other/Data/SPConstants.h').output"),
-                      byName)
+        XCTAssertTrue(headers.contains("'Source/Sequel-Ace-Bridging-Header.h'"), headers)
         let preprocessor = try block("func preprocess_Sequel_Ace(path) =", in: formula)
         XCTAssertTrue(preprocessor.contains("quoteHeaderTrees: ['input:/repo': headers_Sequel_Ace().files]"), preprocessor)
-        XCTAssertTrue(preprocessor.contains("'target-headers': targetHeaders_Sequel_Ace().files"), preprocessor)
+        XCTAssertTrue(preprocessor.contains("headerMapProduct: 'Sequel Ace'"), preprocessor)
         XCTAssertFalse(preprocessor.contains("headerFolders:"), "a listed source's folder is no search path: \(preprocessor)")
     }
 
@@ -126,7 +134,8 @@ final class SequelAceFixtureTests: SemelAppleTestCase {
 
         XCTAssertTrue(try block("func compiler_Sequel_Ace() =", in: formula).contains("objectiveCHeaderName: 'sequel-ace-Swift.h'"))
         XCTAssertTrue(try block("func preprocess_Sequel_Ace(path) =", in: formula)
-            .contains("'derived-headers': TreeBuilder(input: ['sequel-ace-Swift.h': compiler_Sequel_Ace().objectiveCHeader]).files"))
+            .contains("'derived-headers': TreeBuilder(input: ['sequel-ace-Swift.h': compiler_Sequel_Ace().objectiveCHeader, "
+                      + "'Sequel Ace/sequel-ace-Swift.h': compiler_Sequel_Ace().objectiveCHeader]).files"))
     }
 
     /// `RegexKitLite.m` is built without ARC (`COMPILER_FLAGS = "-fno-objc-arc"` on its
@@ -171,5 +180,86 @@ final class SequelAceFixtureTests: SemelAppleTestCase {
         XCTAssertTrue(try block("func preprocess_Sequel_Ace(path) =", in: formula).contains("'Sequel Ace linked': linkedFrameworks_Sequel_Ace().files"))
         XCTAssertTrue(try block("func bundle_Sequel_Ace() =", in: formula).contains("'ShortcutRecorder.framework': \(tree)"))
         XCTAssertTrue(formula.contains("$(PLATFORM_DIR)/Developer/Library/Frameworks"), "said to be left out: \(formula)")
+    }
+
+    // MARK: - The framework a referenced project builds
+
+    /// The app links and embeds `SPMySQL.framework` and `QueryKit.framework` through
+    /// reference proxies into two projects under `Frameworks/`, and copies its tool
+    /// `SequelAceTunnelAssistant` beside its executable; the framework target's headers
+    /// phase says which headers are public, and its copy-files phase puts the MySQL client
+    /// and OpenSSL beside its executable.
+    func test_theProjectReadsWhatOtherProjectsBuildForIt() throws {
+        let app = try XCTUnwrap(try XcodeProject(pbxproj: Data(try pbxproj().utf8)).targets.first { $0.name == "Sequel Ace" })
+
+        XCTAssertEqual(app.linkedProducts, [
+            .init(projectPath: "Frameworks/QueryKit/QueryKit.xcodeproj", fileName: "QueryKit.framework", targetName: "QueryKit"),
+            .init(projectPath: Self.spMySQLProject, fileName: "SPMySQL.framework", targetName: "SPMySQL.framework"),
+        ])
+        XCTAssertEqual(app.embeddedFrameworks, ["QueryKit.framework", "SPMySQL.framework", "ShortcutRecorder.framework"])
+        XCTAssertEqual(app.copiedProducts, ["SequelAceTunnelAssistant"])
+
+        let framework = try XCTUnwrap(try spMySQL().targets.first { $0.name == "SPMySQL.framework" })
+        XCTAssertTrue(framework.isFramework)
+        XCTAssertEqual(framework.publicHeaders.count, 24)
+        XCTAssertTrue(framework.publicHeaders.contains("Source/SPMySQL.h"), "\(framework.publicHeaders)")
+        XCTAssertEqual(framework.executableCopies.map { ($0 as NSString).lastPathComponent }.sorted(),
+                       ["libcrypto.3.dylib", "libmysqlclient.24.dylib", "libssl.3.dylib"])
+        XCTAssertEqual(framework.linkedFiles.sdkLibraries, ["c++", "z"])
+    }
+
+    /// `SPMySQL.framework` is built from its project's sources — its Swift importing its
+    /// Objective-C as the underlying module, from the framework's public headers and its
+    /// module map, and `MySQLClient` from `SWIFT_INCLUDE_PATHS` — linked as a dynamic library
+    /// with the install name Xcode gives it, and laid out versioned: `Versions/A` with the
+    /// executable, the headers, the module map, the Swift module and the plist, and the
+    /// links a Mac framework has at its top.
+    func test_theReferencedFrameworkIsBuiltAndLaidOutVersioned() throws {
+        let formula = try appFormula()
+
+        let compiler = try block("func compiler_SPMySQL_framework() =", in: formula)
+        XCTAssertTrue(compiler.contains("importsUnderlyingModule: 'true'"), compiler)
+        XCTAssertTrue(compiler.contains("'SPMySQL': moduleHeaders_SPMySQL_framework().files"), compiler)
+        XCTAssertTrue(compiler.contains("inputModuleMapFolders: [\n            'input:/repo/Frameworks/SPMySQLFramework/Source/MySQLClient': "
+                                        + "Folder(path: 'input:/repo/Frameworks/SPMySQLFramework/Source/MySQLClient').manifest"), compiler)
+        XCTAssertTrue(compiler.contains("includeTrees: [\n            'input:/repo/Frameworks/SPMySQLFramework': headers_SPMySQL_framework().files"),
+                      compiler)
+        let library = try block("func library_SPMySQL_framework() =", in: formula)
+        XCTAssertTrue(library.contains("linkage: 'dynamicLibrary'"), library)
+        XCTAssertTrue(library.contains("-Xlinker,-install_name,-Xlinker,@executable_path/../Frameworks/SPMySQL.framework/Versions/A/SPMySQL"),
+                      library)
+        XCTAssertTrue(library.contains("'MySQL Client Libraries/lib/libmysqlclient.24.dylib': "
+                                       + "StaticFile(path: 'input:/repo/Frameworks/SPMySQLFramework/MySQL Client Libraries/lib/libmysqlclient.24.dylib').output"),
+                      library)
+        let tree = try block("func builtFramework_SPMySQL() =", in: formula)
+        for entry in ["'SPMySQL.framework/Versions/A/SPMySQL': library_SPMySQL_framework().output",
+                      "'SPMySQL.framework/Versions/A/Headers/SPMySQL.h': StaticFile(",
+                      "'SPMySQL.framework/Versions/A/Headers/SPMySQL-Swift.h': compiler_SPMySQL_framework().objectiveCHeader",
+                      "'SPMySQL.framework/Versions/A/Modules/module.modulemap': StaticFile(path: 'input:/repo/Frameworks/SPMySQLFramework/Source/SPMySQL.modulemap').output",
+                      "'SPMySQL.framework/Versions/A/Modules/SPMySQL.swiftmodule/arm64-apple-macos.swiftmodule': compiler_SPMySQL_framework().swiftmodule",
+                      "'SPMySQL.framework/Versions/A/Resources/Info.plist': infoPlist_SPMySQL_framework().plist",
+                      "'SPMySQL.framework/Versions/A/libmysqlclient.24.dylib': StaticFile("] {
+            XCTAssertTrue(tree.contains(entry), "\(entry) is not in\n\(tree)")
+        }
+        let links = try XCTUnwrap(tree.range(of: #"links: '[^']*'"#, options: .regularExpression).map { String(tree[$0]) })
+        for link in [#""SPMySQL.framework\/Versions\/Current":"A""#, #""SPMySQL.framework\/SPMySQL":"Versions\/Current\/SPMySQL""#,
+                     #""SPMySQL.framework\/Headers":"Versions\/Current\/Headers""#, #""SPMySQL.framework\/Modules":"Versions\/Current\/Modules""#,
+                     #""SPMySQL.framework\/Resources":"Versions\/Current\/Resources""#] {
+            XCTAssertTrue(links.contains(link), "\(link) is not in \(links)")
+        }
+    }
+
+    /// The app compiles against the framework, links it and embeds it; `QueryKit`, whose
+    /// project the fixture does not hold, and the tool copied beside the executable are
+    /// said in the formula not to be built.
+    func test_theAppCompilesLinksAndEmbedsTheFrameworkItsProjectBuilds() throws {
+        let formula = try appFormula()
+
+        XCTAssertTrue(try block("func compiler_Sequel_Ace() =", in: formula).contains("'SPMySQL.framework': builtFramework_SPMySQL().files"))
+        XCTAssertTrue(try block("func preprocess_Sequel_Ace(path) =", in: formula).contains("'SPMySQL.framework': builtFramework_SPMySQL().files"))
+        XCTAssertTrue(try block("func bundle_Sequel_Ace() =", in: formula).contains("'SPMySQL.framework': builtFramework_SPMySQL().files"))
+        XCTAssertTrue(formula.contains("// QueryKit.framework, built by QueryKit in Frameworks/QueryKit/QueryKit.xcodeproj, is linked by Sequel Ace and not built"),
+                      formula)
+        XCTAssertTrue(formula.contains("// SequelAceTunnelAssistant, a product of this project's own targets, is copied into Sequel Ace"), formula)
     }
 }
