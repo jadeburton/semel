@@ -92,8 +92,8 @@ root: it registers the toolchains, starts the engine and listens on
 with `SEMEL_HOME` and `SEMEL_SOCKET`.
 
 `EndToEnd/Tests` is the one place the executables are run together, as a user runs
-them: `EndToEndRun` starts `semelserv` over a fresh home, drives `semel`, `semel-swift`
-and `semel-clang` against it, and builds each project up to four times to compare the bytes:
+them: `EndToEndRun` starts `semelserv` over a fresh home, drives `semel`, `semel-swift`,
+`semel-clang` and `semel-cmake` against it, and builds each project up to four times to compare the bytes:
 twice over one copy, once from a copy at a second mount, once under a perturbed
 environment. `WatchEndToEndTests` runs `semel-watch` there too, over a real FSEvents
 stream: the one place its adapter is exercised. `MonitorEndToEndTests` runs `semel-monitor

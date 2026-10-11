@@ -904,9 +904,14 @@ it. The config states the target and the standards the sources need, CMake's num
 its extensions as clang's `gnu17`. `semel-cmake/Library` is the disk: read, evaluate,
 write once, machine file.
 
-Not yet: a fixture in the end-to-end roster, which needs the harness to run the tool
-before a build as it runs `prepare`; the makefile side, which shares the emitter and the
-flag-splitting rule and adds a rule resolver and a recipe classifier; `configure_file`;
+`EndToEnd/Fixtures/cmake` is in the roster as `cmake-hello`, with no formula committed:
+a `Project.converter` names the tool the harness runs over the build folder after the
+machine file is written, as it runs `prepare`, and the four hermeticity builds build what
+the tool wrote.
+
+Not yet: the makefile side, which shares the emitter and the flag-splitting rule and
+adds a rule resolver and a recipe classifier, and wants a decision first on whether it
+ends in `CMakeProject` or in a Semel-vocabulary description both feed; `configure_file`;
 Objective-C sources, which the clang nodes take but the emitter does not yet mark;
 `-install_name` and the rest a shared library's link line wants; a define holding a comma
 or a quote, which no setting can carry.
