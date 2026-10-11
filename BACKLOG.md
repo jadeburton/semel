@@ -695,7 +695,11 @@ test's home goes when the test ends. Each run takes a slot under an advisory loc
 `slot-N.lock`, so a server and a test run on one machine never share one. The slot is
 emptied before the run and after it, and the folder is never removed. `actool` and
 `ibtool` are declared so. The command line and what the tool writes are unchanged: every
-path is still relative to a folder that starts each run empty.
+path is still relative to a folder that starts each run empty. The folder's contents are
+never an input, since a slot is emptied before a run takes it and after, so hermeticity is
+unchanged. The slots are outside `SEMEL_HOME` on purpose: a home goes with the test or the
+session that made it, and a daemon left in a slot of a removed home would be this failure
+again; one set per user, as the daemons are one pool per user.
 
 Two other fixes were weighed. Starting the daemon first from a lasting folder does nothing,
 since the daemon starts in `/` and follows the client per request. Running the client from a

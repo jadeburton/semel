@@ -29,6 +29,13 @@ import Foundation
 /// instead of removed. What the tool is told is unchanged: every path is relative to the
 /// folder, which starts each run empty, so the command line and the outputs are what a
 /// temporary sandbox gave.
+///
+/// The folder's contents are never an input: a slot is emptied before a run takes it and
+/// after it, so a run sees only what it was handed, and hermeticity is what it was. The
+/// slots live outside `SEMEL_HOME` on purpose (`SemelPaths.reusedSandboxFolders`): a home
+/// is removed with the test or the session that made it, and a daemon left in a slot of a
+/// removed home is the failure this exists to prevent. One set per user, as the daemons
+/// are one pool per user.
 public struct ReusedSandboxFolders {
     /// The parent of the slots.
     public let parent: URL
