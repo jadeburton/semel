@@ -68,6 +68,7 @@ included:
   - semel
   - semel-watch
   - semel-monitor
+  - semel-cache
   - EndToEnd/Tests
 
 excluded:

@@ -64,14 +64,15 @@ final class DictionaryOrderTests: XCTestCase {
     }
 
     /// Every non-test source a build runs through: each package's `Sources`, the root
-    /// package's library targets, and the three executables' `main.swift`, which are
+    /// package's library targets, and the executables' `main.swift`, which are
     /// targets of one file. A path here is a folder to walk or a single file.
     private static let scannedPaths = [
         "SemelNodeKit/Sources", "SemelDatabaseModels/Sources", "SemelCore/Sources",
         "SemelSwift/Sources", "SemelClang/Sources", "SemelApple/Sources",
         "SemelProtocol/Sources", "SemelExamples/Sources", "SemelCache/Sources",
         "semel/CommandInterpreter", "semel/Server", "semel/Transport", "semel-swift/Library",
-        "semel/main.swift", "semel-server/main.swift", "semel-swift/main.swift",
+        "semel-cache/Sources", "semel/main.swift", "semel-server/main.swift", "semel-swift/main.swift",
+        "semel-cache/main.swift",
     ]
 
     /// The walks that need no sort, each with why its order cannot reach anything a build
@@ -112,6 +113,8 @@ final class DictionaryOrderTests: XCTestCase {
             "a literal array of the two kinds a child can be, each with the port its content is on",
         "SemelCore/Sources/SemelCore/Nodes/Folder.swift: [(Folder.kind,     Folder.symbolicLinkOutputPort),":
             "a literal array of the two kinds a child can be, each with the port a link's target is on",
+        "semel-cache/Sources/SemelCacheServer/CacheServerStore.swift: named":
+            "an array: the set of an entry's objects is sorted where it is made, which the scan reads as the set",
 
         // ── accumulated into a dictionary or a set: the result is order-free ─────
         "SemelClang/Sources/SemelClang/ClangPreprocessor.swift: headerInputFiles":

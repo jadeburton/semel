@@ -219,6 +219,8 @@ public final class ServerConnection {
             return "hello"
         case .daemon(let daemonRequest):
             return String(describing: daemonRequest).prefix(while: { $0 != "(" }).description
+        case .cache(let cacheRequest):
+            return String(describing: cacheRequest).prefix(while: { $0 != "(" }).description
         }
     }
 

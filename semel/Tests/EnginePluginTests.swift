@@ -7,6 +7,7 @@
 //
 
 @testable import SemelCLI
+import SemelCache
 import SemelNodeKit
 import SemelProtocol
 import XCTest
@@ -121,10 +122,10 @@ final class EnginePluginTests: XCTestCase {
     // MARK: - cache (B-148)
 
     func test_cacheListsTheEntriesUnderTheTotalAndTheLimit() throws {
-        let entries = [CacheEntryRecord(key: String(repeating: "a", count: 64), nodeType: "SwiftCompiler",
+        let entries = [CacheEntryRecord(key: CacheKey(hash: String(repeating: "a", count: 64)), nodeType: "SwiftCompiler",
                                         bytes: ByteCount(bytes: 3 * ByteCount.mebibyte), cost: 9_300,
                                         usedByLastSettle: true, heldByNode: true),
-                       CacheEntryRecord(key: String(repeating: "b", count: 64), nodeType: "ClangCompiler",
+                       CacheEntryRecord(key: CacheKey(hash: String(repeating: "b", count: 64)), nodeType: "ClangCompiler",
                                         bytes: ByteCount(bytes: 512), cost: 40, usedByLastSettle: false, heldByNode: false)]
         connection.reply(.cache(summary: CacheSummary(entries: 2, bytes: ByteCount(bytes: 3 * ByteCount.mebibyte + 512),
                                                       limit: ByteCount.gibibytes(10), limitIsDefault: true, lastTrim: nil)),
@@ -688,12 +689,22 @@ final class EnginePluginTests: XCTestCase {
     /// B-13. A key given to `debug` asks about that cache entry rather than the graph, and
     /// the same body carries the answer.
     func test_debugWithAKeyAsksAboutThatCacheEntry() throws {
-        connection.reply(.debug, body: Data("cache entry abc\nnode SampleTool@1".utf8))
+        let key = String(repeating: "ab", count: 32)
+        connection.reply(.debug, body: Data("cache entry \(key)\nnode SampleTool@1".utf8))
 
+        try run("debug", [key])
+
+        XCTAssertEqual(connection.daemonRequests, [.debug(cacheKey: CacheKey(hash: key))])
+        XCTAssertEqual(context.messages, ["cache entry \(key)\nnode SampleTool@1"])
+    }
+
+    /// A key is typed where it is typed: one that cannot be a cache key is refused at the
+    /// prompt, naming it, and never asked of the server.
+    func test_debugRefusesWhatCannotBeACacheKey() throws {
         try run("debug", ["abc"])
 
-        XCTAssertEqual(connection.daemonRequests, [.debug(cacheKey: "abc")])
-        XCTAssertEqual(context.messages, ["cache entry abc\nnode SampleTool@1"])
+        XCTAssertEqual(connection.daemonRequests, [])
+        XCTAssertEqual(context.errors, ["debug: 'abc' is not a cache key, which is 64 hex digits"])
     }
 
     func test_debugWithMoreThanOneArgumentSaysWhatItTakes() throws {

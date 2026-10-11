@@ -29,9 +29,11 @@ public struct OutputPort: Codable, FetchableRecord, PersistableRecord, Equatable
     public var nodeID: ObjectID
     public var nameSymbolID: ObjectID
     public var valueKind: ValueKind
-    public var dataObjectHash: DataObjectHash?
+    /// The object store's name for the value, a `DataObjectHash`: the alias is the node
+    /// kit's, beside the store, and this package sits below the node kit.
+    public var dataObjectHash: String?
 
-    public init(nodeID: ObjectID, nameSymbolID: ObjectID, valueKind: ValueKind, dataObjectHash: DataObjectHash?) {
+    public init(nodeID: ObjectID, nameSymbolID: ObjectID, valueKind: ValueKind, dataObjectHash: String?) {
         self.nodeID = nodeID
         self.nameSymbolID = nameSymbolID
         self.valueKind = valueKind
@@ -79,7 +81,7 @@ public struct OutputPortDataAccess: DataAccessType {
 
     /// Every distinct object a port refers to — a value, or an error's message — without
     /// the ports: the collector's root set, one column of hex (B-14).
-    public func selectAllHashes() throws -> [DataObjectHash] {
+    public func selectAllHashes() throws -> [String] {
         try read { db in
             try String.fetchAll(db, sql: "SELECT DISTINCT dataObjectHash FROM OutputPort WHERE dataObjectHash IS NOT NULL")
         }
@@ -87,7 +89,7 @@ public struct OutputPortDataAccess: DataAccessType {
 
     /// Every distinct value on a port of a node of one of `kinds`: what the input file
     /// system holds, asked with the source kinds (B-148).
-    public func selectHashes(ofNodeKinds kinds: [UInt]) throws -> Set<DataObjectHash> {
+    public func selectHashes(ofNodeKinds kinds: [UInt]) throws -> Set<String> {
         guard !kinds.isEmpty else {
             return []
         }

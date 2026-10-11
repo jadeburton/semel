@@ -112,7 +112,7 @@ public final class EngineSubscription {
             switch subscribed {
             case .daemon:            return connection
             case .error(let error):  throw SubscribeError.refused(error)
-            case .hello:             throw SubscribeError.unexpectedReply
+            case .hello, .cache:     throw SubscribeError.unexpectedReply
             }
         } catch {
             connection.close()

@@ -1,9 +1,10 @@
 // CacheEntry.swift
 // SemelDatabaseModels
 //
-// The cache's tables in the graph's database. The rows are here, with the schema every
-// table of the database is created from; the queries over them are `SQLiteCacheStore` in
-// `SemelCore`, which answers `SemelCache`'s `CacheStore` in the vocabulary the cache
+// The cache's tables, in the graph's database and in a cache server's index. The rows are
+// here, with the schema every table of the graph's database is created from, and the
+// server's index is created from the same `createTable`; the queries over them are
+// `SemelCache`'s `SQLiteCacheStore`, which answers `CacheStore` in the vocabulary the cache
 // defines and this package, below the node kit, cannot import.
 
 import Foundation
@@ -37,8 +38,10 @@ public struct CacheEntry: Codable, FetchableRecord, PersistableRecord {
         self.content  = content
     }
 
-    public static func createTable(dbQueue: DatabaseQueue) throws {
-        try dbQueue.write { db in
+    /// Any writer, not only a queue: the graph's database is one, and a cache server's index
+    /// is a pool, so its readers run beside its writer.
+    public static func createTable(in writer: any DatabaseWriter) throws {
+        try writer.write { db in
             try db.create(table: "CacheEntry", options: .ifNotExists) { table in
                 table.column("hash", .text).notNull().primaryKey()
                 table.column("nodeType", .text).notNull()
