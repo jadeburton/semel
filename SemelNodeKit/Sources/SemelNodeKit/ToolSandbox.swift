@@ -31,4 +31,32 @@ public enum ToolSandbox {
     /// there cannot reach another run's result. A name no wire key takes: every input sits
     /// below a file-system name such as `input:`, and no node names an output this way.
     public static let derivedStateFolderName = ".semel-derived"
+
+    /// Whether `bytes` name the folder a run had, `sandboxPath`, by either of the names
+    /// macOS gives a temporary folder (`/private/var/…` and `/var/…`): what a node checks the
+    /// output of a tool it publishes as written, since such an output would be a different
+    /// value on every run. Searched as bytes: an output may hold any byte, and a path in a
+    /// binary file is still a path.
+    public static func names(sandboxPath: String, in bytes: [UInt8]) -> Bool {
+        guard !sandboxPath.isEmpty else {
+            return false
+        }
+        let unprivate = sandboxPath.hasPrefix("/private/") ? String(sandboxPath.dropFirst("/private".count)) : sandboxPath
+        return [sandboxPath, unprivate].contains { contains(bytes, Array($0.utf8)) }
+    }
+
+    private static func contains(_ bytes: [UInt8], _ needle: [UInt8]) -> Bool {
+        guard let first = needle.first, needle.count <= bytes.count else {
+            return false
+        }
+        var index = 0
+        let last = bytes.count - needle.count
+        while index <= last {
+            if bytes[index] == first, bytes[index..<(index + needle.count)].elementsEqual(needle) {
+                return true
+            }
+            index += 1
+        }
+        return false
+    }
 }

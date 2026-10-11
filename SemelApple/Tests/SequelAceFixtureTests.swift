@@ -30,14 +30,6 @@ final class SequelAceFixtureTests: SemelAppleTestCase {
         try String(contentsOf: Self.sequelAce.appendingPathComponent("sequel-ace.xcodeproj/project.pbxproj"), encoding: .utf8)
     }
 
-    /// The build files a build with no lex and no Core Data model compiler steps around:
-    /// the project file with them out of the app's sources phase.
-    private static let unbuiltSourcesInPhase = [
-        "179F15060F7C433C00579954 /* SPEditorTokens.l in Sources */,",
-        "BCD0AD490FBBFC340066EA5C /* SPSQLTokenizer.l in Sources */,",
-        "4D90B79E101E0CF200D116A1 /* SPUserManager.xcdatamodel in Sources */,",
-    ]
-
     /// The sub-project the fixture holds; `QueryKit`'s is not there, as a clone that had not
     /// pushed it would not have it.
     static let spMySQLProject = "Frameworks/SPMySQLFramework/SPMySQLFramework.xcodeproj"
@@ -63,14 +55,10 @@ final class SequelAceFixtureTests: SemelAppleTestCase {
             listing: listing)
     }
 
-    /// The app's formula with the lex and Core Data sources stepped around, and the
-    /// project's `Frameworks` folder holding what the clone's does.
+    /// The app's formula, with the project's `Frameworks` folder holding what the clone's
+    /// does.
     private func appFormula() throws -> String {
-        var text = try pbxproj()
-        for line in Self.unbuiltSourcesInPhase {
-            text = text.replacingOccurrences(of: line, with: "")
-        }
-        return try formula(pbxproj: text) { folder in
+        try formula(pbxproj: try pbxproj()) { folder in
             folder == "input:/repo/Frameworks"
                 ? .init(files: [], folders: ["QueryKit", "SPMySQLFramework", "ShortcutRecorder.framework", "libmysqlclient"])
                 : nil
@@ -81,20 +69,40 @@ final class SequelAceFixtureTests: SemelAppleTestCase {
         try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix(opening) }, "no block opening \(opening) in\n\(formula)")
     }
 
-    // MARK: - What stops it first
+    // MARK: - Sources other nodes write
 
-    /// The app's sources phase lists two lex files and a Core Data model, which no node
-    /// builds yet: refused by name, rather than left out of a build that would link
-    /// without the scanners and launch without the model.
-    func test_theLexFilesAndTheCoreDataModelAreRefusedByName() throws {
-        XCTAssertThrowsError(try formula(pbxproj: try pbxproj())) { error in
-            guard case XcodeProjectError.unsupportedSources(let target, let files) = error else {
-                return XCTFail("\(error)")
-            }
-            XCTAssertEqual(target, "Sequel Ace")
-            XCTAssertEqual(files, ["Source/Model/CoreData/SPUserManager.xcdatamodel", "Source/Other/Parsing/SPEditorTokens.l",
-                                   "Source/Other/Parsing/SPSQLTokenizer.l"])
+    /// The app's sources phase lists two lexer descriptions: each is run through lex, and
+    /// the scanner it writes beside it compiled with the app's settings — the prefix header,
+    /// the header map — as Xcode compiles it, and linked (B-77 item 4).
+    func test_theLexerDescriptionsAreRunThroughLexAndTheirScannersCompiled() throws {
+        let formula = try appFormula()
+
+        for (index, name) in ["SPEditorTokens", "SPSQLTokenizer"].enumerated() {
+            let description = "input:/repo/Source/Other/Parsing/\(name).l"
+            let scanner     = "input:/repo/Source/Other/Parsing/\(name).yy.c"
+            XCTAssertTrue(try block("func lex_Sequel_Ace_\(index)() =", in: formula)
+                .contains("input: ['\(description)': StaticFile(path: '\(description)').output]"))
+            XCTAssertTrue(formula.contains("'\(scanner).o': ClangCompiler("), formula)
+            XCTAssertTrue(formula.contains("input: ['\(scanner).p': preprocessGenerated_Sequel_Ace(path: '\(scanner)', "
+                                           + "source: lex_Sequel_Ace_\(index)().output)]"), formula)
         }
+        let preprocessor = try block("func preprocessGenerated_Sequel_Ace(path, source) =", in: formula)
+        XCTAssertTrue(preprocessor.contains("prefixHeader: ['input:/repo/Source/Sequel-Ace.pch'"), preprocessor)
+        XCTAssertTrue(preprocessor.contains("quoteHeaderTrees: ['input:/repo': headers_Sequel_Ace().files]"), preprocessor)
+    }
+
+    /// The sources phase lists the user manager's Core Data model, unversioned: momc
+    /// compiles it into `SPUserManager.mom` in the bundle's resources, where the app loads
+    /// it from (B-77 item 4).
+    func test_theCoreDataModelIsCompiledIntoTheBundlesResources() throws {
+        let formula = try appFormula()
+
+        let model = try block("func model_Sequel_Ace_0() =", in: formula)
+        XCTAssertTrue(model.contains("CoreDataModelCompiler("), model)
+        XCTAssertTrue(model.contains("SettingsLiteral(minimumDeploymentTarget: '13.5', module: 'Sequel_Ace', platform: 'macosx')"), model)
+        XCTAssertTrue(model.contains("model: ['input:/repo/Source/Model/CoreData/SPUserManager.xcdatamodel': "
+                                     + "Folder(path: 'input:/repo/Source/Model/CoreData/SPUserManager.xcdatamodel').manifest]"), model)
+        XCTAssertTrue(try block("func bundle_Sequel_Ace() =", in: formula).contains("'model0': model_Sequel_Ace_0().files"))
     }
 
     // MARK: - Header lookup

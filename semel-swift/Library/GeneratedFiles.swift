@@ -147,7 +147,9 @@ public enum GeneratedFiles {
         let own = XcodeProjectConverter.configNamespaces(
             compilingCFamilySources: compiledSources.hasCFamilySources,
             compilingInterfaceBuilderDocuments: compiledSources.hasInterfaceBuilderDocuments,
-            signingBundles: XcodeProjectConverter.signsBundles(forSDK: platform.sdkName))
+            signingBundles: XcodeProjectConverter.signsBundles(forSDK: platform.sdkName),
+            generatingScanners: compiledSources.hasLexSources,
+            compilingDataModels: compiledSources.hasDataModels)
         var namespaces: [String] = []
         for namespace in own + SemelSwift.converterConfigNamespaces(forCFamilyTargets: hasCFamilyTargets)
         where !namespaces.contains(namespace) {

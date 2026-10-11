@@ -36,6 +36,8 @@ final class ClangMachineFileTests: XCTestCase {
                                        architecture: "arm64", recursiveHash: nil)
     private let libtool = ToolDescriptor(name: "libtool", version: "Apple Inc. version cctools_ld-1267", platform: "macOS",
                                          architecture: "arm64", recursiveHash: nil)
+    private let lex = ToolDescriptor(name: "lex", version: "flex 2.6.4 Apple(flex-35)", platform: "macOS",
+                                     architecture: "arm64", recursiveHash: nil)
 
     private var file: URL { folder.appendingPathComponent("semel.machine.config") }
 
@@ -47,9 +49,9 @@ final class ClangMachineFileTests: XCTestCase {
         // Another toolchain registered in the same process is not this tool's to write.
         try SemelSwift.register()
 
-        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool] }
+        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool, lex] }
 
-        XCTAssertEqual(outcome, .written(file, namespaces: ["clang.archiver", "clang.compiler", "clang.linker", "clang.preprocessor"],
+        XCTAssertEqual(outcome, .written(file, namespaces: ["clang.archiver", "clang.compiler", "clang.lexGenerator", "clang.linker", "clang.preprocessor"],
                                          notInstalled: [], selectedBy: [], merge: nil))
         let written = try contents()
         XCTAssertTrue(written.hasPrefix("// Written by semel-clang for --platform macos"), written)
@@ -68,7 +70,7 @@ final class ClangMachineFileTests: XCTestCase {
             .appendingPathComponent("../../EndToEnd/Fixtures/tutorial/hello.fmla").standardizedFileURL
         try writeFormula(try String(contentsOf: tutorial, encoding: .utf8), at: "hello/hello.fmla")
 
-        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool] }
+        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool, lex] }
 
         XCTAssertEqual(outcome, .written(file, namespaces: ["clang.compiler", "clang.linker", "clang.preprocessor"],
                                          notInstalled: [], selectedBy: ["hello/hello.fmla"], merge: nil))
@@ -88,7 +90,7 @@ final class ClangMachineFileTests: XCTestCase {
             )
             """, at: "lua/lua.fmla")
 
-        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool] }
+        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool, lex] }
 
         XCTAssertEqual(outcome, .written(file, namespaces: ["clang.archiver", "clang.compiler", "clang.preprocessor"],
                                          notInstalled: [], selectedBy: ["lua/lua.fmla"], merge: nil))
@@ -103,9 +105,9 @@ final class ClangMachineFileTests: XCTestCase {
             product "hello" = clang.executable(sources: <src>, settings: settings())
             """, at: "other/other.fmla")
 
-        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool] }
+        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool, lex] }
 
-        XCTAssertEqual(outcome, .written(file, namespaces: ["clang.archiver", "clang.compiler", "clang.linker", "clang.preprocessor"],
+        XCTAssertEqual(outcome, .written(file, namespaces: ["clang.archiver", "clang.compiler", "clang.lexGenerator", "clang.linker", "clang.preprocessor"],
                                          notInstalled: [], selectedBy: [], merge: nil))
     }
 
@@ -117,9 +119,9 @@ final class ClangMachineFileTests: XCTestCase {
             func settings() = StaticFile(path: <semel.machine.config>)
             """, at: "semel.fmla")
 
-        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool] }
+        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool, lex] }
 
-        XCTAssertEqual(outcome, .written(file, namespaces: ["clang.archiver", "clang.compiler", "clang.linker", "clang.preprocessor"],
+        XCTAssertEqual(outcome, .written(file, namespaces: ["clang.archiver", "clang.compiler", "clang.lexGenerator", "clang.linker", "clang.preprocessor"],
                                          notInstalled: [], selectedBy: [], merge: nil))
     }
 
@@ -157,7 +159,7 @@ final class ClangMachineFileTests: XCTestCase {
             product "hello" = clang.executable(sources: <src>, settings: settings())
             """, at: "hello/hello.fmla")
 
-        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool] }
+        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool, lex] }
 
         let kept = [MachineFile.Kept(writer: "semel-swift prepare", namespaces: ["swift.compiler", "swift.linker"])]
         XCTAssertEqual(outcome, .written(file, namespaces: ["clang.compiler", "clang.linker", "clang.preprocessor"],
@@ -180,7 +182,7 @@ final class ClangMachineFileTests: XCTestCase {
     func test_takesTheNamespacesItWritesOutOfAnotherWritersPart() throws {
         try prepareWrote(["clang.compiler", "swift.compiler"])
 
-        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: true) { [clang, libtool] }
+        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: true) { [clang, libtool, lex] }
 
         guard case .written(_, _, _, _, let merge) = outcome else {
             return XCTFail("expected a written file, got \(outcome)")
@@ -189,19 +191,19 @@ final class ClangMachineFileTests: XCTestCase {
         XCTAssertEqual(merge?.kept, [MachineFile.Kept(writer: "semel-swift prepare", namespaces: ["swift.compiler"])])
         let sections = MachineFile.sections(in: try contents())
         XCTAssertEqual(sections.map(\.namespaces), [["swift.compiler"],
-                                                     ["clang.archiver", "clang.compiler", "clang.linker", "clang.preprocessor"]])
+                                                     ["clang.archiver", "clang.compiler", "clang.lexGenerator", "clang.linker", "clang.preprocessor"]])
     }
 
     /// The same machine gives the same answer, so a file that already holds what this tool
     /// would write is left as it is, whoever wrote it.
     func test_leavesAFileThatHoldsItsNamespacesAsItIs() throws {
-        _ = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool] }
+        _ = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool, lex] }
         let first = try contents()
 
         let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [] }
 
-        XCTAssertEqual(outcome, .kept(file, namespaces: ["clang.archiver", "clang.compiler", "clang.linker", "clang.preprocessor"]))
-        XCTAssertEqual(outcome.lines, ["Kept \(file.path): it holds clang.archiver, clang.compiler, clang.linker, "
+        XCTAssertEqual(outcome, .kept(file, namespaces: ["clang.archiver", "clang.compiler", "clang.lexGenerator", "clang.linker", "clang.preprocessor"]))
+        XCTAssertEqual(outcome.lines, ["Kept \(file.path): it holds clang.archiver, clang.compiler, clang.lexGenerator, clang.linker, "
                                      + "clang.preprocessor already; --force rewrites them"])
         XCTAssertEqual(try contents(), first)
     }
@@ -209,14 +211,14 @@ final class ClangMachineFileTests: XCTestCase {
     /// A formula that stops selecting a namespace has it dropped from this tool's part on
     /// the next run, with no `--force`: a block nothing selects is reported as unused keys.
     func test_aNamespaceNoLongerSelectedGoesFromItsPart() throws {
-        _ = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool] }
+        _ = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool, lex] }
         try writeFormula("""
             include 'clang'
             func settings() = clang.settings(project: <semel.config>, machine: <../semel.machine.config>)
             product "hello" = clang.executable(sources: <src>, settings: settings())
             """, at: "hello/hello.fmla")
 
-        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool] }
+        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool, lex] }
 
         XCTAssertEqual(outcome.lines.first,
                        "Rewrote clang.compiler, clang.linker, clang.preprocessor in \(file.path)")
@@ -245,7 +247,7 @@ final class ClangMachineFileTests: XCTestCase {
         guard case .written(_, _, let notInstalled, _, _) = outcome else {
             return XCTFail("expected a written file, got \(outcome)")
         }
-        XCTAssertEqual(notInstalled, ["clang", "libtool"])
+        XCTAssertEqual(notInstalled, ["clang", "lex", "libtool"])
         let written = try contents()
         XCTAssertTrue(written.contains("no clang is installed"), written)
         XCTAssertTrue(written.contains("no libtool is installed"), written)

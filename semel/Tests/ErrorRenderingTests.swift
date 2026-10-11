@@ -99,6 +99,11 @@ final class ErrorRenderingTests: XCTestCase {
                        ["the tool cannot be started", "  reason: no such file"])
     }
 
+    func test_sourceNotTaken() {
+        XCTAssertEqual(block(.sourceNotTaken(path: "Parsing/Tokens.y", tool: "lex", takes: [".l", ".lm"])),
+                       ["Parsing/Tokens.y is not a file lex takes", "  takes: .l, .lm"])
+    }
+
     // MARK: - Settings
 
     /// The machine's keys are written by its command, which is the remedy; with the
@@ -874,6 +879,7 @@ final class ErrorRenderingTests: XCTestCase {
             switch condition {
             case .toolExitedSilently, .toolWroteNothing, .toolNotInstalled, .toolNotFound, .toolNotExecutable,
                  .toolInputNotWritten, .toolOutputNotRead, .toolOutputNamesItsSandbox, .toolLaunchFailed,
+                 .sourceNotTaken,
                  .settingsMissing, .settingNotAccepted, .settingNotAList, .sdkNotFound, .sdkVersionDiffers, .settingNotSupported,
                  .notPushed, .removed, .inputInError, .documentUnreadable,
                  .unlinkedKind, .unknownTypeName, .requiredPortUnwired, .severalWiresOnOneWirePort, .portNotDeclared,

@@ -478,13 +478,19 @@ struct XcodeFormulaEmitter {
         // no folder of its own compiles what it borrows, and nothing else.
         // A target lists its files through groups (B-77) or owns synchronized folders;
         // either way it has to have a Swift source somewhere. A listed C-family source is
-        // compiled through clang beside it; a documentation catalog gives nothing a build
-        // uses and is passed over; any other listed file that is not Swift is a build this
-        // converter cannot write yet, said rather than dropped.
+        // compiled through clang beside it, and a lexer description is turned into one by
+        // lex first; a Core Data model is compiled into the bundle's resources; a
+        // documentation catalog gives nothing a build uses and is passed over; any other
+        // listed file that is not Swift is a build this converter cannot write yet, said
+        // rather than dropped.
         let everyListedSource = target.sourcePaths(forSDK: build.sdk).filter { !Self.isDocumentationOnly($0) }
         let listedSources  = everyListedSource.filter { $0.hasSuffix(".swift") }
         let listedCFamily  = everyListedSource.filter(Self.isCFamilySource)
-        let listedOther    = everyListedSource.filter { !$0.hasSuffix(".swift") && !Self.isCFamilySource($0) }
+        let listedLex      = everyListedSource.filter(Self.isLexSource)
+        let listedModels   = everyListedSource.filter(Self.isDataModel)
+        let listedOther    = everyListedSource.filter {
+            !$0.hasSuffix(".swift") && !Self.isCFamilySource($0) && !Self.isLexSource($0) && !Self.isDataModel($0)
+        }
         guard listedOther.isEmpty else {
             throw XcodeProjectError.unsupportedSources(target: target.name, files: listedOther)
         }
@@ -554,7 +560,7 @@ struct XcodeFormulaEmitter {
             compilerArguments.append("-application-extension")
         }
         let objectiveC = objectiveCSources(of: target, identity: identity, in: sourceFolders, settings: settings,
-                                           listing: listing, listed: listedCFamily)
+                                           listing: listing, listed: listedCFamily, lex: listedLex)
         // The importer parses the bridging header as the target's C-family sources are
         // preprocessed, so it is told the same macros, as Xcode tells it.
         if objectiveC.bridgingHeader != nil {
@@ -568,7 +574,7 @@ struct XcodeFormulaEmitter {
         // The Objective-C interface of the target's Swift, which its Objective-C imports by
         // the name the settings give it — Xcode's default is `<Module>-Swift.h` — and which
         // the compiler writes only when there is Objective-C to import it (B-77 item 4).
-        let objectiveCHeaderName = objectiveC.sources.isEmpty ? nil
+        let objectiveCHeaderName = !objectiveC.hasSources ? nil
             : (settings["SWIFT_OBJC_INTERFACE_HEADER_NAME"].flatMap { $0.isEmpty ? nil : $0 } ?? "\(identity.moduleName)-Swift.h")
         if let objectiveCHeaderName {
             compilerLiterals["objectiveCHeaderName"] = objectiveCHeaderName
@@ -586,7 +592,7 @@ struct XcodeFormulaEmitter {
         // what its bridging header imports from — the shape a package's C target hands a
         // Swift importer, `headers_<Target>()` — and its C-family sources' header map.
         let headerTree = objectiveC.headers
-        let hasHeaderTree = !headerTree.isEmpty && (objectiveC.bridgingHeader != nil || !objectiveC.sources.isEmpty)
+        let hasHeaderTree = !headerTree.isEmpty && (objectiveC.bridgingHeader != nil || objectiveC.hasSources)
         if hasHeaderTree {
             blocks.append(Self.treeBuilder(named: "headers_\(name)", files: headerTree))
         }
@@ -650,6 +656,9 @@ struct XcodeFormulaEmitter {
         var interfaceDocuments: [ResourceFile] = []
         var plainResources: [ResourceFile] = []
         var wholeFolders: [ResourceFile] = []
+        // Core Data models by their path relative to the project's folder: the sources
+        // phase's, and a synchronized folder's.
+        var dataModels: [String] = listedModels
         let ownInfoPlist = settings["INFOPLIST_FILE"].map(Self.projectRelativePath)
         func add(_ relativePath: String, in folderPath: String, listedInResourcesPhase: Bool = false) {
             switch Self.resource(at: relativePath, listedInResourcesPhase: listedInResourcesPhase) {
@@ -680,6 +689,8 @@ struct XcodeFormulaEmitter {
                     catalogs.append("\(folderPath)/\(subfolder)")
                 case .copiedWhole(let bundlePath):
                     wholeFolders.append(ResourceFile(folderPath: folderPath, relativePath: subfolder, bundlePath: bundlePath))
+                case .dataModel:
+                    dataModels.append("\(folder.path)/\(subfolder)")
                 case .notBuilt:
                     break
                 }
@@ -717,7 +728,7 @@ struct XcodeFormulaEmitter {
                 add(file, in: build.projectFolder)
             case .copiedWhole(let bundlePath):
                 wholeFolders.append(ResourceFile(folderPath: build.projectFolder, relativePath: file, bundlePath: bundlePath))
-            case .catalog, .notBuilt:
+            case .catalog, .dataModel, .notBuilt:
                 break
             }
         }
@@ -774,7 +785,7 @@ struct XcodeFormulaEmitter {
         // package's C target's are, over the target's folders as header folders — what
         // Xcode's header map lets a quoted import find — and linked into the executable.
         var objectEntries = ["'\(identity.moduleName).o': compiler_\(name)().object"]
-        if !objectiveC.sources.isEmpty {
+        if objectiveC.hasSources {
             // What each preprocess is given besides its source: the header folders, the
             // header map — the target's headers on `-iquote`, and by name under its product
             // — the prefix header, and the frameworks (B-77 item 4).
@@ -798,11 +809,13 @@ struct XcodeFormulaEmitter {
                 blocks.append("// Search paths and a prefix header outside the project, which no push can fill, are left out (B-77 item 4): "
                               + objectiveC.searchPathsOutside.joined(separator: ", "))
             }
-            func preprocessor(named function: String, literals: [String: String]) -> String {
-                "func \(function)(path) =\n" +
+            // A source a node of the build writes — a lex scanner — is preprocessed from that
+            // node's output, keyed by the path Xcode would give it beside its description.
+            func preprocessor(named function: String, literals: [String: String], generated: Bool = false) -> String {
+                "func \(function)(path\(generated ? ", source" : "")) =\n" +
                 "    ClangPreprocessor(\n" +
                 "        configuration: ['config': \(configuration(namespace: Self.clangPreprocessorNamespace, literals: literals))],\n" +
-                "        input: [path: StaticFile(path: path)]" +
+                "        input: [path: \(generated ? "source" : "StaticFile(path: path)")]" +
                 headerWires +
                 "\n    )"
             }
@@ -831,6 +844,27 @@ struct XcodeFormulaEmitter {
                 objectEntries.append("\(Self.quoted(source + ".o")): ClangCompiler(configuration: ['config': \(sourceCompilerConfiguration)], "
                                      + "input: [\(Self.quoted(source + ".p")): \(preprocessorFunction)(path: \(Self.quoted(source)))]"
                                      + "\(compilerFrameworkWires)).output")
+            }
+            // Each lexer description run through lex, `LEXFLAGS` its arguments, and the scanner
+            // it writes built with the target's settings as Xcode builds it (B-77 item 4).
+            if !objectiveC.generatedSources.isEmpty {
+                blocks.append(preprocessor(named: "preprocessGenerated_\(name)", literals: objectiveC.preprocessorLiterals,
+                                           generated: true))
+                let lexFlags = settings.list("LEXFLAGS")
+                let lexConfiguration = configuration(namespace: Self.lexGeneratorNamespace,
+                                                     literals: lexFlags.isEmpty ? [:] : ["arguments": lexFlags.joined(separator: ",")])
+                for (index, generated) in objectiveC.generatedSources.enumerated() {
+                    blocks.append(
+                        "func lex_\(name)_\(index)() =\n" +
+                        "    LexGenerator(\n" +
+                        "        configuration: ['config': \(lexConfiguration)],\n" +
+                        "        input: [\(Self.quoted(generated.description)): StaticFile(path: \(Self.quoted(generated.description))).output]\n" +
+                        "    )")
+                    objectEntries.append("\(Self.quoted(generated.path + ".o")): ClangCompiler(configuration: ['config': \(compilerConfiguration)], "
+                                         + "input: [\(Self.quoted(generated.path + ".p")): preprocessGenerated_\(name)(path: "
+                                         + "\(Self.quoted(generated.path)), source: lex_\(name)_\(index)().output)]"
+                                         + "\(compilerFrameworkWires)).output")
+                }
             }
         }
 
@@ -920,6 +954,26 @@ struct XcodeFormulaEmitter {
                     "    )")
                 bundleTrees.append("'interface\(index)': interface_\(name)_\(index)().files")
             }
+        }
+
+        // Core Data models, each compiled by momc into the bundle's resources — a `.mom`, or a
+        // versioned model's `.momd` — as the module the target's classes are in, with the
+        // current version the project names (B-77 item 4).
+        for (index, model) in Array(Set(dataModels)).sorted().enumerated() {
+            var modelLiterals = ["platform": build.sdk,
+                                 "minimumDeploymentTarget": identity.deploymentTarget,
+                                 "module": identity.moduleName]
+            if let currentVersion = project.dataModelCurrentVersions[model] {
+                modelLiterals["currentVersion"] = currentVersion
+            }
+            let modelPath = "\(build.projectFolder)/\(model)"
+            blocks.append(
+                "func model_\(name)_\(index)() =\n" +
+                "    CoreDataModelCompiler(\n" +
+                "        configuration: ['config': \(configuration(namespace: CoreDataModelCompilerConfiguration.settingNamespace, literals: modelLiterals))],\n" +
+                "        model: [\(Self.quoted(modelPath)): Folder(path: \(Self.quoted(modelPath))).manifest]\n" +
+                "    )")
+            bundleTrees.append("'model\(index)': model_\(name)_\(index)().files")
         }
 
         // A folder reference is copied whole, under its own name, wherever it is in the
@@ -1206,8 +1260,10 @@ struct XcodeFormulaEmitter {
         /// One item, copied whole under this path in the bundle's resources with what it
         /// holds laid out as it is.
         case copiedWhole(bundlePath: String)
-        /// Built by a tool Semel does not run — a Core Data model, a documentation catalog —
-        /// and so neither walked nor copied.
+        /// A Core Data model, compiled whole by momc.
+        case dataModel
+        /// Built by a tool Semel does not run — a documentation catalog — and so neither
+        /// walked nor copied.
         case notBuilt
     }
 
@@ -1219,7 +1275,15 @@ struct XcodeFormulaEmitter {
     /// is what holds on every machine.
     static let copiedWholeFolderExtensions: Set<String> = ["bundle", "rtfd"]
     /// Folders Xcode compiles with a tool Semel does not run.
-    static let notBuiltFolderExtensions: Set<String> = ["xcdatamodeld", "xcdatamodel", "docc"]
+    static let notBuiltFolderExtensions: Set<String> = ["docc"]
+    /// Core Data models, unversioned and versioned, which momc compiles
+    /// (`CoreDataModelCompiler.compiledExtensions`).
+    static let dataModelExtensions: Set<String> = ["xcdatamodel", "xcdatamodeld"]
+
+    /// A Core Data model, by its path.
+    static func isDataModel(_ path: String) -> Bool {
+        dataModelExtensions.contains((path as NSString).pathExtension.lowercased())
+    }
 
     /// A documentation catalog, which a sources phase may list (CodeEdit's
     /// `Documentation.docc`): `docc` runs only in a documentation build, so an app's
@@ -1236,6 +1300,9 @@ struct XcodeFormulaEmitter {
         let pathExtension = (name as NSString).pathExtension.lowercased()
         if pathExtension == "xcassets" || pathExtension == "icon" {
             return .catalog
+        }
+        if dataModelExtensions.contains(pathExtension) {
+            return .dataModel
         }
         if notBuiltFolderExtensions.contains(pathExtension) {
             return .notBuilt
@@ -1279,9 +1346,10 @@ struct XcodeFormulaEmitter {
     /// Seen not copied in an application built by Xcode 26.6: Swift and C-family sources
     /// (compiled), headers and a prefix header, a module map, API notes, an entitlements
     /// file whether the settings name it or not, an exports list and a `.inc` (each "no
-    /// rule to process file"). The rest are compiled by a rule Xcode has and Semel does not
-    /// run — assembly, Metal, lex and yacc, an intent definition, a Core Data mapping
-    /// model, a Core ML model — named so they are not copied as though they were data.
+    /// rule to process file"). The rest are compiled by a rule Xcode has — lex, which a
+    /// target's sources are run through (`LexGenerator`), and assembly, Metal, yacc, an
+    /// intent definition, a Core Data mapping model, a Core ML model, which Semel does not
+    /// run — named so they are not copied as though they were data.
     static let neverCopiedExtensions: Set<String> = cFamilySourceExtensions.union([
         "swift", "h", "hh", "hpp", "hxx", "h++", "pch", "modulemap", "apinotes", "entitlements", "exp", "inc",
         "s", "metal", "l", "lm", "lmm", "lpp", "lxx", "y", "ym", "ymm", "ypp", "yxx",
@@ -1308,6 +1376,23 @@ struct XcodeFormulaEmitter {
         cFamilySourceExtensions.contains((path as NSString).pathExtension.lowercased())
     }
 
+    /// A lexer description and the scanner lex writes for it, by extension, as Xcode's lex
+    /// rule names them and `LexGenerator.generatedExtensions` writes them.
+    static let lexGeneratedExtensions = ["l": "yy.c", "lm": "yy.m", "lmm": "yy.mm", "lpp": "yy.cpp", "lxx": "yy.cxx"]
+
+    static func isLexSource(_ path: String) -> Bool {
+        lexGeneratedExtensions[(path as NSString).pathExtension] != nil
+    }
+
+    /// `Parsing/Tokens.l` -> `Parsing/Tokens.yy.c`, beside it.
+    static func lexGeneratedPath(of path: String) -> String? {
+        lexGeneratedExtensions[(path as NSString).pathExtension].map { "\((path as NSString).deletingPathExtension).\($0)" }
+    }
+
+    /// `LexGenerator`'s namespace, which the node pins: named rather than imported, as the
+    /// clang nodes are.
+    static let lexGeneratorNamespace = "clang.lexGenerator"
+
     static func isHeader(_ path: String) -> Bool {
         headerExtensions.contains((path as NSString).pathExtension.lowercased())
     }
@@ -1323,6 +1408,13 @@ struct XcodeFormulaEmitter {
     struct ObjectiveCSources {
         /// Every C-family source, by its path in the input file system, sorted.
         var sources: [String] = []
+        /// The scanners lex writes, each by the path it is built under in the input file
+        /// system — beside its description, where Xcode's `DerivedSources` would hold it —
+        /// with its description's (B-77 item 4). Sorted.
+        var generatedSources: [(path: String, description: String)] = []
+
+        /// Whether anything is built through clang: a source, or a scanner lex writes.
+        var hasSources: Bool { !sources.isEmpty || !generatedSources.isEmpty }
         /// The preprocessor's header folders, `-I` each: the target's synchronized folders,
         /// and the folders its header search paths name (B-77 item 4). Sorted.
         var headerFolders: [String] = []
@@ -1413,14 +1505,19 @@ struct XcodeFormulaEmitter {
                            in sourceFolders: [(XcodeProject.SynchronizedFolder, String)],
                            settings: XcodeBuildSettings,
                            listing: (String) -> FolderListing?,
-                           listed: [String]) -> ObjectiveCSources {
+                           listed: [String],
+                           lex: [String] = []) -> ObjectiveCSources {
         var result = ObjectiveCSources()
         var sources = Set<String>()
         var searchedFolders = Set<String>()
         var headersByKey: [String: String] = [:]
+        var lexDescriptions = lex
         for (folder, folderPath) in sourceFolders {
             searchedFolders.insert(folderPath)
             for file in (listing(folderPath) ?? FolderListing()).files where !folder.excludes(file) && !Self.isInsideCatalog(file) {
+                if Self.isLexSource(file) {
+                    lexDescriptions.append("\(folder.path)/\(file)")
+                }
                 if Self.isCFamilySource(file) {
                     sources.insert("\(folderPath)/\(file)")
                     if let flags = folder.compilerFlags[file] {
@@ -1475,12 +1572,18 @@ struct XcodeFormulaEmitter {
         result.bridgingHeader = settings["SWIFT_OBJC_BRIDGING_HEADER"].map(Self.projectRelativePath).flatMap { $0.isEmpty ? nil : $0 }
         result.defines = settings.list("GCC_PREPROCESSOR_DEFINITIONS")
         result.otherFlags = settings.list("OTHER_CFLAGS")
-        guard !sources.isEmpty else {
+        result.generatedSources = Array(Set(lexDescriptions)).sorted().compactMap { description in
+            Self.lexGeneratedPath(of: description).map { (path: "\(build.projectFolder)/\($0)",
+                                                           description: "\(build.projectFolder)/\(description)") }
+        }
+        guard !sources.isEmpty || !result.generatedSources.isEmpty else {
             return result
         }
         result.sources = sources.sorted()
         result.headerFolders = searchedFolders.sorted()
-        result.compilesCxx = sources.contains { Self.cxxSourceExtensions.contains(($0 as NSString).pathExtension.lowercased()) }
+        result.compilesCxx = (result.sources + result.generatedSources.map(\.path)).contains {
+            Self.cxxSourceExtensions.contains(($0 as NSString).pathExtension.lowercased())
+        }
 
         var literals = ["target": identity.target]
         if settings["CLANG_ENABLE_OBJC_ARC"] == "YES" {

@@ -65,6 +65,9 @@ struct ConditionLines {
             return Drawn(headline: "\(tool) wrote the folder it ran in into \(file), which would differ from one run to the next")
         case .toolLaunchFailed(let reason):
             return Drawn(headline: "the tool cannot be started", details: [Detail(label: "reason", value: reason)])
+        case .sourceNotTaken(let source, let tool, let takes):
+            return Drawn(path: path(source), headline: " is not a file \(tool) takes",
+                         details: [Detail(label: "takes", value: takes.joined(separator: ", "))])
 
         // MARK: Settings
 

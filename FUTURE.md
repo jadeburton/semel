@@ -3369,14 +3369,27 @@ application target, simulator only, all library code in packages. In suggested o
    `ClangPreprocessor`/`ClangCompiler` with new optional ports and no new version — no
    command line they wrote before changes):
 
-   1. **Listed sources no node builds** — `open`. The sources phase lists
-      `SPSQLTokenizer.l` and `SPEditorTokens.l`, which Xcode's lex rule turns into C, and
-      `SPUserManager.xcdatamodel`, which `momc` compiles into the bundle; the converter
-      refuses them by name (`unsupportedSources`, pinned by `SequelAceFixtureTests`).
-      Next: a lex node (the toolchain's `lex`, `<name>.yy.c`, compiled through clang with
-      the target's settings) and a `momc` node (also wanted by Mastodon, item 5). Without
-      the scanners the link fails on `_yylex`, `_yy_scan_string`, `_yy_switch_to_buffer`,
-      `_yyuoffset` and `_yyuleng`, which is where the stepped-around build stops.
+   1. ~~**Listed sources no node builds.**~~ Done (second slice). The sources phase
+      lists `SPSQLTokenizer.l` and `SPEditorTokens.l`, which Xcode's lex rule turns into C,
+      and `SPUserManager.xcdatamodel`, which `momc` compiles into the bundle. Two new node
+      types build them. `LexGenerator` (kind 45, `SemelClang`, namespace
+      `clang.lexGenerator`) runs the toolchain's `lex` (flex 2.6.4 Apple(flex-35)), found
+      and versioned through `ToolDiscovery`. It writes `<name>.yy.c` beside the
+      description, which `preprocessGenerated_<Target>` preprocesses from lex's output
+      with the target's prefix header and header map, and which the compiler builds and
+      the linker links. `CoreDataModelCompiler` (kind 46, `SemelApple`, namespace
+      `apple.coreDataModelCompiler`, versioned by Xcode's version since momc reports
+      none) compiles an `.xcdatamodel` to `<name>.mom` and an `.xcdatamodeld` to a
+      `.momd`, into the bundle's resources, as the target's module. A versioned model
+      gets its current version from the project file's `XCVersionGroup.currentVersion`;
+      the model's own `.xccurrentversion` is hidden, and no push brings it, so the node
+      writes it. Both tools proved a function of their inputs. Both scanners and a
+      two-version model came out byte for byte the same from two runs in two folders
+      under another time zone and locale, the only paths in a scanner being the relative
+      names on its `#line`s. So each publishes what its tool wrote, and refuses an
+      output naming its sandbox. `prepare` writes their blocks only for a project that
+      has a lexer description or a model. *ISSUE:* entity classes whose codegen is
+      `class` or `category` are not generated; Sequel Ace's are `manual`.
    2. ~~**No prefix header.**~~ Done. `NSBeep`, `NSString`, `SPLog` undeclared in most of
       the app's sources: `GCC_PREFIX_HEADER` is forced into every C-family source,
       `-include`, on `ClangPreprocessor`'s new `prefixHeader` port. One outside the

@@ -1,7 +1,7 @@
 // ClangToolDiscovery.swift
 // SemelClang
 //
-// Where clang and libtool are on this machine and what version each reports — what this
+// Where clang, libtool and lex are on this machine and what version each reports — what this
 // package declares to `ToolDiscovery` when it registers.
 
 import Foundation
@@ -17,6 +17,12 @@ enum ClangToolDiscovery {
     /// The archiver runs libtool: clang writes no static archive itself (B-79).
     static var libtoolFinder: ToolFinder {
         ToolFinder(name: "libtool", locate: { locate("libtool") }, version: libtoolVersion(ofToolAt:))
+    }
+
+    /// The lexer generator a target's `.l` files are run through (B-77 item 4): flex, which
+    /// the toolchain ships as `lex`.
+    static var lexFinder: ToolFinder {
+        ToolFinder(name: "lex", locate: { locate("lex") }, version: lexVersion(ofToolAt:))
     }
 
     /// Absolute path to `toolName` in the active toolchain, via `xcrun --find`, or nil if
@@ -45,6 +51,19 @@ enum ClangToolDiscovery {
     /// output.
     static func parseVersion(from output: String) -> String? {
         let pattern = #"Apple clang version [0-9]+(\.[0-9]+)*( \([^)]*\))?"#
+        return output.range(of: pattern, options: .regularExpression).map { String(output[$0]) }
+    }
+
+    /// The version the lex at `path` reports, or nil if it reports nothing recognisable.
+    static func lexVersion(ofToolAt path: String) -> String? {
+        MachineQuery.output(of: path, ["--version"]).flatMap(parseLexVersion(from:))
+    }
+
+    /// lex's own version out of its `--version` output, one line of the form `flex 2.6.4
+    /// Apple(flex-35)`: flex's release and Apple's build of it, both kept, as two builds of
+    /// one release are different binaries.
+    static func parseLexVersion(from output: String) -> String? {
+        let pattern = #"flex [0-9]+(\.[0-9]+)*( Apple\([^)]*\))?"#
         return output.range(of: pattern, options: .regularExpression).map { String(output[$0]) }
     }
 

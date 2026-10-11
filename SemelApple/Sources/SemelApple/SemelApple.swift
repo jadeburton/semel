@@ -23,9 +23,10 @@ public enum SemelApple {
             XCFrameworkSliceSelector.self,
             IBToolCompiler.self,
             CodeSigner.self,
+            CoreDataModelCompiler.self,
         ])
 
-        // How actool, ibtool, xcstringstool and codesign are found on this machine and versioned.
+        // How actool, ibtool, xcstringstool, codesign and momc are found on this machine and versioned.
         // Declared here, located when the engine starts.
         AppleToolDiscovery.finders.forEach(ToolDiscovery.register)
 
@@ -47,18 +48,23 @@ public enum SemelApple {
                                              machineFileWriter: prepare))
         ToolNamespaceRegistry.register(.init(namespace: StringCatalogCompilerConfiguration.settingNamespace,
                                              toolName: "xcstringstool", machineFileWriter: prepare))
-        ToolNamespaceRegistry.register(.init(namespace: IBToolCompilerConfiguration.settingNamespace,
-                                             toolName: "ibtool",
-                                             machineSettingKeys: [sdkPathSettingKey, sdkFingerprintMachineSettingKey],
-                                             machineSettings: { platform in
-                                                 guard let path = sdkPath(forPlatform: platform) else {
-                                                     return [:]
-                                                 }
-                                                 var settings = [sdkPathSettingKey: path]
-                                                 settings[sdkFingerprintMachineSettingKey] = sdkFingerprint(ofSDKAtPath: path)
-                                                 return settings
-                                             },
-                                             machineFileWriter: prepare))
+        // momc is told the SDK as ibtool is, by the same machine settings.
+        func registerReadingTheSDK(namespace: String, toolName: String) {
+            ToolNamespaceRegistry.register(.init(namespace: namespace,
+                                                 toolName: toolName,
+                                                 machineSettingKeys: [sdkPathSettingKey, sdkFingerprintMachineSettingKey],
+                                                 machineSettings: { platform in
+                                                     guard let path = sdkPath(forPlatform: platform) else {
+                                                         return [:]
+                                                     }
+                                                     var settings = [sdkPathSettingKey: path]
+                                                     settings[sdkFingerprintMachineSettingKey] = sdkFingerprint(ofSDKAtPath: path)
+                                                     return settings
+                                                 },
+                                                 machineFileWriter: prepare))
+        }
+        registerReadingTheSDK(namespace: IBToolCompilerConfiguration.settingNamespace, toolName: "ibtool")
+        registerReadingTheSDK(namespace: CoreDataModelCompilerConfiguration.settingNamespace, toolName: "momc")
         // codesign is told which codesign_allocate makes room for a signature: the
         // toolchain's, a fact about the machine as the SDK is.
         ToolNamespaceRegistry.register(.init(namespace: CodeSignerConfiguration.settingNamespace,

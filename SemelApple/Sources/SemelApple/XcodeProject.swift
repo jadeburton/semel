@@ -406,6 +406,11 @@ struct XcodeProject {
     /// Xcode's project header map holds, by which a quoted import finds a header by name
     /// wherever in the project it sits, whatever target it belongs to (B-77 item 4).
     let headerPaths: [String]
+    /// The current version of each versioned Core Data model, by the model's path relative
+    /// to the project's folder: `XCVersionGroup.currentVersion`'s file name,
+    /// `Model 2.xcdatamodel`. The model's own `.xccurrentversion` says the same and is hidden,
+    /// so no push brings it (B-77 item 4).
+    let dataModelCurrentVersions: [String: String]
 
     func configuration(named name: String) -> BuildConfiguration? {
         configurations.first { $0.name == name }
@@ -574,6 +579,15 @@ struct XcodeProject {
             }
             return reader.path(of: id)
         }).sorted()
+        var currentVersions: [String: String] = [:]
+        for (id, object) in objects where object["isa"] as? String == "XCVersionGroup" {
+            guard let path = reader.path(of: id),
+                  let version = (objects[object["currentVersion"] as? String ?? ""]?["path"] as? String).map({ ($0 as NSString).lastPathComponent }) else {
+                continue
+            }
+            currentVersions[path] = version
+        }
+        dataModelCurrentVersions = currentVersions
 
         let targetIDs = (root["targets"] as? [String] ?? []).filter { objects[$0]?["isa"] as? String == "PBXNativeTarget" }
         var targets = try targetIDs.compactMap { targetID -> Target? in

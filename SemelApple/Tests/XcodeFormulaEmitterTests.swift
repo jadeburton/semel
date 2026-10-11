@@ -142,6 +142,58 @@ final class XcodeFormulaEmitterTests: XCTestCase {
                       formula)
     }
 
+    /// A listed lexer description is run through lex, and the scanner it writes beside it is
+    /// preprocessed from lex's output and compiled with the target's sources (B-77 item 4).
+    func test_aListedLexerDescriptionIsRunThroughLexAndItsScannerCompiled() throws {
+        let pbxproj = XcodeProjectTests.groupedFixture
+            .replacingOccurrences(of: "path = Util.swift;", with: "path = Tokens.l;")
+        let formula = try groupedFormula(pbxproj: pbxproj)
+
+        XCTAssertTrue(formula.contains("func lex_Food_Truck_0() =\n    LexGenerator(\n"), formula)
+        XCTAssertTrue(formula.contains("ConfigFilter(prefix: 'clang.lexGenerator'"), formula)
+        XCTAssertTrue(formula.contains("input: ['input:/repo/Shared/Sources/Tokens.l': StaticFile(path: 'input:/repo/Shared/Sources/Tokens.l').output]"),
+                      formula)
+        XCTAssertTrue(formula.contains("func preprocessGenerated_Food_Truck(path, source) =\n    ClangPreprocessor(\n"), formula)
+        XCTAssertTrue(formula.contains("        input: [path: source]"), formula)
+        XCTAssertTrue(formula.contains("'input:/repo/Shared/Sources/Tokens.yy.c.o': ClangCompiler("), formula)
+        XCTAssertTrue(formula.contains("input: ['input:/repo/Shared/Sources/Tokens.yy.c.p': preprocessGenerated_Food_Truck("
+                                       + "path: 'input:/repo/Shared/Sources/Tokens.yy.c', source: lex_Food_Truck_0().output)]"), formula)
+    }
+
+    /// A versioned Core Data model in the sources phase is compiled by momc into the bundle's
+    /// resources, as the target's module, with the current version the project file names:
+    /// the model's own `.xccurrentversion` is hidden, and no push brings it (B-77 item 4).
+    func test_aVersionedCoreDataModelIsCompiledWithTheProjectsCurrentVersion() throws {
+        let pbxproj = XcodeProjectTests.groupedFixture
+            .replacingOccurrences(of: "F3 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Util.swift; sourceTree = \"<group>\"; };",
+                                  with: "F3 = { isa = XCVersionGroup; children = ( F9, F10 ); currentVersion = F10; path = Food.xcdatamodeld; "
+                                      + "sourceTree = \"<group>\"; versionGroupType = wrapper.xcdatamodel; };\n"
+                                      + "F9 = { isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = Food.xcdatamodel; sourceTree = \"<group>\"; };\n"
+                                      + "F10 = { isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = \"Food 2.xcdatamodel\"; sourceTree = \"<group>\"; };")
+        let project = try XcodeProject(pbxproj: Data(pbxproj.utf8))
+        XCTAssertEqual(project.dataModelCurrentVersions, ["Shared/Sources/Food.xcdatamodeld": "Food 2.xcdatamodel"])
+
+        let formula = try groupedFormula(pbxproj: pbxproj)
+
+        XCTAssertTrue(formula.contains("func model_Food_Truck_0() =\n    CoreDataModelCompiler(\n"), formula)
+        XCTAssertTrue(formula.contains("SettingsLiteral(currentVersion: 'Food 2.xcdatamodel', minimumDeploymentTarget: '16.4', "
+                                       + "module: 'Food_Truck', platform: 'iphonesimulator')"), formula)
+        XCTAssertTrue(formula.contains("model: ['input:/repo/Shared/Sources/Food.xcdatamodeld': "
+                                       + "Folder(path: 'input:/repo/Shared/Sources/Food.xcdatamodeld').manifest]"), formula)
+        XCTAssertTrue(formula.contains("'model0': model_Food_Truck_0().files"), formula)
+    }
+
+    /// A model in a synchronized folder is compiled as one in the sources phase is, and none
+    /// of its files is copied as a resource.
+    func test_aCoreDataModelInASynchronizedFolderIsCompiledNotCopied() throws {
+        let formula = try formula(listing: .init(files: ["App.swift", "Info.plist", "Store.xcdatamodel/contents"],
+                                                 folders: ["Store.xcdatamodel"]))
+
+        XCTAssertTrue(formula.contains("model: ['input:/repo/IceCubesApp/Store.xcdatamodel': "
+                                       + "Folder(path: 'input:/repo/IceCubesApp/Store.xcdatamodel').manifest]"), formula)
+        XCTAssertFalse(formula.contains("Store.xcdatamodel/contents"), formula)
+    }
+
     // MARK: - A macOS bundle (B-77)
 
     /// The fixture for `macosx`, with `extra` laid over every target's settings.
@@ -930,7 +982,8 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Sub/Sample.bundle"), .copiedWhole(bundlePath: "Sample.bundle"))
         XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Sub/en.lproj/Help.rtfd"), .copiedWhole(bundlePath: "en.lproj/Help.rtfd"))
         XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Sub/Explicit", explicitFolders: ["Sub/Explicit"]), .copiedWhole(bundlePath: "Explicit"))
-        XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Model.xcdatamodeld"), .notBuilt)
+        XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Model.xcdatamodeld"), .dataModel)
+        XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Model.xcdatamodel"), .dataModel)
         XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Guide.docc"), .notBuilt)
     }
 

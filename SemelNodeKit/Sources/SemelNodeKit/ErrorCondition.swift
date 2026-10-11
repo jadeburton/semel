@@ -54,6 +54,9 @@ public enum ErrorCondition: Codable, Hashable, Sendable, Error, ErrorConditionCo
     case toolOutputNamesItsSandbox(tool: String, file: String)
     /// The tool's process could not be started: what the system said.
     case toolLaunchFailed(reason: String)
+    /// A file a tool node was handed that its tool does not take — a lexer generator handed
+    /// something other than a lexer description — with the extensions it takes.
+    case sourceNotTaken(path: String, tool: String, takes: [String])
 
     // MARK: - Settings
 

@@ -48,11 +48,19 @@ final class ClangToolDiscoveryTests: SemelClangTestCase {
         XCTAssertNil(ClangToolDiscovery.parseLibtoolVersion(from: ""))
     }
 
+    /// lex reports flex's release and Apple's build of it, both kept.
+    func test_parseLexVersion_keepsApplesBuild() {
+        XCTAssertEqual(ClangToolDiscovery.parseLexVersion(from: "flex 2.6.4 Apple(flex-35)\n"), "flex 2.6.4 Apple(flex-35)")
+        XCTAssertEqual(ClangToolDiscovery.parseLexVersion(from: "flex 2.5.35"), "flex 2.5.35")
+        XCTAssertNil(ClangToolDiscovery.parseLexVersion(from: "Apple clang version 21.0.0"))
+    }
+
     // MARK: - Declaration
 
-    func test_registeringTheToolchainDeclaresClangAndLibtool() {
+    func test_registeringTheToolchainDeclaresClangLibtoolAndLex() {
         XCTAssertTrue(ToolDiscovery.all.contains { $0.name == "clang" })
         XCTAssertTrue(ToolDiscovery.all.contains { $0.name == "libtool" })
+        XCTAssertTrue(ToolDiscovery.all.contains { $0.name == "lex" })
     }
 
     // MARK: - This machine
@@ -71,6 +79,12 @@ final class ClangToolDiscoveryTests: SemelClangTestCase {
 
         let version = try XCTUnwrap(ClangToolDiscovery.libtoolVersion(ofToolAt: path))
         XCTAssertTrue(version.hasPrefix("Apple Inc. version"), "got \(version)")
+    }
+
+    func test_lexIsLocatedAndReportsItsVersion() throws {
+        let path = try XCTUnwrap(ClangToolDiscovery.locate("lex"), "lex must be discoverable via xcrun")
+        let version = try XCTUnwrap(ClangToolDiscovery.lexVersion(ofToolAt: path))
+        XCTAssertTrue(version.hasPrefix("flex "), "got \(version)")
     }
 
     func test_aToolThatDoesNotExistIsNotLocated() {
