@@ -444,6 +444,47 @@ final class ProjectBuilderTests: SemelCoreTestCase {
                       published.asString(omitOutputPort: false))
     }
 
+    /// A subexpression the formula reaches twice — an argument a function wires to two
+    /// ports, an expression two products call — is filled once, and every product that
+    /// reaches it shares the filled copy: a bundle's expression holds every compile of the
+    /// app, and filling each occurrence apart once took the server past six gigabytes
+    /// (B-155).
+    func test_aSubexpressionReachedTwiceIsFilledIntoOneSharedCopy() throws {
+        let output = try process(formula: """
+            func pair(inner) = TreeMerger(under: 'pair', input: ['left': inner, 'right': inner]).files
+            func leafy() = TreeMerger(under: 'inner', input: ['leaf': \(treeNode)]).files
+            product 'a' = pair(inner: leafy())
+            product 'b' = pair(inner: leafy())
+            """, trees: [:])
+
+        let products = try XCTUnwrap(output.inputWireSpecs[ProjectBuilder.productInputPort])
+        let first    = try wrapped(try XCTUnwrap(products["output:/repo/a"]))
+        let second   = try wrapped(try XCTUnwrap(products["output:/repo/b"]))
+        let left     = try source("left", of: first)
+        XCTAssertTrue(shareStorage(left, try source("right", of: first)))
+        XCTAssertTrue(shareStorage(left, try source("left", of: second)))
+        XCTAssertEqual(left.asString(omitOutputPort: false),
+                       "TreeMerger(projectRoot: 'input:/repo', under: 'inner', input: [\"leaf\": \(stampedTreeNode)]).files")
+    }
+
+    /// The expression an `OutputFile` publishes.
+    private func wrapped(_ outputFile: GraphSpecNode) throws -> GraphSpecNode {
+        try XCTUnwrap(outputFile.inputs.first { $0.portName == OutputFile.inputPort }?.wires.first?.node)
+    }
+
+    /// The node the wire named `name` of `specNode` comes from.
+    private func source(_ name: String, of specNode: GraphSpecNode) throws -> GraphSpecNode {
+        try XCTUnwrap(specNode.inputs.lazy.flatMap(\.wires).first { $0.name == name }?.node)
+    }
+
+    /// Whether two nodes hold their inputs in one array's storage: what copies of one value
+    /// do, and what two values filled apart never do.
+    private func shareStorage(_ lhs: GraphSpecNode, _ rhs: GraphSpecNode) -> Bool {
+        lhs.inputs.withUnsafeBufferPointer { left in
+            rhs.inputs.withUnsafeBufferPointer { right in left.baseAddress == right.baseAddress }
+        }
+    }
+
     /// A plain product and a tree product share a folder — the executable beside the
     /// compiled resources is the whole point.
     func test_aTreeProductAndAPlainProductShareAFolder() throws {

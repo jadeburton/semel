@@ -121,18 +121,101 @@ extension GraphSpecNode {
     /// A node that already carries `key` keeps its own value: what a formula states wins
     /// over what a builder would stamp. `outputs` is not walked, so a node reachable only
     /// through an output wire is not stamped — nothing matches against it yet.
-    public func adding(property key: String, value: String, where include: (GraphSpecNode) -> Bool) -> GraphSpecNode {
-        var properties = self.properties
-        if include(self), !properties.contains(where: { $0.key == key }) {
-            properties.append(GraphSpecProperty(key: key, value: value))
+    public func adding(property key: String, value: String, where include: @escaping (GraphSpecNode) -> Bool) -> GraphSpecNode {
+        var rewriter = GraphSpecRewriter { specNode in
+            specNode.addingToItself(property: key, value: value, where: include)
         }
-        let inputs = self.inputs.map { port in
-            GraphSpecInputPort(portName: port.portName, wires: port.wires.map { wire in
-                GraphSpecWire(name: wire.name, node: wire.node.adding(property: key, value: value, where: include))
-            })
+        return rewriter.rewrite(self)
+    }
+
+    /// This node with `key: value` added when `include` admits it and it has no `key` of
+    /// its own, its inputs as they are: one step of `adding(property:)`.
+    public func addingToItself(property key: String, value: String, where include: (GraphSpecNode) -> Bool) -> GraphSpecNode {
+        guard include(self), !properties.contains(where: { $0.key == key }) else {
+            return self
         }
-        return GraphSpecNode(typeName: typeName, properties: properties, inputs: inputs,
-                             outputs: outputs, outputPort: outputPort)
+        return GraphSpecNode(typeName: typeName, properties: properties + [GraphSpecProperty(key: key, value: value)],
+                             inputs: inputs, outputs: outputs, outputPort: outputPort)
+    }
+}
+
+// MARK: - Rewriting every node
+
+/// A rewrite of every node of a tree, sources before the node they feed, each distinct
+/// subtree rewritten once and the result shared wherever the subtree recurs.
+///
+/// A demanded tree is a graph spelled out: a node reached by two paths is in it twice, and
+/// in an app's product the settings chain under every compile is there thousands of times.
+/// In memory that costs nothing, since the copies share their arrays' storage — but a walk
+/// that rebuilds each node it meets gives each occurrence storage of its own, and the tree
+/// it returns is the spelled-out size. A formula's builder filling Sequel Ace's products
+/// that way allocated six gigabytes in one pass (B-155). Here a subtree met again is a
+/// lookup, which `==` answers from the shared storage without descending, and its one
+/// rewritten copy is what every occurrence gets: the result shares what the input shared.
+///
+/// `outputs` is not walked: nothing is matched or created through an output wire.
+public struct GraphSpecRewriter {
+
+    private let rewriteNode: (GraphSpecNode) -> GraphSpecNode
+    private var rewritten: [GraphSpecSubtreeKey: GraphSpecNode] = [:]
+
+    /// `eachNode` is given a node whose inputs are rewritten already and returns it
+    /// rewritten. It must be a function of the node alone, since its answer for one
+    /// occurrence is the answer for all of them.
+    public init(eachNode: @escaping (GraphSpecNode) -> GraphSpecNode) {
+        rewriteNode = eachNode
+    }
+
+    /// How many distinct subtrees have been rewritten so far: what a test reads to see
+    /// that a recurring one was rewritten once.
+    public var rewrittenCount: Int {
+        rewritten.count
+    }
+
+    public mutating func rewrite(_ specNode: GraphSpecNode) -> GraphSpecNode {
+        let key = GraphSpecSubtreeKey(node: specNode)
+        if let done = rewritten[key] {
+            return done
+        }
+        var inputs: [GraphSpecInputPort] = []
+        inputs.reserveCapacity(specNode.inputs.count)
+        for port in specNode.inputs {
+            var wires: [GraphSpecWire] = []
+            wires.reserveCapacity(port.wires.count)
+            for wire in port.wires {
+                wires.append(GraphSpecWire(name: wire.name, node: rewrite(wire.node)))
+            }
+            inputs.append(GraphSpecInputPort(portName: port.portName, wires: wires))
+        }
+        let result = rewriteNode(GraphSpecNode(typeName: specNode.typeName, properties: specNode.properties,
+                                               inputs: inputs, outputs: specNode.outputs,
+                                               outputPort: specNode.outputPort))
+        rewritten[key] = result
+        return result
+    }
+}
+
+/// A subtree as a dictionary key: hashed by its own node alone and compared whole. Copies
+/// of one subtree share their storage, which `==` on an array checks before its elements,
+/// so meeting a copy again costs a lookup rather than a walk; an equal subtree in storage
+/// of its own is compared, which costs less than walking it again would.
+struct GraphSpecSubtreeKey: Hashable {
+    let node: GraphSpecNode
+
+    static func == (lhs: GraphSpecSubtreeKey, rhs: GraphSpecSubtreeKey) -> Bool {
+        lhs.node == rhs.node
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(node.typeName)
+        hasher.combine(node.outputPort)
+        hasher.combine(node.properties)
+        for port in node.inputs {
+            hasher.combine(port.portName)
+            for wire in port.wires {
+                hasher.combine(wire.name)
+            }
+        }
     }
 }
 
