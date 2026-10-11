@@ -1,9 +1,10 @@
 // CacheEntry.swift
 // SemelDatabaseModels
 //
-// The cache's tables in the graph's database. The rows are here, with the schema every
-// table of the database is created from; the queries over them are `SQLiteCacheStore` in
-// `SemelCore`, which answers `SemelCache`'s `CacheStore` in the vocabulary the cache
+// The cache's tables, in the graph's database and in a cache server's index. The rows are
+// here, with the schema every table of the graph's database is created from, and the
+// server's index is created from the same `createTable`; the queries over them are
+// `SemelCache`'s `SQLiteCacheStore`, which answers `CacheStore` in the vocabulary the cache
 // defines and this package, below the node kit, cannot import.
 
 import Foundation
