@@ -1,6 +1,7 @@
 # A Mac app that shows what the build did: notifications first, the graph later
 
-Status: design; phase 1 built — see "As built (phase 1)" at the end. Follows the 2026-10-11
+Status: design; phases 1 and 2 built — see "As built (phase 1)" and "As built (phase 2)"
+at the end. Follows the 2026-10-11
 request for a Mac app that shows notifications when build products appear, change or
 disappear, to grow later into a real-time view of the nodes at work. Mockups of the cards,
 the status item, the products window and the live window:
@@ -135,7 +136,10 @@ Decided 2026-10-11: delivered in clear phases, each a working app on its own.
    settle in progress shows nothing until it ends. Clicking a card dismisses it.
 2. **The products window and export.** *Products…* and the click on a card open the
    window listing `output:`, marking the settle's products, showing the errors' lines,
-   and exporting a selection through the prompt's export code.
+   and exporting a selection through the prompt's export code. Phase 1's click that
+   dismisses a card becomes a click that opens the window for that settle and dismisses
+   it. With it, the owner's two follow-ups of 2026-10-11: the status item's own glyph,
+   and its errors state while an error card is held.
 3. **The running card and the live window.** The running card updated from `progress`,
    then *Show window* with the running nodes, the queue and the counts, over the same
    events. The full graph view is designed separately when this phase has shown what
@@ -231,3 +235,65 @@ choice, this is what was done.
 - **The Xcode workspace is unchanged.** `semel-monitor/` is a folder of the root package,
   which the workspace already holds as `group:.`, as it holds `semel-watch/`; the lint
   configuration's `included:` list names it.
+
+## As built (phase 2)
+
+Built as phase 2 states, with the two status-item follow-ups; where the design left a
+choice, this is what was done.
+
+- **The listing is the prompt's.** `CommandInterpreter.outputFolders()` in `SemelCLI` makes
+  one `list` request for `output:/**/*`, gathered part by part as the reply streams
+  (B-137), and groups it by folder; each folder's entries are put in order by
+  `ListingOrder`, the ordering `ls` itself now calls, and `ls` gathers its own listing
+  through the same streamed helper (`CommandContext.listEntries`). The errors are the
+  `errors` request's records (`errorRecords()`), drawn by `ErrorReportRenderer.lines`,
+  made public for it. The window reads both through a `CommandInterpreter` on a connection
+  of its own beside the subscription (`EngineProducts`), opened when first needed and
+  again after it drops.
+- **By folder, every folder.** The left column is every folder of `output:`, the root
+  first as `output:` and the rest by path, then *Errors (N)*; the right is the selected
+  folder's entries exactly as `ls -o <folder>` lists them, subfolders (with a trailing
+  `/`) before products. A double-click on a subfolder selects it. A tree product's entries
+  are listed under their own folders, as `ls` lists them. The mockup's column starts at
+  `Packages`; the built one starts at the root, which `ls -o` lists too.
+- **The marks.** `appeared` and `changed` are the settle's, from the card the window was
+  opened for — a click's, or the newest card for *Products…* — and after each later settle
+  from the newest card; `disappeared` products are not in `output:` and so not listed.
+  `no value` is not the settle's but the listing's: a product whose status is `failed`
+  has no value now, whichever settle broke it. A product's size is the listing's, written
+  in decimal units the same in every locale (`ByteSize`), `—` for one with no bytes.
+- **Where it opens.** A result card's window opens on the folder of the first product the
+  card names; an error card's on *Errors*; *Products…* on the folder of the newest card's
+  first product, or the first folder holding a product.
+- **Export.** *Export…* exports the selected rows, or with nothing selected the whole
+  folder, its title saying which (`Export 2 products…`, `Export 1 folder…`, `Export c…`).
+  The save panel's chosen path is `export`'s `--into`. The seam is one optional parameter
+  on `FilePlugin.exportFiles`, the selection — paths, a folder standing for everything
+  below it — and `CommandInterpreter.export(folder:selecting:into:)` calls it; each
+  selected product is written where the whole export would write it, below the folder.
+  What `export` prints on the way, a product with no content among them, is the line under
+  the buttons. *Copy paths* copies the selected rows' `output:` paths, the folder's with
+  nothing selected, and on *Errors* the products without a value.
+- **It refreshes on each settle** while it is open: a `settled` or an `artifacts` asks
+  for a reading, one at a time, those that come during one collapsing into one more after
+  it; the selection stays while its rows are there.
+- **`--print`** writes, when a window would open, `window: <the card's headline>` (or
+  `window: products`), the left column with the selected section in brackets, and the
+  rows as `name · mark · size` — or the error report's lines — each indented two spaces;
+  `window: …` then `No engine` when there is none to read. A click is a line on standard
+  input: `click` clicks the card on top, `products` is the menu item. Nothing else in
+  `--print` changed; a click's card is still written as `dismissed:` before the window.
+- **The glyph.** Three nodes and two wires, two inputs wired into the node they build,
+  drawn in code from `StatusGlyph`'s circles and lines: hollow with no engine, filled when
+  connected, both as template images the menu bar tints; filled in the system's red while
+  an error card is held, on screen or swallowed by a pause and not yet replaced
+  (`NotificationPlanner.holdsErrorCard`), as a plain image, since a template would lose
+  the red. No engine wins over a held error: the card still says the error, and the
+  engine that would replace it is gone. The settling state stays for phase 3.
+- **The menu** is the state line, *Pause notifications*, *Products…*, *Show window*
+  (greyed until phase 3) and *Quit*, as the mockup draws it. The app installs a main menu
+  it never shows, so that the window's copy, select-all and close keys work in an
+  accessory.
+- **B-150 item 4 stays open.** Naming a tree in a result card by its folder needs the
+  `artifacts` event to carry each path's tree folder, which is a protocol version and a
+  change to the server's diff; the window does not need it.

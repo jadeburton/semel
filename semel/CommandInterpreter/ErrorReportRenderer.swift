@@ -94,9 +94,9 @@ public enum ErrorReportRenderer {
     // MARK: - The whole report
 
     /// The headings, each with its errors, and the summary line at the end. What `errors`
-    /// prints, and the idle-time report after a settle.
-    static func lines(for records: [ErrorRecord], style: ErrorReportStyle,
-                      export: ExportOutcome? = nil) -> [String] {
+    /// prints, the idle-time report after a settle, and the monitor's products window.
+    public static func lines(for records: [ErrorRecord], style: ErrorReportStyle,
+                             export: ExportOutcome? = nil) -> [String] {
         let blocks = Self.blocks(for: records)
         return groupLines(blocks, style: style)
             + [summaryLine(errors: blocks.count, productsWithoutValue: productCount(blocks), export: export)]

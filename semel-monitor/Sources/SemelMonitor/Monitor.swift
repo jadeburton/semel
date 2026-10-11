@@ -6,6 +6,7 @@
 // `onState` they pass; neither decides anything.
 
 import Foundation
+import SemelProtocol
 
 public final class Monitor {
 
@@ -20,6 +21,13 @@ public final class Monitor {
     /// The connection came or went.
     public var onState: (EngineSubscription.State) -> Void = { _ in }
 
+    /// The products window is to open: for the card clicked, or nil for *Products…*.
+    public var onOpenWindow: (Card?) -> Void = { _ in }
+
+    /// A settle ended — its `settled` or its `artifacts` arrived — so what `output:` holds
+    /// may have moved: an open products window reads it again.
+    public var onSettle: () -> Void = {}
+
     private let clock: any Clock
     private var subscription: EngineSubscription?
     private var timer: DispatchWorkItem?
@@ -33,7 +41,7 @@ public final class Monitor {
     public func start(socketPath: String) {
         let subscription = EngineSubscription(socketPath: socketPath,
                                               onState: { [weak self] in self?.changeState(to: $0) },
-                                              onEvent: { [weak self] event in self?.apply { $0.receive(event) } })
+                                              onEvent: { [weak self] event in self?.receive(event) })
         self.subscription = subscription
         subscription.start()
     }
@@ -42,6 +50,29 @@ public final class Monitor {
 
     public func dismiss(cardID: Int) {
         apply { $0.dismiss(cardID: cardID) }
+    }
+
+    /// A click on a card: the products window opens for its settle, and the card goes.
+    public func click(cardID: Int) {
+        guard let card = planner.cards.first(where: { $0.id == cardID }) else {
+            return
+        }
+        dismiss(cardID: cardID)
+        onOpenWindow(card)
+    }
+
+    /// A click on the newest card on screen, the one on top: what `click` on `--print`'s
+    /// standard input means.
+    public func clickNewestCard() {
+        guard let newest = planner.cards.first else {
+            return
+        }
+        click(cardID: newest.id)
+    }
+
+    /// *Products…*.
+    public func openProducts() {
+        onOpenWindow(nil)
     }
 
     public func pointerEntered(cardID: Int) {
@@ -64,6 +95,16 @@ public final class Monitor {
     }
 
     // MARK: - Internals
+
+    private func receive(_ event: DaemonEvent) {
+        apply { $0.receive(event) }
+        switch event {
+        case .settled, .artifacts:
+            onSettle()
+        case .errors, .progress, .notice:
+            break
+        }
+    }
 
     private func changeState(to newState: EngineSubscription.State) {
         if newState == .noEngine {
