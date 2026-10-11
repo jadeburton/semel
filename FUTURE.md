@@ -1243,12 +1243,78 @@ program. Delivered in four phases, each leaving the repository working.
    database models' alias and the package links the node kit only; and the SQLite store is
    in `SemelCore` for now, where the design puts it — phase 2's server needs the same
    queries without the graph's tables, and moving them below the engine is its first step.
-2. **The server.** `semel-cache` with `CacheRequest`/`CacheResponse` beside the daemon's
-   messages, a store under its own home (the node kit's object store, and the cache's
-   tables through `CacheStore`), `Hello` with `wantsWrite` and `--writers all|none`, B-148's
-   limit and order with uses counted in requests, `purge <key>` and `purge --all`, and
-   `semel-cache status`. Tested over an in-memory store, then over TCP on localhost with
-   two clients at once.
+2. ~~**The server.**~~ Done 2026-10-12.
+   - **Two moves first.** `DataObjectHash` moved from the database models to the node kit
+     beside the object store, so `SemelCache` names an object by type; the database models,
+     below the node kit, spell their hash columns `String`. `CacheKey`, in `SemelCache`, is
+     the key wherever it leaves a process — `debug <key>`, the `cache` listing, every cache
+     request — encoded as the bare hex, so no byte moved; a key a person types is checked
+     where it is typed. `SQLiteCacheStore` moved from `SemelCore` to `SemelCache`, reaching
+     its database through `CacheDatabase` (the engine's `DatabaseLayer` conforms), with
+     every query also written against a connection so a batch is one transaction; what joins
+     the graph (`refreshInputHolding`, `recordKey`) stayed in `SemelCore` beside it.
+     `SemelCache` now links GRDB and the database models, which the node kit linked already,
+     and `SemelProtocol` links `SemelCache` for `CacheKey`.
+   - **The protocol** (version 28). `Request.cache` and `Response.cache`: `getEntry(key:)`
+     answering `entry(cost:)` with the bytes in the body, or `miss` — also when an object it
+     references is gone; `putEntry(key:cost:objects:length:)` with the entry in the body;
+     `hasObjects(hashes:)` answering `missingObjects`; `getObject(hash:)` answering `object`
+     with the bytes in the body, or `miss`; `putObject(hash:)` with the bytes in the body,
+     hashed on receipt and refused as `hashMismatch(declared:actual:)`; and `status`,
+     `purge(key:)` and `purgeAll` for the program's own commands. Refusals are typed
+     (`CacheRefusal`): `helloRequired`, `readOnly`, `hashMismatch`, `lengthMismatch`,
+     `objectsMissing`, `notAnObjectHash`. `Hello` carries `wantsWrite`, read as false when
+     absent so an older peer is still told its version differs, and a cache answers
+     `cacheAccepted(access: .readWrite | .readOnly)` or rejects; `ErrorResponse` gains
+     `cacheStoreFailed`. `semelserv` refuses the cache role.
+   - **The server never reads an entry.** The entry is the engine's encoding, carried and
+     stored as opaque bytes; the key, the recorded cost and the hashes of every object the
+     entry references (through its documents too) come as typed fields, and are all B-148's
+     accounting, eviction and `hasObjects` need. The one check on an entry's bytes is that
+     the body is the length the request says. The entry format is the engine's business and
+     the server is a byte store with an index — which is also what lets it answer from
+     memory.
+   - **`semel-cache`**, a new executable of the root package over a library,
+     `SemelCacheServer`, linking `SemelCache`, `SemelTransport`, `SemelProtocol` and
+     `SemelNodeKit` only (`CacheServerDependencyRuleTests` reads the manifests). `serve
+     --home --listen --limit --writers all|none` writes its arguments to `semel.cache.config`
+     in the home and reads the file at every start (default limit 10G, default writers
+     none); the home's lock (`flock` on `semel.cache.lock`) keeps a second server out.
+     `status --home` and `purge --home <key>|--all` go through the running server, at the
+     address the file names, when the lock is held, and open the home themselves when it is
+     not.
+   - **Fast, and durability traded for it — never consistency.** Every key, object hash
+     and size is held in memory and kept in step with the disk, so a miss and `hasObjects`
+     never touch it and B-148's sizes and order are worked out without a query (the index is
+     a `CacheStore`, so `SemelCache`'s one trim runs over it). The disk is the cache's
+     tables in `index.sqlite` (`CacheIndexDatabase`: WAL, `synchronous=NORMAL` — never `OFF`
+     — a 64 MB page cache, 1 GB `mmap_size`, no checkpoint on commit) and the node kit's
+     object store. One writer thread commits what is queued in batches, each one
+     transaction: a `putEntry` is answered once its batch is in the write-ahead log, and the
+     next request is prepared while it commits, so a client's entries share batches. A
+     `putObject` is answered once its bytes are hashed and in memory; four writers put the
+     files behind the answers. The log is checkpointed when the writer finds nothing
+     waiting, and after a thousand batches without such a moment. A crash loses the last
+     batches and the last objects and leaves the database consistent; on opening, an entry
+     whose objects did not survive is dropped and an object no entry holds is removed.
+   - **Eviction**: B-148's order with uses counted in entry requests — every 10,000
+     `getEntry` and `putEntry` close a use, so what the last one or two windows touched is
+     kept over the rest, then the cheapest build per byte goes first. A put that takes the
+     store over its limit trims it to nine tenths of the limit, so a store at its limit does
+     not trim on every put; an evicted entry's objects that no other entry holds are removed.
+   - **Measured** on an Apple M4 (10 cores, macOS 26.6), over TCP on localhost with a warm
+     index, a release `semel-cache` and the debug test client (`SEMEL_CACHE_BENCHMARK=1`,
+     `CacheServerLatencyTests`; medians, two runs): `getEntry` hit 161–236 µs, miss 130–178
+     µs; `hasObjects` for 100 hashes 232–307 µs; `getObject` 1 MB 1.1–1.3 ms; `putObject` 1 MB
+     1.4–1.8 ms. One client putting 1,000 entries with 10,000 objects of 4 KB, pipelined:
+     1.5–2.1 s, 5,300–7,500 requests/s. Pipelined misses run at 6,800–9,300 requests/s,
+     which is the transport's ceiling for one connection: the miss path itself is a
+     dictionary lookup.
+   - **Left open, marked.** An object put for an entry that never comes is removed only
+     when the store next opens, or by `purge --all`. An object over the frame body's 512 MiB
+     is not shared. `Hello` carries no identity yet; `--writers` is a switch, and a list
+     of identities is a configuration change when a deployment needs one. A `--writers
+     none` server cannot be purged through the protocol; stop it and purge the home.
 3. **The engine as a client.** `cache.server` and `cache.identity` in `semel.engine.config`,
    set at the prompt; the remote path behind `loadCachedOutputs` and
    `saveCacheForAllInputsAndOutputs`, a population queue off the processing path, the fetch
