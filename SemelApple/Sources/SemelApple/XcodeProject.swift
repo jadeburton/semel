@@ -86,6 +86,19 @@ struct XcodeProject {
     }
 
     /// Where a copy-files phase copies to: the phase's `dstSubfolderSpec` and `dstPath`.
+    /// A target of a referenced project, by the project's path relative to this project's
+    /// folder and the target's name.
+    struct ReferencedTarget: Equatable {
+        let projectPath: String
+        let targetName: String
+    }
+
+    /// A product of the project's own targets a copy-files phase copies, and where.
+    struct ProductCopy: Equatable {
+        let fileName: String
+        let destination: CopyDestination
+    }
+
     struct CopyDestination: Equatable {
         /// Xcode's numbering: 1 the bundle itself (the wrapper), 6 executables, 7
         /// resources, 10 frameworks, 11 shared frameworks, 12 shared support, 13 plug-ins,
@@ -306,9 +319,16 @@ struct XcodeProject {
         /// project's folder.
         var executableCopies: [String] = []
         /// Products of the project's own targets a copy-files phase copies — Sequel Ace's
-        /// `SequelAceTunnelAssistant` tool, beside its executable — by file name. No such
-        /// target is built (B-77 item 4).
+        /// `SequelAceTunnelAssistant` tool, beside its executable — by file name (B-77
+        /// item 4).
         var copiedProducts: [String] = []
+        /// The same, each with where its phase copies it, in phase order.
+        var productCopies: [ProductCopy] = []
+        /// The targets of referenced projects this target depends on without linking what
+        /// they build, by project and target name: Sequel Ace's tool depends on
+        /// `SPMySQL.framework` and imports its headers, which Xcode finds in the products
+        /// folder every target searches (B-77 item 4).
+        var referencedTargetDependencies: [ReferencedTarget] = []
         /// Product file names the copy-files phase embeds under `PlugIns`.
         let embeddedExtensions: [String]
         /// File references in the resources phase, relative to the project folder, each
@@ -379,6 +399,9 @@ struct XcodeProject {
         var isApplication: Bool { productType == "com.apple.product-type.application" }
         var isExtension: Bool { productType == "com.apple.product-type.app-extension" }
         var isFramework: Bool { productType == "com.apple.product-type.framework" }
+        /// A command-line tool: an executable with no bundle around it, which an app may
+        /// copy beside its own executable (B-77 item 4).
+        var isTool: Bool { productType == "com.apple.product-type.tool" }
 
         func configuration(named name: String) -> BuildConfiguration? {
             configurations.first { $0.name == name }
@@ -783,6 +806,28 @@ struct XcodeProject {
             return path(of: id).map { [$0] } ?? []
         }
 
+        /// The target of another project a target dependency names through a container proxy
+        /// (`PBXTargetDependency.targetProxy`); nil for one of this project's own targets.
+        func referencedTarget(ofDependency id: String) -> ReferencedTarget? {
+            guard let proxy = object(object(id)?["targetProxy"] as? String),
+                  let targetName = proxy["remoteInfo"] as? String,
+                  let portal = proxy["containerPortal"] as? String,
+                  object(portal)?["isa"] as? String == "PBXFileReference",
+                  let projectPath = path(of: portal) else {
+                return nil
+            }
+            return ReferencedTarget(projectPath: Self.resolvedProjectPath(projectPath), targetName: targetName)
+        }
+
+        /// A path a group reaches by `..`, resolved below a stand-in for the project's
+        /// folder, which a `..` may not climb out of: Sequel Ace's groups reach `Frameworks/`
+        /// from `Source/`.
+        static func resolvedProjectPath(_ projectPath: String) -> String {
+            let anchor = "project"
+            return (Path("\(anchor)/\(projectPath)").resolvingDotSegments?.string)
+                .flatMap { path in path.hasPrefix(anchor + "/") ? String(path.dropFirst(anchor.count + 1)) : nil } ?? projectPath
+        }
+
         /// The product a reference proxy stands for: another project's target, by the
         /// container proxy it points through — the project's file reference
         /// (`containerPortal`) and the target's name (`remoteInfo`). Nil for anything else.
@@ -794,12 +839,7 @@ struct XcodeProject {
                   let projectPath = (container["containerPortal"] as? String).flatMap({ path(of: $0) }) else {
                 return nil
             }
-            // Sequel Ace's groups reach `Frameworks/` from `Source/` by `..`; resolved below a
-            // stand-in for the project's folder, which a `..` may not climb out of.
-            let anchor = "project"
-            let resolved = (Path("\(anchor)/\(projectPath)").resolvingDotSegments?.string)
-                .flatMap { path in path.hasPrefix(anchor + "/") ? String(path.dropFirst(anchor.count + 1)) : nil }
-            return BuiltProduct(projectPath: resolved ?? projectPath, fileName: (fileName as NSString).lastPathComponent,
+            return BuiltProduct(projectPath: Self.resolvedProjectPath(projectPath), fileName: (fileName as NSString).lastPathComponent,
                                 targetName: targetName)
         }
 
@@ -908,6 +948,7 @@ struct XcodeProject {
             var embeddedExtensions: [String] = []
             var executableCopies: [String] = []
             var copiedProducts: [String] = []
+            var productCopies: [ProductCopy] = []
             var publicHeaders: [String] = []
             var privateHeaders: [String] = []
             var sourceFiles: [BuildFile] = []
@@ -965,10 +1006,14 @@ struct XcodeProject {
                     if destination == "6" {
                         executableCopies += fileRefIDs.compactMap { path(of: $0) }
                     }
-                    // A product of this project's own targets, copied rather than built here.
-                    copiedProducts += fileRefs.filter { $0["sourceTree"] as? String == "BUILT_PRODUCTS_DIR" && $0["isa"] as? String == "PBXFileReference" }
+                    // A product of this project's own targets the phase copies.
+                    let copied = fileRefs.filter { $0["sourceTree"] as? String == "BUILT_PRODUCTS_DIR" && $0["isa"] as? String == "PBXFileReference" }
                         .compactMap { $0["path"] as? String }
                         .filter { !$0.hasSuffix(".appex") }
+                    copiedProducts += copied
+                    if let copyDestination = Self.copyDestination(of: phase) {
+                        productCopies += copied.map { ProductCopy(fileName: $0, destination: copyDestination) }
+                    }
                 case "PBXHeadersBuildPhase":
                     for buildFile in buildFiles {
                         guard let fileRefID = buildFile["fileRef"] as? String, let path = path(of: fileRefID) else {
@@ -1028,6 +1073,8 @@ struct XcodeProject {
             built.linkedProducts = linkedProducts
             built.executableCopies = executableCopies
             built.copiedProducts = copiedProducts.sorted()
+            built.productCopies = productCopies
+            built.referencedTargetDependencies = (target["dependencies"] as? [String] ?? []).compactMap { referencedTarget(ofDependency: $0) }
             built.publicHeaders = publicHeaders.sorted()
             built.privateHeaders = privateHeaders.sorted()
             // A plugin is a target dependency on a product Xcode names `plugin:<name>`.

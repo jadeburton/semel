@@ -258,8 +258,7 @@ final class SequelAceFixtureTests: SemelAppleTestCase {
     }
 
     /// The app compiles against the framework, links it and embeds it; `QueryKit`, whose
-    /// project the fixture does not hold, and the tool copied beside the executable are
-    /// said in the formula not to be built.
+    /// project the fixture does not hold, is said in the formula not to be built.
     func test_theAppCompilesLinksAndEmbedsTheFrameworkItsProjectBuilds() throws {
         let formula = try appFormula()
 
@@ -268,6 +267,38 @@ final class SequelAceFixtureTests: SemelAppleTestCase {
         XCTAssertTrue(try block("func bundle_Sequel_Ace() =", in: formula).contains("'SPMySQL.framework': builtFramework_SPMySQL().files"))
         XCTAssertTrue(formula.contains("// QueryKit.framework, built by QueryKit in Frameworks/QueryKit/QueryKit.xcodeproj, is linked by Sequel Ace and not built"),
                       formula)
-        XCTAssertTrue(formula.contains("// SequelAceTunnelAssistant, a product of this project's own targets, is copied into Sequel Ace"), formula)
+        XCTAssertFalse(formula.contains("// SequelAceTunnelAssistant, a product of this project's own targets"), formula)
+    }
+
+    /// The tool the app's phase copies beside its executable (`dstSubfolderSpec = 6`),
+    /// `SequelAceTunnelAssistant`, is built as the app's sources are — its own Swift and
+    /// Objective-C, the Swift's interface under the project's `sequel-ace-Swift.h` — and
+    /// signed by itself, ad-hoc, with its own entitlements and the hardened runtime, as
+    /// Xcode signs it on copy; then copied to `Contents/MacOS` (B-77 item 4).
+    func test_theTunnelAssistantIsBuiltSignedAndCopiedBesideTheExecutable() throws {
+        let formula = try appFormula()
+
+        let compiler = try block("func compiler_SequelAceTunnelAssistant() =", in: formula)
+        XCTAssertTrue(compiler.contains("objectiveCHeaderName: 'sequel-ace-Swift.h'"), compiler)
+        XCTAssertTrue(compiler.contains("'Source/Other/SSHTunnel/SASSHTunnelAskpass.swift'"), compiler)
+        XCTAssertTrue(formula.contains("'input:/repo/Source/Other/SSHTunnel/SequelAceTunnelAssistant.m.o': ClangCompiler("), formula)
+        // It depends on `SPMySQL.framework` without linking it, and imports its headers,
+        // which Xcode finds in the products folder: compiled against, not linked.
+        XCTAssertTrue(try block("func preprocess_SequelAceTunnelAssistant(path) =", in: formula)
+            .contains("'SPMySQL.framework': builtFramework_SPMySQL().files"))
+        let tree = try block("func bundle_SequelAceTunnelAssistant() =", in: formula)
+        XCTAssertFalse(tree.contains("        ).output,\n        frameworkTrees: [\n        'SPMySQL.framework'"), "not linked: \(tree)")
+        XCTAssertFalse(tree.contains("-framework,SPMySQL"), tree)
+        XCTAssertTrue(tree.contains("'SequelAceTunnelAssistant': SwiftLinker("), tree)
+        XCTAssertFalse(tree.contains("Info.plist"), "a tool is its executable alone: \(tree)")
+        let signer = try block("// CODE_SIGN_IDENTITY is 'Apple Development': signed ad-hoc, as Semel signs with no certificate (B-77).\n"
+                               + "func signed_SequelAceTunnelAssistant() =", in: formula)
+        XCTAssertTrue(signer.contains("bundle: ['SequelAceTunnelAssistant': bundle_SequelAceTunnelAssistant().files]"), signer)
+        XCTAssertTrue(signer.contains("hardenedRuntime: 'true'"), signer)
+        XCTAssertTrue(signer.contains("StaticFile(path: 'input:/repo/Entitlements/SequelAceTunnelAssistant.entitlements')"), signer)
+        XCTAssertTrue(try block("func bundle_Sequel_Ace() =", in: formula)
+            .contains("'SequelAceTunnelAssistant': signed_SequelAceTunnelAssistant().files"))
+        XCTAssertLessThan(try XCTUnwrap(formula.range(of: "func signed_SequelAceTunnelAssistant()")).lowerBound,
+                          try XCTUnwrap(formula.range(of: "func bundle_Sequel_Ace()")).lowerBound)
     }
 }

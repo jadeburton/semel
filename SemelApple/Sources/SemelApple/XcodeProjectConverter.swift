@@ -82,7 +82,9 @@ public struct XcodeProjectConverter: Node {
     /// 22: a lexer description is run through `LexGenerator` and its scanner compiled as a
     /// source of the target, and a Core Data model compiled by `CoreDataModelCompiler` into
     /// the bundle's resources, where both were refused (B-77 item 4).
-    public static let implementationVersion = 22
+    /// 23: a command-line tool a Mac app's copy-files phase copies is built, signed by
+    /// itself and copied where the phase says (B-77 item 4).
+    public static let implementationVersion = 23
 
     // MARK: Ports
 

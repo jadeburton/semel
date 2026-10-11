@@ -230,6 +230,18 @@ struct XcodeFormulaEmitter {
         }
         var parts = try bundle(for: application, settings: applicationSettings, listing: listing)
         parts.parts += plugIns
+        // Each command-line tool of the project a copy-files phase puts into the bundle,
+        // built and signed by itself, then copied where the phase says (B-77 item 4).
+        for copy in application.productCopies {
+            guard let tool = project.targets.first(where: { $0.isTool && $0.productFileName == copy.fileName }),
+                  let folder = layout.folder(forCopyDestination: copy.destination) else {
+                continue
+            }
+            let signedTool = try signedTool(tool, settings: try settings(tool), listing: listing)
+            blocks += signedTool.blocks
+            parts.parts.append(.tree(folder: folder, inputs: "\(Self.quoted(tool.productFileName)): \(signedTool.expression)"))
+        }
+        parts.parts = BundleParts.mergingTrees(parts.parts)
         let signed = try signedBundle(parts, for: application, settings: applicationSettings)
         blocks += signed.blocks
         blocks.append("product \(Self.quoted(applicationBundle + "/")) = \(signed.expression)")
@@ -300,6 +312,27 @@ struct XcodeFormulaEmitter {
         signer += "\n    )"
         blocks.append(signer)
         return (blocks, "signed_\(name)().files")
+    }
+
+    /// A command-line tool's executable, linked as a target's is, and signed by itself with
+    /// its own entitlements and hardened runtime: Sequel Ace's `SequelAceTunnelAssistant`,
+    /// which the app's phase copies beside its executable and Xcode signs on copy
+    /// (`CodeSignOnCopy`). A tool has no bundle, so it is its executable alone, a tree of
+    /// one file named as the tool, which `CodeSigner` signs as the file it is. Its
+    /// Info.plist is not part of it: Xcode embeds one in a tool's binary only when
+    /// `CREATE_INFOPLIST_SECTION_IN_BINARY` says so, which Sequel Ace's does not.
+    func signedTool(_ tool: XcodeProject.Target, settings: XcodeBuildSettings,
+                    listing: (String) -> FolderListing?) throws -> (blocks: [String], expression: String) {
+        let identity = try TargetIdentity(target: tool, settings: settings, sdk: build.sdk)
+        let parts = try bundle(for: tool, settings: settings, listing: listing)
+        let executablePath = layout.executablePath(named: identity.productName)
+        guard let executable = parts.parts.first(where: { if case .file(executablePath, _) = $0 { return true } else { return false } }),
+              case .file(_, let expression) = executable else {
+            throw XcodeProjectError.targetHasNoSources(tool.name)
+        }
+        let toolParts = BundleParts(blocks: parts.blocks, parts: [.file(path: tool.productFileName, expression: expression)],
+                                    buildSettingsJSON: parts.buildSettingsJSON)
+        return try signedBundle(toolParts, for: tool, settings: settings)
     }
 
     /// The Boolean settings Xcode's Signing & Capabilities editor writes for the sandbox
@@ -635,9 +668,20 @@ struct XcodeFormulaEmitter {
             builtFrameworkTrees.append("        \(Self.quoted(product.fileName)): \(Self.frameworkFunction(for: product.fileName))().files")
         }
         compiledFrameworkTrees += builtFrameworkTrees
-        for copied in target.copiedProducts {
+        // A framework a referenced project builds that the target depends on and does not
+        // link is compiled against all the same, as Xcode finds it in the products folder:
+        // the tunnel assistant's `#import <SPMySQL/SPMySQL.h>` (B-77 item 4).
+        for dependency in target.referencedTargetDependencies {
+            guard let framework = builtFrameworks.first(where: {
+                      $0.product.projectPath == dependency.projectPath && $0.product.targetName == dependency.targetName
+                  }), !target.linkedProducts.contains(framework.product) else {
+                continue
+            }
+            compiledFrameworkTrees.append("        \(Self.quoted(framework.product.fileName)): \(Self.frameworkFunction(for: framework.product.fileName))().files")
+        }
+        for copied in target.copiedProducts where !(layout.isSigned && project.targets.contains { $0.isTool && $0.productFileName == copied }) {
             blocks.append("// \(copied), a product of this project's own targets, is copied into \(target.name) by a phase "
-                          + "and not built: only the application and its extensions are (B-77 item 4).")
+                          + "and not built: only the application, its extensions and the tools of a Mac app are (B-77 item 4).")
         }
 
         // ── resources ────────────────────────────────────────────────────────

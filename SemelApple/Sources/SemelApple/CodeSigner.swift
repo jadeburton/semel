@@ -76,14 +76,18 @@ public struct CodeSigner: Node {
     /// (B-141).
     /// 5: a failure is published as an `ErrorDocument`, the typed value a client renders,
     /// where it was a sentence (B-145).
-    public static let implementationVersion = 5
+    /// 6: a tree holding one file named as the wire is a command-line tool, signed as the
+    /// file it is, where it was taken for a bundle (B-77 item 4).
+    public static let implementationVersion = 6
 
     // MARK: Ports
 
     static let configuration = "configuration"
     /// The bundle, one wire: the tree of its contents, keyed by the bundle's own folder
     /// name — `NetNewsWire.app`, `Widgets.appex` — which is how `codesign` tells what kind
-    /// of bundle it signs.
+    /// of bundle it signs. Or a command-line tool by itself: a tree whose one entry is a file
+    /// named as the wire, Sequel Ace's `SequelAceTunnelAssistant`, which is signed as the
+    /// executable it is and comes back as the same one-entry tree (B-77 item 4).
     static let bundle = "bundle"
     /// The entitlements the bundle is signed with, at most one wire: a property list, its
     /// `$(VAR)` references already resolved. None is a signature without entitlements.
@@ -149,7 +153,11 @@ public struct CodeSigner: Node {
         let layout = SigningLayout(entries: manifest.entries)
         let tool = try ToolRunnerRegistry.instance.tool(descriptor: configuration.toolDescriptor,
                                                         namespace:  CodeSignerConfiguration.settingNamespace)
-        let root = "\(Self.signedFolder)/\(bundleName)"
+        // A tool by itself is laid as the file it is, beside the bundles' folder, and signed
+        // there; a bundle is laid as a folder, its root.
+        let isStandaloneExecutable = manifest.entries.count == 1 && manifest.entries.first?.path == bundleName
+        let root = isStandaloneExecutable ? Self.signedFolder : "\(Self.signedFolder)/\(bundleName)"
+        let signedPath = "\(Self.signedFolder)/\(bundleName)"
         let environment = ["CODESIGN_ALLOCATE": configuration.codesignAllocatePath]
         let signing = ["--force", "--sign", configuration.identity, "--timestamp=none"]
         var entries = manifest.entries
@@ -166,7 +174,7 @@ public struct CodeSigner: Node {
             runs.append(signing + ["--preserve-metadata=entitlements,flags"] + layout.nestedBundles.map { "\(root)/\($0)" })
         }
         let runtime = configuration.hardenedRuntime ? ["-o", "runtime"] : []
-        runs.append(signing + runtime + (entitlementsFile == nil ? [] : ["--entitlements", Self.entitlementsFile]) + [root])
+        runs.append(signing + runtime + (entitlementsFile == nil ? [] : ["--entitlements", Self.entitlementsFile]) + [signedPath])
 
         for arguments in runs {
             // Files laid with their modes, writable: codesign rewrites a signature already
@@ -195,9 +203,11 @@ public struct CodeSigner: Node {
                              inputWireSpecs: [:])
             }
             let prefix = "\(bundleName)/"
-            entries = (result.outputTrees[Self.signedFolder] ?? [])
-                .filter { $0.path.hasPrefix(prefix) }
-                .map { TreeManifestEntry(path: String($0.path.dropFirst(prefix.count)), content: $0.content) }
+            entries = isStandaloneExecutable
+                ? (result.outputTrees[Self.signedFolder] ?? []).filter { $0.path == bundleName }
+                : (result.outputTrees[Self.signedFolder] ?? [])
+                    .filter { $0.path.hasPrefix(prefix) }
+                    .map { TreeManifestEntry(path: String($0.path.dropFirst(prefix.count)), content: $0.content) }
         }
 
         let signed = layout.restoringModes(of: entries)

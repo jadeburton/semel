@@ -3521,10 +3521,18 @@ application target, simulator only, all library code in packages. In suggested o
       from the pool. Stepped around for the compile with
       `ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO`, so the Swift does not wait for
       actool's symbols. Next: rebuild and see what the xibs and the catalog ask for.
-   14. **`SequelAceTunnelAssistant`** — `open`. A tool target of the project the app's
-      copy-files phase puts beside its executable; only the application and its
-      extensions are built, and the formula says the copy is not made. Next: a
-      `com.apple.product-type.tool` target built and copied (its own entitlements, signed).
+   14. ~~**`SequelAceTunnelAssistant`**~~ Done (second slice). A command-line tool of
+      the project (`com.apple.product-type.tool`) that a Mac app's copy-files phase copies
+      is built as the app's sources are. This one has its own Swift and Objective-C, and
+      the Swift's interface is under the project's `sequel-ace-Swift.h`. It depends on
+      `SPMySQL.framework` without linking it and imports its headers, which Xcode finds in
+      the products folder, so a framework a referenced project builds that a target
+      depends on is compiled against (`XcodeProject.referencedTargetDependencies`). The
+      tool is signed by itself, ad-hoc, with its entitlements and the hardened runtime, as
+      Xcode signs it on copy: `CodeSigner` (6) signs a tree of one file named as the wire
+      as the executable it is. It is then copied where the phase says, `Contents/MacOS`.
+      No Info.plist, since the target sets no `CREATE_INFOPLIST_SECTION_IN_BINARY`.
+      `XcodeProjectConverter` 23.
 
    *Not reached*: the link with the scanners, the Core Data model, signing with the
    sandbox entitlements and the nested frameworks (`SPMySQL`'s dylibs keep their
