@@ -58,6 +58,44 @@ final class StatusGlyphTests: XCTestCase {
         XCTAssertTrue(planner.holdsErrorCard, "a pause silences the card, not the state")
     }
 
+    // MARK: - Settling (phase 3)
+
+    func test_aSettleRunningIsTheSettlingGlyphWithItsPendingCount() {
+        let settle = Events.record(scheduled: 88, computed: 31, fromCache: 9, pending: 48, running: ["a"])
+        let glyph  = StatusGlyph.of(state: .connected, holdsErrors: false, settle: settle)
+        XCTAssertEqual(glyph, .settling(pending: 48, startedFraction: 40.0 / 88.0))
+        XCTAssertEqual(glyph.title, "48")
+        XCTAssertTrue(glyph.fillsNodes)
+        XCTAssertTrue(glyph.isTemplate)
+        XCTAssertNil(StatusGlyph.connected.title, "only a settle writes a count beside the glyph")
+    }
+
+    func test_heldErrorsAndNoEngineTakePrecedenceOverASettle() {
+        let settle = Events.record(running: ["a"])
+        XCTAssertEqual(StatusGlyph.of(state: .connected, holdsErrors: true, settle: settle), .errors,
+                       "the error is something to act on")
+        XCTAssertEqual(StatusGlyph.of(state: .noEngine, holdsErrors: false, settle: settle), .noEngine)
+    }
+
+    /// From twelve o'clock clockwise, as far round as the settle has gone.
+    func test_theSweepRunsClockwiseFromTwelveOClock() throws {
+        let quarter = try XCTUnwrap(StatusGlyph.settling(pending: 3, startedFraction: 0.25).sweep)
+        XCTAssertEqual(quarter.start, 90)
+        XCTAssertEqual(quarter.end, 0)
+        let whole = try XCTUnwrap(StatusGlyph.settling(pending: 0, startedFraction: 1).sweep)
+        XCTAssertEqual(whole.start - whole.end, 360)
+        XCTAssertNil(StatusGlyph.connected.sweep)
+    }
+
+    func test_thePlannerSaysASettleRunsFromItsFirstProgressToItsSettled() {
+        let planner = NotificationPlanner(clock: ManualClock())
+        XCTAssertNil(planner.settleInProgress)
+        planner.receive(Events.progress(pending: 2, running: ["a"]))
+        XCTAssertEqual(planner.settleInProgress?.pending, 2)
+        planner.receive(Events.settled())
+        XCTAssertNil(planner.settleInProgress)
+    }
+
     private func distance(_ point: GlyphPoint, _ other: GlyphPoint) -> Double {
         let horizontal = point.horizontal - other.horizontal
         let vertical   = point.vertical - other.vertical

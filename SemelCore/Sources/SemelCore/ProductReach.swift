@@ -164,24 +164,37 @@ public struct ProductReach {
     /// settings merge reads as nothing to add is reported, and every product is downstream
     /// of it; naming them all as stopped would send the reader to the wrong place.
     private func product(publishedBy nodeRecord: NodeRecord) -> Product? {
-        guard let path = nodeRecord.properties[OutputFile.pathProperty], let nodeID = nodeRecord.id else {
+        guard let path = nodeRecord.properties[OutputFile.pathProperty] else {
             return nil
         }
         let published = FatalErrors.attempt({ try nodeRecord.readFromInputPort(OutputFile.inputPort) }) ?? [:]
         if case .value? = published.values.first {
             return nil
         }
-        let sources = FatalErrors.attempt({
-            try database.wire.select(goingToNodeID: nodeID, toSymbolID: OutputFile.inputPort.asSymbolID())
-        }) ?? []
+        let treeFolder = FatalErrors.attempt({ try Self.treeFolder(ofArtifact: nodeRecord, database: database) }) ?? nil
+        return Product(path: path, treeFolder: treeFolder)
+    }
+
+    /// The folder of the tree product an `OutputFile` publishes an entry of, nil for a
+    /// product named on its own. Read from the graph rather than from the path: the entry's
+    /// `TreeFile` names the entry within its tree, so the folder is the product's path with
+    /// that name taken off, and no path is taken apart by guessing where a tree begins.
+    ///
+    /// Shared by the error report and the settle's artifact diff, so a tree is named by one
+    /// folder whichever of the two a client reads it from.
+    static func treeFolder(ofArtifact nodeRecord: NodeRecord, database: DatabaseLayer) throws -> String? {
+        guard let path = nodeRecord.properties[OutputFile.pathProperty], let nodeID = nodeRecord.id else {
+            return nil
+        }
+        let sources = try database.wire.select(goingToNodeID: nodeID, toSymbolID: OutputFile.inputPort.asSymbolID())
         guard let source = sources.first,
-              let sourceRecord = FatalErrors.attempt({ try database.node.find(nodeID: source.fromNodeID) }) ?? nil,
+              let sourceRecord = try database.node.find(nodeID: source.fromNodeID),
               sourceRecord.kind == TreeFile.kind,
               let entryName = sourceRecord.properties[TreeFile.nameProperty],
               path.hasSuffix("/\(entryName)") else {
-            return Product(path: path, treeFolder: nil)
+            return nil
         }
-        return Product(path: path, treeFolder: String(path.dropLast(entryName.count + 1)))
+        return String(path.dropLast(entryName.count + 1))
     }
 
     // MARK: - Naming a product

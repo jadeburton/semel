@@ -77,7 +77,9 @@ public enum ProtocolVersion {
     /// the home's limit (B-148).
     /// Version 28 adds the cache role (B-153): `CacheRequest` and `CacheResponse`, a hello's
     /// `wantsWrite` and the cache's answer to it, and `cacheStoreFailed`.
-    public static let current = 28
+    /// Version 29 gives the `artifacts` event the folder of the tree product each path is
+    /// an entry of (B-150).
+    public static let current = 29
 }
 
 public struct Hello: Codable, Equatable, Sendable {

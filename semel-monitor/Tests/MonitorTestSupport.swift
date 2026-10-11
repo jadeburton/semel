@@ -26,12 +26,28 @@ enum Events {
         .settled(scheduled: computed + fromCache, computed: computed, fromCache: fromCache, errors: errors)
     }
 
-    static func artifacts(appeared: [String] = [], changed: [String] = [], disappeared: [String] = []) -> DaemonEvent {
-        .artifacts(appeared: appeared, changed: changed, disappeared: disappeared)
+    static func artifacts(appeared: [String] = [], changed: [String] = [], disappeared: [String] = [],
+                          treeFolders: [String: String] = [:]) -> DaemonEvent {
+        .artifacts(appeared: appeared, changed: changed, disappeared: disappeared, treeFolders: treeFolders)
     }
 
+    /// A `progress` listing nothing running: what a settle's last record says, and what
+    /// shows no running card.
     static func progress() -> DaemonEvent {
         .progress(record: ProgressRecord(scheduled: 1, computed: 0, fromCache: 0, pending: 1, running: []))
+    }
+
+    /// A `progress` with `running` compiles named `src/<name>.c` running.
+    static func progress(scheduled: Int = 10, computed: Int = 0, fromCache: Int = 0, pending: Int = 5,
+                         running names: [String]) -> DaemonEvent {
+        .progress(record: record(scheduled: scheduled, computed: computed, fromCache: fromCache, pending: pending,
+                                 running: names))
+    }
+
+    static func record(scheduled: Int = 10, computed: Int = 0, fromCache: Int = 0, pending: Int = 5,
+                       running names: [String]) -> ProgressRecord {
+        ProgressRecord(scheduled: scheduled, computed: computed, fromCache: fromCache, pending: pending,
+                       running: names.map { ActiveNode(type: "ClangCompiler", name: "src/\($0).c") })
     }
 
     /// A compile error stopping `products`.
@@ -50,6 +66,7 @@ enum Events {
 extension NotificationPlanner {
 
     /// Feeds one settle's events in the server's order and returns every change.
+    @discardableResult
     func settle(_ events: DaemonEvent...) -> [CardChange] {
         events.flatMap { receive($0) }
     }

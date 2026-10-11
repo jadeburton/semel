@@ -25,8 +25,8 @@ public struct FolderListing: Equatable, Sendable {
 }
 
 /// The order `ls` prints a folder's entries in: folders first, then by path, ignoring case.
-enum ListingOrder {
-    static func sorted(_ entries: [ListEntry]) -> [ListEntry] {
+public enum ListingOrder {
+    public static func sorted(_ entries: [ListEntry]) -> [ListEntry] {
         entries.sorted {
             if $0.kind != $1.kind { return $0.kind == .folder }
             return $0.path.lowercased() < $1.path.lowercased()

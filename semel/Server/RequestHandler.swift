@@ -400,7 +400,8 @@ public final class RequestHandler {
         engine.artifactReporter = { [weak self] changes in
             self?.eventSink?.deliver(.daemon(.artifacts(appeared:    changes.appeared,
                                                         changed:     changes.changed,
-                                                        disappeared: changes.disappeared)))
+                                                        disappeared: changes.disappeared,
+                                                        treeFolders: changes.treeFolders)))
         }
         // Between the two, as often as the pass changes state (B-95).
         engine.progressReporter = { [weak self] report in

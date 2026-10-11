@@ -169,11 +169,20 @@ product or broke one it shows a card at the top right of the screen — `3 produ
 cache` — and a settle that moved nothing shows nothing. A result card goes after eight
 seconds, or stays while the pointer is over it; an error card leads with the first error's
 line as the report prints it and stays until clicked or until a later settle gives its
-products a value. Five at most are on screen, the older folded into the bottom card. The
-menu bar item, Semel's own glyph of three nodes and two wires, says whether an engine is
-running — hollow with none, filled when connected, red while an error card is held; the
+products a value. Five at most are on screen, the older folded into the bottom card. While
+a settle runs, one card updates in place — `Building · 12 running · 48 ahead`, the running
+nodes by type and name in turn, a bar of how many of the scheduled nodes have started and
+the running totals — and becomes the settle's card when it ends, or goes if the settle
+moved nothing. The menu bar item, Semel's own glyph of three nodes and two wires, says
+whether an engine is running — hollow with none, filled when connected, swept round with
+the pending count beside it while a settle runs, red while an error card is held; the
 monitor never starts an engine, and reconnects by itself when one comes back — and holds
-*Pause notifications* and *Products…*.
+*Pause notifications*, *Products…* and *Show window*.
+
+*Show window*, or a click on the running card, opens the live window: the nodes running
+now with their type, name and how long each has run, the bar and the settle's counts, and
+under them the last settle's products, marked as the products window marks them, and its
+errors. It is drawn from the events the engine already sends and asks it for nothing.
 
 A click on a card, or *Products…*, opens the products window: `output:` as `ls` lists it,
 its folders on the left and the selected folder's products on the right, the ones the
@@ -184,9 +193,10 @@ in a save panel and writes them exactly as `export <folder> --into <dir>` does; 
 paths* copies their `output:` paths. That is the whole of the monitor's relation to the
 disk: it knows nothing of where anyone else exported and offers no *Reveal in Finder*.
 `--only <folder>` keeps the cards to the products under that folder of `output:`;
-`--print` writes each card as lines on standard output instead, for a script, and reads
-`click` and `products` on standard input as the clicks a person would make, writing the
-window it would open after `window:`.
+`--print` writes each card as lines on standard output instead, for a script — a running
+settle as `running: <headline>`, at most once a second and only when the running nodes
+changed — and reads `click`, `products` and `show` on standard input as the clicks a
+person would make, writing the window it would open after `window:` or `live:`.
 
 ```sh
 .build/release/semel-monitor --only App
@@ -362,7 +372,8 @@ semel-monitor/   semel-monitor — subscribes to the engine's events and shows e
                  as a card at the top right of the screen; the AppKit shell in App/
   Sources/SemelMonitor/  SemelMonitor: the planner (events in, cards out), the card's
                          words, the clock, the subscription that reopens itself, the
-                         products window's model and presenter, the status glyph
+                         products window's model and presenter, the live window's
+                         model, the status glyph
 semel-cache/     semel-cache — the shared cache: entries and objects under a home folder,
                  answered over TCP; links SemelCache, SemelTransport, SemelProtocol and
                  SemelNodeKit and never the engine

@@ -20,9 +20,11 @@ public struct MonitorConfiguration: Equatable {
     public static let usage = """
         usage: semel-monitor [--print] [--only <folder>]...
           Shows what each settle of the engine did, as a card at the top right of the screen.
-          --print          write each card as lines on standard output instead; a line `click`
-                           on standard input clicks the card on top and `products` opens the
-                           products window, which is written as lines after `window:`
+          --print          write each card as lines on standard output instead, a running
+                           settle as `running:` lines; a line `click` on standard input
+                           clicks the card on top, `products` opens the products window,
+                           written as lines after `window:`, and `show` the live window,
+                           written as lines after `live:`
           --only <folder>  only products under this folder of output: (repeatable)
         """
 

@@ -86,6 +86,18 @@ private final class CardView: NSVisualEffectView {
         if let names = CardText.namesLine(of: card) {
             stack.addArrangedSubview(label(names, font: .systemFont(ofSize: 12), lines: 2, width: textWidth))
         }
+        if let fraction = CardText.barFraction(of: card) {
+            let bar = NSProgressIndicator()
+            bar.style           = .bar
+            bar.controlSize     = .small
+            bar.isIndeterminate = false
+            bar.minValue        = 0
+            bar.maxValue        = 1
+            bar.doubleValue     = fraction
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            bar.widthAnchor.constraint(equalToConstant: textWidth).isActive = true
+            stack.addArrangedSubview(bar)
+        }
         for secondary in [CardText.countsLine(of: card), CardText.earlierLine(of: card)].compactMap({ $0 }) {
             stack.addArrangedSubview(label(secondary, font: .systemFont(ofSize: 11), colour: .secondaryLabelColor,
                                            lines: 1, width: textWidth))
@@ -108,7 +120,13 @@ private final class CardView: NSVisualEffectView {
         let mark = NSView()
         mark.wantsLayer = true
         mark.layer?.cornerRadius    = 4
-        mark.layer?.backgroundColor = (card.kind == .errors ? NSColor.systemRed : NSColor.systemGreen).cgColor
+        let colour: NSColor
+        switch card.kind {
+        case .running: colour = .controlAccentColor
+        case .result:  colour = .systemGreen
+        case .errors:  colour = .systemRed
+        }
+        mark.layer?.backgroundColor = colour.cgColor
         mark.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([mark.widthAnchor.constraint(equalToConstant: 8),
                                      mark.heightAnchor.constraint(equalToConstant: 8)])
