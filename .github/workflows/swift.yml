@@ -76,8 +76,9 @@ jobs:
 
       # The root package's tests include SemelEndToEndTests, which builds the C, C++
       # and Swift fixtures under EndToEnd/Fixtures through semelserv, semel and
-      # semel-swift, twice each. External projects are not run here; see end-to-end.yml.
-      - name: Test the CLI, the server and the end-to-end fixtures
+      # semel-swift, twice each, and SemelCacheServerTests, which runs semel-cache over TCP on
+      # localhost. External projects are not run here; see end-to-end.yml.
+      - name: Test the CLI, the servers, the shared cache and the end-to-end fixtures
         run: scripts/build.sh test
 
       # A test process that dies of a signal leaves its stack in a crash report, which a

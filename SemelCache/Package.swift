@@ -39,7 +39,10 @@ let package = Package(
         ),
         .testTarget(
             name: "SemelCacheTests",
-            dependencies: ["SemelCache"],
+            dependencies: [
+                "SemelCache",
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ],
             path: "Tests"
         ),
     ]

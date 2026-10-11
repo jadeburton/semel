@@ -74,84 +74,84 @@ public struct SQLiteCacheStore: CacheStore {
     // MARK: - CacheStore
 
     public func content(hash: String) throws -> Data? {
-        try read { db in try content(hash: hash, in: db) }
+        try read { connection in try content(hash: hash, in: connection) }
     }
 
     public func save(hash: String, nodeType: String, cost: Int, content: Data, objects: [CachedObject]) throws {
-        try write { db in try save(hash: hash, nodeType: nodeType, cost: cost, content: content, objects: objects, in: db) }
+        try write { connection in try save(hash: hash, nodeType: nodeType, cost: cost, content: content, objects: objects, in: connection) }
     }
 
     public func noteUse(hash: String) throws {
-        try write { db in try noteUse(hash: hash, in: db) }
+        try write { connection in try noteUse(hash: hash, in: connection) }
     }
 
     public func delete(hash: String) throws -> Bool {
-        try write { db in try delete(hash: hash, in: db) }
+        try write { connection in try delete(hash: hash, in: connection) }
     }
 
     public func account() throws -> CacheAccount {
-        try read { db in try account(in: db) }
+        try read { connection in try account(in: connection) }
     }
 
     public func sizes() throws -> [CacheEntrySize] {
-        try read { db in try sizes(in: db) }
+        try read { connection in try sizes(in: connection) }
     }
 
     public func objects(ofEntry hash: String) throws -> [DataObjectHash] {
-        try read { db in
-            try db.cachedValues("SELECT objectHash FROM CacheEntryObject WHERE entryHash = ? ORDER BY objectHash", arguments: [hash])
+        try read { connection in
+            try connection.cachedValues("SELECT objectHash FROM CacheEntryObject WHERE entryHash = ? ORDER BY objectHash", arguments: [hash])
         }
     }
 
     // MARK: - The rest of the store, as a call
 
     public func closeSettle() throws {
-        try write { db in try closeSettle(in: db) }
+        try write { connection in try closeSettle(in: connection) }
     }
 
     public func deleteAll() throws -> Bool {
-        try write { db in try deleteAll(in: db) }
+        try write { connection in try deleteAll(in: connection) }
     }
 
     public func selectAll() throws -> [CacheEntry] {
         Debug.warn("expensive selectAllCacheEntries call")
-        return try read { db in try CacheEntry.fetchAll(db) }
+        return try read { connection in try CacheEntry.fetchAll(connection) }
     }
 
     /// Every entry's content, without the rest of the row: what the collector decodes for
     /// the objects a cached build refers to (B-14). Each is a small JSON document.
     public func selectAllContent() throws -> [Data] {
-        try read { db in try Data.fetchAll(db, sql: "SELECT content FROM CacheEntry ORDER BY hash") }
+        try read { connection in try Data.fetchAll(connection, sql: "SELECT content FROM CacheEntry ORDER BY hash") }
     }
 
     /// Every entry's key, without its content. A caller inspecting the keys would
     /// otherwise pull every cached build through memory to read a column of hex.
     public func selectAllHashes() throws -> [String] {
-        try read { db in try String.fetchAll(db, sql: "SELECT hash FROM CacheEntry ORDER BY hash") }
+        try read { connection in try String.fetchAll(connection, sql: "SELECT hash FROM CacheEntry ORDER BY hash") }
     }
 
     public func select(hash: String) throws -> CacheEntry? {
-        try read { db in
-            try CacheEntry.filter(Column("hash") == hash).fetchOne(db)
+        try read { connection in
+            try CacheEntry.filter(Column("hash") == hash).fetchOne(connection)
         }
     }
 
     public func count() throws -> Int {
-        try read { db in try CacheEntry.fetchCount(db) }
+        try read { connection in try CacheEntry.fetchCount(connection) }
     }
 
     /// The total as the object rows add up, rather than as the account kept it: what a
     /// test, and a check, compare the running total with.
     public func bytesByObjectRows() throws -> Int {
-        try read { db in
-            try Int.fetchOne(db, sql: "SELECT COALESCE(SUM(bytes), 0) FROM CacheObject WHERE heldByInput = 0") ?? 0
+        try read { connection in
+            try Int.fetchOne(connection, sql: "SELECT COALESCE(SUM(bytes), 0) FROM CacheObject WHERE heldByInput = 0") ?? 0
         }
     }
 
     // MARK: - The queries, on a connection
 
-    public func content(hash: String, in db: Database) throws -> Data? {
-        try db.cachedValue("SELECT content FROM CacheEntry WHERE hash = ?", arguments: [hash])
+    public func content(hash: String, in connection: Database) throws -> Data? {
+        try connection.cachedValue("SELECT content FROM CacheEntry WHERE hash = ?", arguments: [hash])
     }
 
     /// Stores the entry whether or not its key is already taken, with the objects it holds,
@@ -163,69 +163,69 @@ public struct SQLiteCacheStore: CacheStore {
     ///
     /// The running total moves by the objects no other entry held before: an object a
     /// second entry holds is counted once, when the first one stored it.
-    public func save(hash: String, nodeType: String, cost: Int, content: Data, objects: [CachedObject], in db: Database) throws {
-        try unlink(entryHash: hash, db: db)
-        try db.cachedExecute("""
+    public func save(hash: String, nodeType: String, cost: Int, content: Data, objects: [CachedObject], in connection: Database) throws {
+        try unlink(entryHash: hash, connection: connection)
+        try connection.cachedExecute("""
             INSERT OR REPLACE INTO CacheEntry (hash, nodeType, cost, lastUse, content)
             VALUES (?, ?, ?, (SELECT settle FROM CacheAccount WHERE id = 1), ?)
             """, arguments: [hash, nodeType, cost, content])
         var added = 0
         for object in Set(objects).sorted(by: { $0.hash < $1.hash }) {
-            try db.cachedExecute("INSERT INTO CacheEntryObject (entryHash, objectHash) VALUES (?, ?)",
+            try connection.cachedExecute("INSERT INTO CacheEntryObject (entryHash, objectHash) VALUES (?, ?)",
                                  arguments: [hash, object.hash])
-            try db.cachedExecute("UPDATE CacheObject SET holders = holders + 1 WHERE hash = ?", arguments: [object.hash])
-            guard db.changesCount == 0 else {
+            try connection.cachedExecute("UPDATE CacheObject SET holders = holders + 1 WHERE hash = ?", arguments: [object.hash])
+            guard connection.changesCount == 0 else {
                 continue
             }
-            try db.cachedExecute("INSERT INTO CacheObject (hash, bytes, holders, heldByInput) VALUES (?, ?, 1, 0)",
+            try connection.cachedExecute("INSERT INTO CacheObject (hash, bytes, holders, heldByInput) VALUES (?, ?, 1, 0)",
                                  arguments: [object.hash, object.bytes])
             added += object.bytes
         }
-        try db.cachedExecute("UPDATE CacheAccount SET bytes = bytes + ? WHERE id = 1", arguments: [added])
+        try connection.cachedExecute("UPDATE CacheAccount SET bytes = bytes + ? WHERE id = 1", arguments: [added])
     }
 
     /// Takes an entry's holds off its objects: one holder fewer each, and an object no
     /// entry holds any more leaves the account, and the total if it was counted there.
-    private func unlink(entryHash: String, db: Database) throws {
-        try db.cachedExecute("""
+    private func unlink(entryHash: String, connection: Database) throws {
+        try connection.cachedExecute("""
             UPDATE CacheAccount SET bytes = bytes - (
                 SELECT COALESCE(SUM(object.bytes), 0)
                 FROM CacheEntryObject link JOIN CacheObject object ON object.hash = link.objectHash
                 WHERE link.entryHash = ? AND object.holders = 1 AND object.heldByInput = 0)
             WHERE id = 1
             """, arguments: [entryHash])
-        try db.cachedExecute("""
+        try connection.cachedExecute("""
             UPDATE CacheObject SET holders = holders - 1
             WHERE hash IN (SELECT objectHash FROM CacheEntryObject WHERE entryHash = ?)
             """, arguments: [entryHash])
-        try db.cachedExecute("""
+        try connection.cachedExecute("""
             DELETE FROM CacheObject
             WHERE holders = 0 AND hash IN (SELECT objectHash FROM CacheEntryObject WHERE entryHash = ?)
             """, arguments: [entryHash])
-        try db.cachedExecute("DELETE FROM CacheEntryObject WHERE entryHash = ?", arguments: [entryHash])
+        try connection.cachedExecute("DELETE FROM CacheEntryObject WHERE entryHash = ?", arguments: [entryHash])
     }
 
-    public func delete(hash: String, in db: Database) throws -> Bool {
-        try unlink(entryHash: hash, db: db)
-        try db.cachedExecute("DELETE FROM CacheEntry WHERE hash = ?", arguments: [hash])
-        return db.changesCount > 0
+    public func delete(hash: String, in connection: Database) throws -> Bool {
+        try unlink(entryHash: hash, connection: connection)
+        try connection.cachedExecute("DELETE FROM CacheEntry WHERE hash = ?", arguments: [hash])
+        return connection.changesCount > 0
     }
 
-    public func deleteAll(in db: Database) throws -> Bool {
-        try db.execute(sql: "DELETE FROM CacheEntryObject")
-        try db.execute(sql: "DELETE FROM CacheObject")
-        try db.execute(sql: "UPDATE CacheAccount SET bytes = 0 WHERE id = 1")
-        return try CacheEntry.deleteAll(db) > 0
+    public func deleteAll(in connection: Database) throws -> Bool {
+        try connection.execute(sql: "DELETE FROM CacheEntryObject")
+        try connection.execute(sql: "DELETE FROM CacheObject")
+        try connection.execute(sql: "UPDATE CacheAccount SET bytes = 0 WHERE id = 1")
+        return try CacheEntry.deleteAll(connection) > 0
     }
 
     /// Stamps the entry as used by the settle in progress: a hit.
-    public func noteUse(hash: String, in db: Database) throws {
-        try db.cachedExecute("UPDATE CacheEntry SET lastUse = (SELECT settle FROM CacheAccount WHERE id = 1) WHERE hash = ?",
+    public func noteUse(hash: String, in connection: Database) throws {
+        try connection.cachedExecute("UPDATE CacheEntry SET lastUse = (SELECT settle FROM CacheAccount WHERE id = 1) WHERE hash = ?",
                              arguments: [hash])
     }
 
-    public func account(in db: Database) throws -> CacheAccount {
-        guard let row = try db.cachedRows("SELECT bytes, settle, lastUsingSettle FROM CacheAccount WHERE id = 1").first else {
+    public func account(in connection: Database) throws -> CacheAccount {
+        guard let row = try connection.cachedRows("SELECT bytes, settle, lastUsingSettle FROM CacheAccount WHERE id = 1").first else {
             throw SQLiteCacheStoreError.accountMissing
         }
         return CacheAccount(bytes: row["bytes"], settle: row["settle"], lastUsingSettle: row["lastUsingSettle"])
@@ -235,8 +235,8 @@ public struct SQLiteCacheStore: CacheStore {
     /// entry, it becomes the last settle that did and the next one gets the next ordinal.
     /// A settle that used nothing — a push of an unchanged file — leaves both alone, so
     /// "the last settle" stays the last one that built or hit something.
-    public func closeSettle(in db: Database) throws {
-        try db.cachedExecute("""
+    public func closeSettle(in connection: Database) throws {
+        try connection.cachedExecute("""
             UPDATE CacheAccount SET lastUsingSettle = settle, settle = settle + 1
             WHERE id = 1 AND EXISTS (SELECT 1 FROM CacheEntry WHERE lastUse = CacheAccount.settle)
             """)
@@ -246,8 +246,8 @@ public struct SQLiteCacheStore: CacheStore {
     /// node stands on, and whether a node of the graph is keyed on it. Read from the
     /// account's rows only: nothing in the store is opened. A database with no graph has
     /// no row in `NodeCacheKey`, so there no entry is held by a node.
-    public func sizes(in db: Database) throws -> [CacheEntrySize] {
-        let rows = try Row.fetchAll(db, sql: """
+    public func sizes(in connection: Database) throws -> [CacheEntrySize] {
+        let rows = try Row.fetchAll(connection, sql: """
             SELECT entry.hash, entry.nodeType, entry.cost, entry.lastUse,
                    COALESCE(SUM(CASE WHEN object.holders = 1 AND object.heldByInput = 0 THEN object.bytes ELSE 0 END), 0) AS bytes,
                    COALESCE(SUM(CASE WHEN object.holders > 1 AND object.heldByInput = 0 AND NOT EXISTS (

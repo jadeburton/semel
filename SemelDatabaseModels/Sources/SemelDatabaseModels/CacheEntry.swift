@@ -38,8 +38,10 @@ public struct CacheEntry: Codable, FetchableRecord, PersistableRecord {
         self.content  = content
     }
 
-    public static func createTable(dbQueue: DatabaseQueue) throws {
-        try dbQueue.write { db in
+    /// Any writer, not only a queue: the graph's database is one, and a cache server's index
+    /// is a pool, so its readers run beside its writer.
+    public static func createTable(in writer: any DatabaseWriter) throws {
+        try writer.write { db in
             try db.create(table: "CacheEntry", options: .ifNotExists) { table in
                 table.column("hash", .text).notNull().primaryKey()
                 table.column("nodeType", .text).notNull()

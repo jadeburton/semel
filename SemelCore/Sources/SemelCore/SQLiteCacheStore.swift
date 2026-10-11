@@ -42,22 +42,22 @@ extension SQLiteCacheStore {
             WHERE node.kind IN (\(placeholders)) AND port.dataObjectHash IS NOT NULL
             """
         let kinds = StatementArguments(inputKinds.map { Int64($0) })
-        try write { db in
-            let nowHeld = try Int.fetchOne(db, sql: """
+        try write { connection in
+            let nowHeld = try Int.fetchOne(connection, sql: """
                 SELECT COALESCE(SUM(bytes), 0) FROM CacheObject WHERE heldByInput = 0 AND hash IN (\(held))
                 """, arguments: kinds) ?? 0
-            let noLongerHeld = try Int.fetchOne(db, sql: """
+            let noLongerHeld = try Int.fetchOne(connection, sql: """
                 SELECT COALESCE(SUM(bytes), 0) FROM CacheObject WHERE heldByInput = 1 AND hash NOT IN (\(held))
                 """, arguments: kinds) ?? 0
             // An empty object's flag decides no byte anywhere, so only bytes are worth a write.
             guard nowHeld != 0 || noLongerHeld != 0 else {
                 return
             }
-            try db.execute(sql: "UPDATE CacheObject SET heldByInput = 1 WHERE heldByInput = 0 AND hash IN (\(held))",
+            try connection.execute(sql: "UPDATE CacheObject SET heldByInput = 1 WHERE heldByInput = 0 AND hash IN (\(held))",
                            arguments: kinds)
-            try db.execute(sql: "UPDATE CacheObject SET heldByInput = 0 WHERE heldByInput = 1 AND hash NOT IN (\(held))",
+            try connection.execute(sql: "UPDATE CacheObject SET heldByInput = 0 WHERE heldByInput = 1 AND hash NOT IN (\(held))",
                            arguments: kinds)
-            try db.execute(sql: "UPDATE CacheAccount SET bytes = bytes - ? + ? WHERE id = 1",
+            try connection.execute(sql: "UPDATE CacheAccount SET bytes = bytes - ? + ? WHERE id = 1",
                            arguments: [nowHeld, noLongerHeld])
         }
     }
@@ -67,12 +67,12 @@ extension SQLiteCacheStore {
     /// Records the key whose build the node's outputs now are, or that they are no cached
     /// build's: what keeps eviction off an entry the graph is standing on.
     public func recordKey(_ cacheKey: String?, forNodeID nodeID: ObjectID) throws {
-        try write { db in
+        try write { connection in
             guard let cacheKey else {
-                try db.cachedExecute("DELETE FROM NodeCacheKey WHERE nodeID = ?", arguments: [nodeID])
+                try connection.cachedExecute("DELETE FROM NodeCacheKey WHERE nodeID = ?", arguments: [nodeID])
                 return
             }
-            try db.cachedExecute("""
+            try connection.cachedExecute("""
                 INSERT INTO NodeCacheKey (nodeID, cacheKey) VALUES (?, ?)
                 ON CONFLICT (nodeID) DO UPDATE SET cacheKey = excluded.cacheKey
                 """, arguments: [nodeID, cacheKey])
@@ -80,8 +80,8 @@ extension SQLiteCacheStore {
     }
 
     public func recordedKey(forNodeID nodeID: ObjectID) throws -> String? {
-        try read { db in
-            try db.cachedValue("SELECT cacheKey FROM NodeCacheKey WHERE nodeID = ?", arguments: [nodeID])
+        try read { connection in
+            try connection.cachedValue("SELECT cacheKey FROM NodeCacheKey WHERE nodeID = ?", arguments: [nodeID])
         }
     }
 }
