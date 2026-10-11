@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>semel-monitor mockups</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --desk-1: #4f7fb0; --desk-2: #a9c3d8;
+    --bar: rgba(255,255,255,0.72); --bar-text: #1d1d1f;
+    --card: rgba(246,246,248,0.94); --card-text: #1d1d1f; --card-dim: #6e6e73;
+    --card-border: rgba(0,0,0,0.10); --shadow: 0 12px 32px rgba(0,0,0,0.22);
+    --error: #d93a2b; --ok: #2e9e4f; --accent: #0a60ff;
+    --window: #f5f5f7; --window-border: rgba(0,0,0,0.14); --row-alt: #ededf0;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --desk-1: #22354d; --desk-2: #3b5572;
+      --bar: rgba(30,30,32,0.78); --bar-text: #f5f5f7;
+      --card: rgba(44,44,48,0.94); --card-text: #f5f5f7; --card-dim: #a1a1a6;
+      --card-border: rgba(255,255,255,0.10); --shadow: 0 12px 32px rgba(0,0,0,0.5);
+      --window: #1e1e20; --window-border: rgba(255,255,255,0.12); --row-alt: #262628;
+    }
+  }
+  :root[data-theme="dark"] {
+    --desk-1: #22354d; --desk-2: #3b5572;
+    --bar: rgba(30,30,32,0.78); --bar-text: #f5f5f7;
+    --card: rgba(44,44,48,0.94); --card-text: #f5f5f7; --card-dim: #a1a1a6;
+    --card-border: rgba(255,255,255,0.10); --shadow: 0 12px 32px rgba(0,0,0,0.5);
+    --window: #1e1e20; --window-border: rgba(255,255,255,0.12); --row-alt: #262628;
+  }
+  html, body { margin: 0; background: var(--window); color: var(--card-text); font: 15px/1.45 var(--sans); }
+  body { padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 36px 0 10px; }
+  p.lead { color: var(--card-dim); margin: 0 0 20px; max-width: 70ch; }
+  p.note { color: var(--card-dim); max-width: 78ch; font-size: 14px; }
+  .screen { position: relative; height: 420px; border-radius: 12px; overflow: hidden;
+            background: linear-gradient(135deg, var(--desk-1), var(--desk-2)); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
+  .menubar { position: absolute; left: 0; right: 0; top: 0; height: 28px; background: var(--bar);
+             backdrop-filter: blur(20px); color: var(--bar-text); font-size: 13px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; }
+  .menubar .left span { margin-right: 14px; } .menubar .left b { font-weight: 700; }
+  .menubar .right span { margin-left: 14px; }
+  .glyph { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px; margin-right: 5px; border: 1.5px solid currentColor; box-sizing: border-box; }
+  .glyph.connected { background: currentColor; }
+  .glyph.none { background: transparent; }
+  .glyph.settling { background: conic-gradient(currentColor 0 65%, transparent 65% 100%); border-color: transparent; }
+  .glyph.errors { background: var(--error); border-color: var(--error); }
+  .stack { position: absolute; right: 14px; top: 38px; width: 340px; display: flex; flex-direction: column; gap: 10px; }
+  .card { background: var(--card); backdrop-filter: blur(20px); border: 1px solid var(--card-border); border-radius: 14px;
+          box-shadow: var(--shadow); padding: 12px 14px 11px; color: var(--card-text); }
+  .card .head { font-weight: 600; font-size: 14px; display: flex; align-items: baseline; gap: 8px; }
+  .card .head .mark { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; position: relative; top: -1px; }
+  .card.error .head .mark { background: var(--error); }
+  .card .names { margin: 5px 0 2px; font-size: 13px; }
+  .card .names .more { color: var(--card-dim); }
+  .card .counts { color: var(--card-dim); font-size: 12px; margin-top: 4px; }
+  .card .diag { font: 12px/1.4 var(--mono); margin: 6px 0 2px; white-space: pre-wrap; }
+  .card .label { color: var(--card-dim); font-size: 12px; }
+  .card.folded { padding: 8px 14px; color: var(--card-dim); font-size: 12px; text-align: center; }
+  .card.running .bar { height: 4px; border-radius: 2px; background: rgba(127,127,127,0.25); margin-top: 8px; overflow: hidden; }
+  .card.running .bar i { display: block; height: 100%; width: 38%; background: var(--accent); }
+  .menu { position: absolute; right: 14px; top: 30px; width: 260px; background: var(--card); backdrop-filter: blur(20px);
+          border: 1px solid var(--card-border); border-radius: 10px; box-shadow: var(--shadow); padding: 6px; font-size: 13px; }
+  .menu .item { padding: 5px 10px; border-radius: 6px; }
+  .menu .item.dim { color: var(--card-dim); }
+  .menu .item.sel { background: var(--accent); color: #fff; }
+  .menu .sep { height: 1px; background: var(--card-border); margin: 5px 6px; }
+  .window { position: absolute; left: 50%; top: 56px; transform: translateX(-50%); width: 640px; max-width: calc(100% - 32px);
+            background: var(--window); border: 1px solid var(--window-border); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+  .window .title { height: 36px; display: flex; align-items: center; padding: 0 12px; font-size: 13px; font-weight: 600; border-bottom: 1px solid var(--window-border); gap: 8px; }
+  .window .title .lights { display: flex; gap: 6px; margin-right: 8px; }
+  .window .title .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .window .title .lights i:nth-child(1) { background: #ff5f57; } .window .title .lights i:nth-child(2) { background: #febc2e; } .window .title .lights i:nth-child(3) { background: #28c840; }
+  .window .body { display: grid; grid-template-columns: 200px 1fr; min-height: 300px; }
+  .window .side { border-right: 1px solid var(--window-border); padding: 8px 0; font-size: 13px; }
+  .window .side .item { padding: 5px 14px; }
+  .window .side .item.sel { background: var(--accent); color: #fff; }
+  .window .main { padding: 8px 0; font-size: 13px; }
+  .window .row { display: grid; grid-template-columns: 1fr 90px 70px; padding: 5px 14px; align-items: baseline; }
+  .window .row:nth-child(even) { background: var(--row-alt); }
+  .window .row.hdr { color: var(--card-dim); font-size: 12px; background: transparent; }
+  .window .row .touched { color: var(--ok); font-weight: 600; }
+  .window .row .none { color: var(--error); }
+  .window .row.sel { background: rgba(10,96,255,0.18); }
+  .window .foot { border-top: 1px solid var(--window-border); padding: 8px 12px; display: flex; justify-content: flex-end; gap: 8px; font-size: 13px; }
+  .btn { padding: 4px 12px; border-radius: 6px; border: 1px solid var(--window-border); background: var(--card); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: transparent; }
+  .live .row { grid-template-columns: 130px 1fr 60px; }
+  .live .totals { display: flex; gap: 18px; padding: 10px 14px 4px; color: var(--card-dim); font-size: 12px; }
+  .live .pbar { margin: 6px 14px 10px; height: 6px; border-radius: 3px; background: rgba(127,127,127,0.25); overflow: hidden; }
+  .live .pbar i { display: block; height: 100%; width: 62%; background: var(--accent); }
+  pre.print { background: var(--row-alt); border-radius: 10px; padding: 12px 14px; font: 12.5px/1.5 var(--mono); overflow-x: auto; }
+  @media (max-width: 720px) {
+    .stack { width: calc(100% - 28px); }
+    .window .body { grid-template-columns: 1fr; } .window .side { display: none; }
+  }
+</style>
+</head>
+<body>
+<h1>semel-monitor</h1>
+<p class="lead">Mockups for the three phases of the design of 2026-10-11. Every word on a card is a word the engine's events already carry.</p>
+
+<h2>Phase 1 · the cards, top right</h2>
+<p class="note">A result card goes after eight seconds; an error card stays until clicked or until a later settle gives its products a value. Newest on top, at most five, the rest folded into the bottom card.</p>
+<div class="screen">
+  <div class="menubar">
+    <div class="left"><b></b><span>Finder</span><span>File</span><span>Edit</span><span>View</span></div>
+    <div class="right"><span><i class="glyph connected"></i>semel</span><span>Sat 14:02</span></div>
+  </div>
+  <div class="stack">
+    <div class="card">
+      <div class="head"><span class="mark"></span>3 products changed, 1 appeared</div>
+      <div class="names">App, libModels.a, libConversations.a <span class="more">and 1 more</span></div>
+      <div class="counts">3 computed · 9 from cache</div>
+    </div>
+    <div class="card error">
+      <div class="head"><span class="mark"></span>2 products without a value</div>
+      <div class="diag">Packages/Models/Sources/Models/Account.swift:201:28: error: cannot convert value of type 'String' to specified type 'Int'</div>
+      <div class="names">libConversations.a, libExplore.a</div>
+      <div class="counts">1 error · 2 products without a value</div>
+    </div>
+    <div class="card">
+      <div class="head"><span class="mark"></span>1 product disappeared</div>
+      <div class="names">libOld.a</div>
+      <div class="counts">1 computed · 0 from cache</div>
+    </div>
+    <div class="card folded">and 2 earlier</div>
+  </div>
+</div>
+
+<h2>Phase 1 · the status item</h2>
+<p class="note">Two states in phase 1: no engine, connected. The menu holds the last settle's line, Pause, Quit. The settling and error states of the glyph arrive with phase 3.</p>
+<div class="screen" style="height: 220px;">
+  <div class="menubar">
+    <div class="left"><b></b><span>Finder</span></div>
+    <div class="right"><span><i class="glyph connected"></i>semel</span><span>Sat 14:02</span></div>
+  </div>
+  <div class="menu">
+    <div class="item dim">Connected · last settle: 3 changed, 1 appeared</div>
+    <div class="sep"></div>
+    <div class="item">Pause notifications</div>
+    <div class="item dim">Products…</div>
+    <div class="item dim">Show window</div>
+    <div class="sep"></div>
+    <div class="item">Quit semel-monitor</div>
+  </div>
+</div>
+<p class="note">Glyphs: <i class="glyph none"></i> no engine &nbsp; <i class="glyph connected"></i> connected &nbsp; <i class="glyph settling"></i> settling (phase 3) &nbsp; <i class="glyph errors"></i> errors held (phase 3).</p>
+
+<h2>Phase 1 · <code>--print</code></h2>
+<p class="note">The same model with no panels, one card as lines; what the end-to-end test reads and a script can tail.</p>
+<pre class="print">card: 3 products changed, 1 appeared
+  App, libModels.a, libConversations.a and 1 more
+  3 computed · 9 from cache
+card: 2 products without a value
+  Packages/Models/Sources/Models/Account.swift:201:28: error: cannot convert value of type 'String' to specified type 'Int'
+  libConversations.a, libExplore.a
+  1 error · 2 products without a value
+dismissed: 3 products changed, 1 appeared</pre>
+
+<h2>Phase 2 · the products window</h2>
+<p class="note">A client of the private file system: <code>output:</code> listed by folder, the settle's products marked, errors in the report's lines, export of a selection to a destination chosen in a save panel. No external locations.</p>
+<div class="screen" style="height: 440px;">
+  <div class="menubar"><div class="left"><b></b><span>semel-monitor</span><span>File</span><span>Edit</span></div><div class="right"><span><i class="glyph connected"></i>semel</span></div></div>
+  <div class="window">
+    <div class="title"><div class="lights"><i></i><i></i><i></i></div>Products · output:</div>
+    <div class="body">
+      <div class="side">
+        <div class="item sel">Packages</div>
+        <div class="item">App</div>
+        <div class="item">Frameworks</div>
+        <div class="item dim" style="margin-top:10px;color:var(--card-dim)">Errors (1)</div>
+      </div>
+      <div class="main">
+        <div class="row hdr"><span>Product</span><span>This settle</span><span>Size</span></div>
+        <div class="row sel"><span>libModels.a</span><span class="touched">changed</span><span>1.2 MB</span></div>
+        <div class="row sel"><span>libConversations.a</span><span class="none">no value</span><span>—</span></div>
+        <div class="row"><span>libExplore.a</span><span class="none">no value</span><span>—</span></div>
+        <div class="row"><span>libLists.a</span><span></span><span>640 KB</span></div>
+        <div class="row"><span>libNotifications.a</span><span class="touched">appeared</span><span>212 KB</span></div>
+        <div class="row"><span>libTimeline.a</span><span></span><span>1.8 MB</span></div>
+      </div>
+    </div>
+    <div class="foot"><span class="btn">Copy paths</span><span class="btn primary">Export 2 products…</span></div>
+  </div>
+</div>
+
+<h2>Phase 3 · the running card and the live window</h2>
+<p class="note">Both drawn from <code>progress</code> events the server already sends: the running nodes with type and name, the queue ahead, the running totals.</p>
+<div class="screen" style="height: 460px;">
+  <div class="menubar"><div class="left"><b></b><span>Finder</span></div><div class="right"><span><i class="glyph settling"></i>semel · 48</span></div></div>
+  <div class="stack">
+    <div class="card running">
+      <div class="head"><span class="mark" style="background:var(--accent)"></span>Building · 12 running · 48 ahead</div>
+      <div class="names"><span class="label">SwiftCompiler</span> App/View.swift &nbsp;·&nbsp; <span class="label">ClangCompiler</span> Sources/parser.c</div>
+      <div class="bar"><i></i></div>
+      <div class="counts">31 computed · 9 from cache · 48 pending</div>
+    </div>
+  </div>
+  <div class="window live" style="top: 150px; width: 560px;">
+    <div class="title"><div class="lights"><i></i><i></i><i></i></div>semel · settling</div>
+    <div class="totals"><span>scheduled 88</span><span>computed 31</span><span>from cache 9</span><span>pending 48</span><span>running 12</span></div>
+    <div class="pbar"><i></i></div>
+    <div class="main">
+      <div class="row hdr"><span>Type</span><span>Name</span><span>Elapsed</span></div>
+      <div class="row"><span>SwiftCompiler</span><span>App/View.swift</span><span>2.1 s</span></div>
+      <div class="row"><span>SwiftCompiler</span><span>Models/Account.swift</span><span>1.4 s</span></div>
+      <div class="row"><span>ClangCompiler</span><span>Sources/parser.c</span><span>0.6 s</span></div>
+      <div class="row"><span>AssetCatalogCompiler</span><span>App/Assets.xcassets</span><span>0.3 s</span></div>
+      <div class="row"><span>SwiftLinker</span><span>libModels.a</span><span>0.1 s</span></div>
+    </div>
+  </div>
+</div>
+<p class="note">The full graph view, nodes and wires with their states, needs requests that do not exist yet and is designed separately once phase 3 has shown what people look at.</p>
+</body>
+</html>
