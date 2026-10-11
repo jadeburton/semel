@@ -34,6 +34,19 @@ enum Projects {
         expectedProducts: ["hello", "hello.dylib", "config.txt", "lines.txt"],
         buildTimeout: fixtureTimeout)
 
+    /// No formula committed: `semel-cmake` writes it from the fixture's CMakeLists.txt and
+    /// the subdirectory's, in the harness's copy, before the build (B-156). The library's
+    /// private define and its public include folder are what the sources check.
+    static let cmakeHello = Project(
+        name: "cmake-hello",
+        source: .fixture(folder: "."),
+        buildFolder: "cmake",
+        platform: nil,
+        converter: "semel-cmake",
+        expectedProducts: ["hello", "libgreet.a"],
+        buildTimeout: fixtureTimeout,
+        executables: ["hello"])
+
     /// `6502emu.fmla` lays its own `semel.config` over the machine's settings in
     /// `../semel.machine.config`, by hand; the machine file is a sibling of the build
     /// folder, so it needs its own push.
@@ -623,8 +636,8 @@ enum Projects {
         expectedProducts: ["libDependencies.a", "libDependenciesMacros.a", "libDependenciesTestSupport.a"],
         buildTimeout: 5 * 60)
 
-    static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftCPackage, swiftHelloApp, swiftBinaryTargetApp,
-                                      swiftMacroApp]
+    static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, cmakeHello, swiftMyApp, swiftCPackage, swiftHelloApp,
+                                      swiftBinaryTargetApp, swiftMacroApp]
     static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, simdjson, foodTruck, foodTruckMac, netNewsWireMac, netNewsWireIOS,
                                       codeEdit, sequelAce, swiftDependencies]
     static let all: [Project] = fixtures + external

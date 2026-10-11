@@ -257,6 +257,17 @@ include XcodeProjectConverter(path: <IceCubesApp.xcodeproj>, root: <.>, configur
 
 A target's sources are its synchronized folders or the files its sources phase lists; Swift is compiled as one module, and Objective-C, C and C++ through clang a file at a time, each finding headers the way Xcode's header map finds them — every header the project references, by name and as `<Product/Header.h>` — with `GCC_PREFIX_HEADER` forced in, the Swift's `SWIFT_OBJC_INTERFACE_HEADER_NAME` beside them, `HEADER_SEARCH_PATHS`, `USER_HEADER_SEARCH_PATHS` (a `/**` entry recursive) and `FRAMEWORK_SEARCH_PATHS` read as folders of the project, and a file's own `COMPILER_FLAGS` after the target's. The frameworks phase's SDK frameworks and libraries are linked by name, a framework or library in the project's tree as the files it is, and a framework target of a referenced project (`PBXReferenceProxy`) is built from that project — its `MODULEMAP_FILE`, `SWIFT_INCLUDE_PATHS`, install name and versions read — and embedded as a versioned framework where a copy-files phase puts it. A lexer description (`.l`) in a sources phase is run through `lex` and its scanner compiled with the target's sources, a Core Data model compiled by `momc` into the bundle's resources, and a command-line tool of the project that a Mac app's copy-files phase copies is built, signed by itself and copied there. FUTURE.md's B-77 lists what each roster project asked for and what is still not read.
 
+### Building a CMake project
+
+A `CMakeLists.txt` tree is translated, not run: `semel-cmake <folder>` reads the root file and the files it reaches through `add_subdirectory` and `include`, and writes `semel.fmla` and `semel.config` beside it from the declarative part of what they say — `add_executable` and `add_library` as products, `target_include_directories` as header folders, `target_compile_definitions` and `target_compile_options` as the settings laid over each tool's slice, `target_link_libraries` as the wires and the `libraries` and `frameworks` the linker reads, `file(GLOB)` as the pattern it names, `PUBLIC` and `INTERFACE` reaching the targets that link, and `if` where a fixed table of facts (`APPLE`, `CMAKE_SYSTEM_NAME`, an option's default) decides it. The procedural rest — `find_package`, `foreach`, a function, `add_custom_command`, a condition the facts do not decide — is refused by file and line, listed at the head of the formula and in the tool's output, and the rest still translates. Then it writes the clang part of `semel.machine.config` beside them, as `semel-clang` would.
+
+```sh
+.build/release/semel-cmake path/to/project
+.build/release/semel 'base path/to' 'build project'
+```
+
+The formula is written once and is yours from then on: a second run keeps the two files, and edits them it will not. It is the formula a hand-written C project carries — `include 'clang'` and one chain per target — so the fixtures under `EndToEnd/Fixtures` read as what the tool writes. The translation lives in `SemelCMake`, which touches no disk, so a node could derive the formula live where a project wants that instead; `semel-cmake` is the disk around it.
+
 ### Dependencies
 
 Semel never fetches anything: every file a build needs has to be inside the input file system, found by one rule. For a tree of Swift packages, the Swift conversion tool puts them there and writes what the build needs:

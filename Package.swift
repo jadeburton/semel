@@ -329,6 +329,7 @@ let package = Package(
                 "semel-server",
                 "semel-swift",
                 "semel-clang",
+                "semel-cmake",
                 "semel-watch",
                 "semel-monitor",
             ],

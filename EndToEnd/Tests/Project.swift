@@ -48,6 +48,11 @@ struct Project {
     let buildFolder: String
     /// For `semel-swift prepare --platform`; nil means no prepare.
     let platform: String?
+    /// A tool run over the build folder before the build, after the machine file is
+    /// written, that writes the formula and the project config a converter derives —
+    /// `semel-cmake` (B-156). Such a fixture commits no formula: the build is the tool's
+    /// output, as a `prepare`d project's is.
+    var converter: String?
     /// Relative to the export directory; every one must exist and be non-empty.
     let expectedProducts: [String]
     let buildTimeout: TimeInterval
