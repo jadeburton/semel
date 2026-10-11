@@ -112,11 +112,28 @@ the repository working.
   decision for a cheap entry over a slow link.
 - Phase 4: the two-home acceptance run, byte for byte.
 
-## Open for review
+## Settings
 
-- Whether the server's store is one SQLite index plus the node kit's object store on
-  disk (proposed) or a single file format of its own.
-- Whether `wantsWrite` grants are a list of identities in the server's configuration
-  file (proposed) or a flag that makes every client a writer, for a first deployment
-  where everyone is trusted.
-- The name of the engine-side setting namespace: `cache.*` is proposed.
+Fewer than the word suggests.
+
+- **The engine's side**, in `semel.machine.config`, the machine's half: `cache.server`
+  (host and port) and `cache.identity` (the name this client gives in `Hello`). With no
+  `cache.server` line the engine uses its local cache alone, which is today's behaviour.
+  Nothing else in the first version; an estimate of the link's rate for the fetch policy
+  becomes a setting only if a LAN turns out not to be the only case.
+- **The server's side**, as arguments and a small file in its home: the home folder, the
+  address and port it listens on, the size limit (B-148's), and who may write.
+
+## Decided on review (2026-10-11)
+
+- **The server's store is the cache-related subset of the engine's database.** The entry
+  index and B-148's size accounting, as `SemelCache` defines them, in SQLite, beside the
+  node kit's object store on disk. The engine's database is that subset plus the graph
+  tables: one schema and one `CacheStore` implementation, two databases that differ only
+  in what else they hold.
+- **Writers, first version: a switch.** Anyone who can write to a shared cache can poison
+  every reader, so a client says `wantsWrite` in `Hello` and the server decides. The
+  first deployment is everyone trusted, so the server takes `--writers all` or
+  `--writers none`; a list of identities comes when a deployment needs one, as a change
+  to the server's configuration and not to the protocol.
+- The engine-side namespace is `cache.*`.
