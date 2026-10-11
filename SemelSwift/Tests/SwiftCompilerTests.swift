@@ -308,6 +308,82 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
 
     /// A file a target takes from another target's folder is named one by one on the
     /// compiler and compiled beside the folder's own, under `extra/`.
+    /// `objectiveCHeaderName` (B-77 item 4): the compiler writes the module's Objective-C
+    /// interface under that name, a relative path, and the file is published on its own
+    /// port; asked for nothing, the port carries the empty file.
+    func test_theObjectiveCInterfaceIsWrittenUnderItsNameAndPublished() throws {
+        var input = try makeInput(folder: try manifest("input:/app/Sources", [file("Main.swift")]),
+                                  extraConfiguration: ["objectiveCHeaderName=app-Swift.h"]).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/app/Sources/Main.swift": .value(try "// main".intern())]
+        executor.producedFiles["app-Swift.h"] = Array("// interface".utf8)
+
+        let output = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        let arguments = executor.lastArguments
+        let flag = try XCTUnwrap(arguments.firstIndex(of: "-emit-objc-header-path"))
+        XCTAssertEqual(arguments[flag + 1], "app-Swift.h")
+        XCTAssertEqual(try XCTUnwrap(output.outputValues[SwiftCompiler.outputObjectiveCHeader]).expectValue(), try "// interface".intern())
+
+        var plain = try makeInput(folder: try manifest("input:/app/Sources", [file("Main.swift")])).inputValues
+        plain[SwiftCompiler.inputSourceFiles] = input[SwiftCompiler.inputSourceFiles]
+        let plainOutput = try makeTool().process(input: ProcessInput(inputValues: plain))
+        XCTAssertFalse(executor.lastArguments.contains("-emit-objc-header-path"), "\(executor.lastArguments)")
+        XCTAssertEqual(try XCTUnwrap(plainOutput.outputValues[SwiftCompiler.outputObjectiveCHeader]).expectValue(), try "".intern())
+    }
+
+    /// swiftc writes the bridging header into the interface by the absolute path it read it
+    /// from, the sandbox's: published, it names the header by its file name, which the
+    /// target's header map finds. Any other mention of the sandbox is refused rather than
+    /// published (B-77 item 4).
+    func test_theInterfaceImportsTheBridgingHeaderByNameAndNamesNoSandbox() throws {
+        let sandbox = "/tmp/recording-tool-sandbox"
+        var input = try makeInput(folder: try manifest("input:/app/Sources", [file("Main.swift")]),
+                                  extraConfiguration: ["objectiveCHeaderName=app-Swift.h"]).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/app/Sources/Main.swift": .value(try "// main".intern())]
+        input[SwiftCompiler.bridgingHeader] = ["Source/App-Bridging-Header.h": .value(try "#import \"Thing.h\"".intern())]
+        executor.producedFiles["app-Swift.h"] = Array("""
+            #if defined(__OBJC__)
+            #import "\(sandbox)/objc/Source/App-Bridging-Header.h"
+            #else
+            #include "\(sandbox)/objc/Source/App-Bridging-Header.h"
+            #endif
+            """.utf8)
+
+        let output = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        let interface = try XCTUnwrap(output.outputValues[SwiftCompiler.outputObjectiveCHeader]).expectValue().resolveAsString()
+        XCTAssertEqual(interface, """
+            #if defined(__OBJC__)
+            #import "App-Bridging-Header.h"
+            #else
+            #include "App-Bridging-Header.h"
+            #endif
+            """)
+
+        executor.producedFiles["app-Swift.h"] = Array("// built in \(sandbox)/elsewhere".utf8)
+        let refused = try makeTool().process(input: ProcessInput(inputValues: input))
+        guard case .noValue(.error) = try XCTUnwrap(refused.outputValues[SwiftCompiler.outputObjectiveCHeader]) else {
+            return XCTFail("an interface naming the sandbox is an error")
+        }
+    }
+
+    /// A framework's Swift imports its own Objective-C as the underlying module, and a
+    /// module map's headers are laid where its relative paths reach, on no search path of
+    /// their own.
+    func test_theUnderlyingModuleIsImportedAndIncludeTreesArePlacedUnderTheirKeys() throws {
+        var input = try makeInput(folder: try manifest("input:/kit/Source", [file("Kit.swift")]),
+                                  extraConfiguration: ["importsUnderlyingModule=true"]).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/kit/Source/Kit.swift": .value(try "// kit".intern())]
+        let headers = TreeManifest(entries: [TreeManifestEntry(path: "Client/include/mysql.h", hash: try "// mysql".intern(), mode: 0o644)])
+        input[SwiftCompiler.includeTrees] = ["input:/kit": .value(try headers.toJSON().intern())]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        XCTAssertTrue(executor.lastArguments.contains("-import-underlying-module"), "\(executor.lastArguments)")
+        XCTAssertTrue(try XCTUnwrap(executor.invocations.last).inputFileNames.contains("input:/kit/Client/include/mysql.h"))
+        XCTAssertFalse(executor.lastArguments.contains("input:/kit"), "an include tree is no search path: \(executor.lastArguments)")
+    }
+
     func test_extraSourceFilesAreCompiledBesideTheFoldersOwn() throws {
         var input = try makeInput(folder: try manifest("input:/ext/Sources", [file("Main.swift")])).inputValues
         input[SwiftCompiler.inputSourceFiles] = ["input:/ext/Sources/Main.swift": .value(try "// main".intern())]

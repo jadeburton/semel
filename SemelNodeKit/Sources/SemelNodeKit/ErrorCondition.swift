@@ -49,6 +49,9 @@ public enum ErrorCondition: Codable, Hashable, Sendable, Error, ErrorConditionCo
     case toolInputNotWritten(file: String, reason: String)
     /// An output the tool was expected to write could not be read back.
     case toolOutputNotRead(file: String)
+    /// An output that names the sandbox the tool ran in where the node cannot name what is
+    /// there instead: a value that would differ from one run to the next.
+    case toolOutputNamesItsSandbox(tool: String, file: String)
     /// The tool's process could not be started: what the system said.
     case toolLaunchFailed(reason: String)
 
