@@ -74,6 +74,17 @@ for signalNumber in [SIGINT, SIGTERM] {
     signalSources.append(source)
 }
 
+// The engine's own settings, from the home, before the engine: a file that says something
+// this server cannot read stops the start rather than leave the engine on a setting nobody
+// chose, and costs nothing yet.
+let engineConfiguration: EngineConfiguration
+do {
+    engineConfiguration = try EngineConfiguration.read(from: EngineConfiguration.file)
+} catch {
+    try? FileManager.default.removeItem(atPath: socketPath)
+    fail("cannot read the engine's settings in \(EngineConfiguration.file.path): \(error)", code: 1)
+}
+
 // Composition root: the engine knows no node packages, so this is where the ones this
 // binary ships are installed. Before start(), so discovery sees them on its first pass.
 do {
@@ -81,7 +92,7 @@ do {
     try SemelClang.register()
     try SemelApple.register()
     try SemelExamples.register()
-    try BuildEngine.start()
+    try BuildEngine.start(cacheLimit: engineConfiguration.cacheLimit)
     engineStarted = true
 } catch {
     try? FileManager.default.removeItem(atPath: socketPath)
@@ -90,7 +101,8 @@ do {
 
 let handler = RequestHandler(engine: BuildEngine.shared,
                              database: DatabaseLayer.shared,
-                             databasePath: SemelPaths.database.path)
+                             databasePath: SemelPaths.database.path,
+                             engineConfigurationFile: EngineConfiguration.file)
 let server = Server(handler: handler, socketPath: socketPath)
 server.onSocketFileRemoved = stopCleanly
 runningServer = server

@@ -52,6 +52,8 @@ included:
   - SemelNodeKit/Tests
   - SemelProtocol/Sources
   - SemelProtocol/Tests
+  - SemelCache/Sources
+  - SemelCache/Tests
   - SemelDatabaseModels/Sources
   - SemelCore/Sources
   - SemelCore/Tests

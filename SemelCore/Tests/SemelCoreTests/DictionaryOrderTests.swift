@@ -69,7 +69,7 @@ final class DictionaryOrderTests: XCTestCase {
     private static let scannedPaths = [
         "SemelNodeKit/Sources", "SemelDatabaseModels/Sources", "SemelCore/Sources",
         "SemelSwift/Sources", "SemelClang/Sources", "SemelApple/Sources",
-        "SemelProtocol/Sources", "SemelExamples/Sources",
+        "SemelProtocol/Sources", "SemelExamples/Sources", "SemelCache/Sources",
         "semel/CommandInterpreter", "semel/Server", "semel/Transport", "semel-swift/Library",
         "semel/main.swift", "semel-server/main.swift", "semel-swift/main.swift",
     ]
@@ -174,9 +174,9 @@ final class DictionaryOrderTests: XCTestCase {
             "becomes wire-spec dictionaries keyed by include path, and a count of them",
 
         // ── a set of live objects, not a sequence anything is derived from ──────
-        "semel/Server/ConnectionRegistry.swift: connections.values":
-            "delivers to each connected client; they are independent of one another",
-        "semel/CommandInterpreter/SocketConnection.swift: waiters.values":
+        "semel/Transport/FrameServer.swift: connections.values":
+            "delivers to each connected client, or closes each; they are independent of one another",
+        "semel/Transport/SocketConnection.swift: waiters.values":
             "fails each outstanding request; they are independent of one another",
     ]
 

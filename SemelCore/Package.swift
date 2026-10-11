@@ -11,6 +11,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.1"),
+        .package(path: "../SemelCache"),
         .package(path: "../SemelDatabaseModels"),
         .package(path: "../SemelNodeKit"),
     ],
@@ -19,6 +20,7 @@ let package = Package(
             name: "SemelCore",
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "SemelCache", package: "SemelCache"),
                 .product(name: "SemelDatabaseModels", package: "SemelDatabaseModels"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
             ],

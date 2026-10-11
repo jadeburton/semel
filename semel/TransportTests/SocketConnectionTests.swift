@@ -1,6 +1,6 @@
 //
 //  SocketConnectionTests.swift
-//  SemelCLITests
+//  SemelTransportTests
 //
 //  The client's socket connection against a tiny listener that answers from a script:
 //  replies reach the caller that sent the request even when two are waiting, events
@@ -9,9 +9,8 @@
 
 import Foundation
 import Network
-@testable import SemelCLI
 import SemelProtocol
-import SemelTransport
+@testable import SemelTransport
 import XCTest
 
 final class SocketConnectionTests: XCTestCase {

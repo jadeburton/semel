@@ -38,7 +38,6 @@ public final class DatabaseLayer {
     public lazy var wire             = WireDataAccess(databaseLayer: self)
     public lazy var symbol           = SymbolDataAccess(databaseLayer: self)
     public lazy var outputPort       = OutputPortDataAccess(databaseLayer: self)
-    public lazy var cacheEntry       = CacheEntryDataAccess(databaseLayer: self)
     public lazy var metadata         = MetadataDataAccess(databaseLayer: self)
     public lazy var artifactSnapshot = ArtifactSnapshotDataAccess(databaseLayer: self)
 

@@ -44,7 +44,8 @@ final class PackageDependencyFollowTests: XCTestCase {
         // Installed and registered first: the loop's first pass reads all of it.
         engine.startProcessingLoop()
 
-        let handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        let handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite",
+                                     engineConfigurationFile: URL(fileURLWithPath: "/tmp/test-semel.engine.config"))
         connection  = WaitCountingConnection(wrapping: InProcessConnection(handler: handler))
         interpreter = CommandInterpreter(connection: connection, baseDirectory: externalRoot.path)
         _ = try interpreter.connect()

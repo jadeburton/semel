@@ -12,6 +12,7 @@
 import SemelDatabaseModels
 import SemelNodeKit
 import SemelProtocol
+import SemelTransport
 import XCTest
 
 /// Records every event the handler delivers.
@@ -59,15 +60,25 @@ class RequestHandlerTestCase: XCTestCase {
     var session:  Session!
     var sink:     RecordingSink!
 
+    /// The test's own home, for the one file the handler writes there:
+    /// `semel.engine.config`, when a request changes a setting.
+    var home: URL!
+
+    var engineConfigurationFile: URL {
+        home.appendingPathComponent(EngineConfiguration.fileName, isDirectory: false)
+    }
+
     override func setUpWithError() throws {
         try super.setUpWithError()
-        DataObjectStore.shared = DataObjectStore(storeRoot: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        home = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("semel-server-tests", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true))
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        DataObjectStore.shared = DataObjectStore(storeRoot: home)
         database = try DatabaseLayer()
         engine   = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
-        handler  = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        handler  = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite",
+                                  engineConfigurationFile: engineConfigurationFile)
         sink     = RecordingSink()
         handler.eventSink = sink
         session  = Session()
@@ -80,6 +91,8 @@ class RequestHandlerTestCase: XCTestCase {
         database = nil
         session  = nil
         sink     = nil
+        try? FileManager.default.removeItem(at: home)
+        home     = nil
         super.tearDown()
     }
 

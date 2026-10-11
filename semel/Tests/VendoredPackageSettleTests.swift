@@ -42,7 +42,8 @@ final class VendoredPackageSettleTests: XCTestCase {
         ToolRunnerRegistry.instance.registerTool(descriptor: readerDescriptor, toolExecutor: DumpEchoTool())
         engine.startProcessingLoop()
 
-        let handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        let handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite",
+                                     engineConfigurationFile: URL(fileURLWithPath: "/tmp/test-semel.engine.config"))
         interpreter = CommandInterpreter(connection: InProcessConnection(handler: handler), baseDirectory: externalRoot.path)
         _ = try interpreter.connect()
         engine.waitUntilIdleBlocking()

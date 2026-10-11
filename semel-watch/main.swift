@@ -15,6 +15,7 @@
 import Foundation
 import SemelCLI
 import SemelNodeKit
+import SemelTransport
 import SemelWatch
 
 /// Opens a connection as `semel` opens one: to the engine at the socket, starting

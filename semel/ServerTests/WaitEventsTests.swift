@@ -14,6 +14,7 @@
 @testable import SemelServer
 import SemelNodeKit
 import SemelProtocol
+import SemelTransport
 import XCTest
 
 final class WaitEventsTests: XCTestCase {
@@ -35,7 +36,8 @@ final class WaitEventsTests: XCTestCase {
         engine = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
         engine.startProcessingLoop()
-        handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite",
+                                 engineConfigurationFile: URL(fileURLWithPath: "/tmp/test-semel.engine.config"))
         server  = Server(handler: handler, socketPath: directory.appendingPathComponent("semelserv.sock").path)
         try server.start()
         engine.waitUntilIdleBlocking()

@@ -34,7 +34,8 @@ final class SettleTimeErrorCountingTests: XCTestCase {
         engine = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
         engine.startProcessingLoop()
-        handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite",
+                                 engineConfigurationFile: URL(fileURLWithPath: "/tmp/test-semel.engine.config"))
         let connection = InProcessConnection(handler: handler)
         interpreter = CommandInterpreter(connection: connection, baseDirectory: externalRoot.path)
         // Subscribes, so the settle-time event this suite is about actually reaches the

@@ -9,6 +9,7 @@ import Foundation
 import SemelCLI
 import SemelNodeKit
 import SemelProtocol
+import SemelTransport
 
 func main() throws {
     // The client half only. The engine, the graph and the toolchains live in semelserv;

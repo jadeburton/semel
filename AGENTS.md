@@ -9,6 +9,7 @@ about how to change it.
 scripts/build.sh                                    # builds everything the root package links, from the repo root
 scripts/build.sh test --package-path SemelNodeKit   # the node-authoring API (~151)
 scripts/build.sh test --package-path SemelProtocol  # the wire protocol (frame codec + messages) (~52)
+scripts/build.sh test --package-path SemelCache     # the cache's entry, key, accounting and eviction order (~10)
 scripts/build.sh test --package-path SemelSwift     # the Swift toolchain nodes (~163)
 scripts/build.sh test --package-path SemelClang     # the C/C++ toolchain nodes (~61)
 scripts/build.sh test --package-path SemelApple     # the Apple platform nodes: asset and string catalogs, Info.plist (~64)
@@ -27,13 +28,14 @@ the path dependencies, that reuses a plan it should not. CI calls the script for
 build and test step so that there is one command to keep true, not because a CI run needs
 it. What the flag buys is below.
 
-The root package links `SemelProtocol` through `SemelCLI` and `SemelServer`, so the root
-build covers it; its own line above is still the only thing that runs its tests.
+The root package links `SemelProtocol` through `SemelCLI` and `SemelServer`, and
+`SemelCache` through `SemelCore`, so the root build covers both; their own lines above are
+still the only thing that runs their tests.
 
 A root test run covers **only** the root package's test targets: `SemelCLITests`,
 `SemelTransportTests`, `SemelServerTests`, `SemelWatchTests`, `SemelMonitorTests` and `SemelEndToEndTests`. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
-all eight.
+all nine.
 
 `SemelDatabaseModels` has no line here and none in CI: it has no `Tests` directory, so
 there is nothing to run.
@@ -70,6 +72,17 @@ and `/semel` is the name a tool is told when it insists on recording its directo
 harness's cold builds — each in its own sandbox, the third from a copy at a second mount,
 the fourth under a perturbed `TMPDIR`, working directory, locale and time zone — are what
 catch a node that breaks it.
+
+**A cache server must not depend on the engine.** `semel-cache` (B-153, from its phase
+2) links `SemelCache`, `SemelTransport`, `SemelProtocol` and `SemelNodeKit`, and never
+`SemelCore`: a server that linked the engine to read an entry would carry the graph, the
+toolchain plugins and the graph's database, none of which it needs — the mistake the rule
+above forbids a toolchain to make. A type both servers need — `semelserv` and
+`semel-cache`, and the remote runner (B-03) when it comes — lives in one of the shared
+libraries, never in either program: what an entry is, how a key is hashed and the
+eviction order are `SemelCache`'s, and the wire both speak, framing, correlation, streamed
+replies, pipelining and the listener, is `SemelTransport`'s. If a server wants something
+from `SemelCore` or `SemelServer`, it belongs in one of those libraries instead.
 
 Nothing registers a toolchain automatically. `semel-server/main.swift` is the composition
 root: it registers the toolchains, starts the engine and listens on
@@ -305,6 +318,20 @@ what it did not, and among the rest a build's recorded cost — a duration measu
 whatever load the machine had — orders what goes first. Use is counted in settles, never
 read off a clock, and nothing else in the engine may order by it. Either policy decides
 which builds a later settle has to run again, never what any settle computes.
+
+**A setting that must not affect a build never enters `input:` and never enters a key.**
+The engine's own settings — the cache's limit (`cache.limit`), and the remote cache's
+address and the name this engine gives it when they come (B-153) — live in
+`semel.engine.config` in the Semel home, beside `semel.base`, read by `semelserv` when it
+starts and written by the prompt (`cache limit <size>`) through a request to the running
+server (`EngineConfiguration`). The machine file, `semel.machine.config`, is exactly the
+wrong place for one: it is pushed into `input:` and read by nodes through config filters,
+so a line added there wakes every node reading that namespace and moves every key it
+reaches, and a setting that only says where the cache is would spoil the entries it was
+meant to share. `semel.config` is the wrong place for the same reason, and so is the
+graph's database, which is the graph's state and not the home's. A setting goes in the
+engine's file when changing it must change no build's output; a fact a build depends on is
+a machine fact, and is declared twice, as the invariant on inputs from outside says.
 
 **Static topology is node identity.** A node's `graphSpec` is written once at creation and
 never recomputed. That is correct: static wiring and args are immutable, so different

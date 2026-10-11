@@ -34,7 +34,8 @@ final class ProgramDrivenCommandTests: XCTestCase {
         let database = try DatabaseLayer()
         let engine   = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
-        let handler  = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        let handler  = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite",
+                                      engineConfigurationFile: URL(fileURLWithPath: "/tmp/test-semel.engine.config"))
         let connection = InProcessConnection(handler: handler)
         self.connection = connection
         let interpreter = CommandInterpreter(connection: connection, baseDirectory: externalRoot.path)

@@ -1167,7 +1167,9 @@ design above.
 One binary, three modes, sharing a wire protocol:
 1. **Cache Server** — see `docs/superpowers/specs/2026-08-15-semel-cache-server-design.md`.
    This is the multi-user story (FUTURE.md "Settled direction"): every developer's local
-   engine reads and writes it, behind the existing local cache as the near tier.
+   engine reads and writes it, behind the existing local cache as the near tier. Decided
+   2026-10-11 to be a program of its own, `semel-cache`, rather than a mode of this one:
+   B-153.
 2. **Remote Runner** — executes tool commands inside, or against, a container (B-03)
 3. **Local Build Daemon** — the surviving part of
    `docs/superpowers/specs/2026-08-15-semel-client-server-design.md`. Designed in
@@ -1185,9 +1187,77 @@ One binary, three modes, sharing a wire protocol:
    second, narrower diff of the same settle would find nothing left. A subscription is
    therefore a path prefix applied to the one diff, plus a retention window and a full
    resync from the snapshot table for a client beyond it. None of that is built yet:
-   `subscribe` takes no argument, and `ConnectionRegistry` delivers every event to every
-   subscriber. What remains of B-30 is roles 1 and 2, the `.cache` and `.runner` roles a
+   `subscribe` takes no argument, and the transport's `FrameServer` delivers every event
+   to every subscriber. What remains of B-30 is roles 1 and 2, the `.cache` and `.runner` roles a
    hello is refused today, and role 3's per-subscriber narrowing.
+
+**B-153** `open` — **`semel-cache`: a separate program, over shared libraries.**
+Designed 2026-10-11 (`docs/superpowers/specs/2026-10-11-semel-cache-program-design.md`,
+building on the August cache-server design, whose decisions it keeps). The shared cache is
+its own program, `semel-cache`, not a role of `semelserv`: a server inside `semelserv` would
+link the engine, the toolchain plugins and the graph's database, none of which it needs.
+What the two servers share is factored into libraries, and the rule goes into AGENTS.md:
+`semel-cache` links `SemelCache`, `SemelTransport`, `SemelProtocol` and `SemelNodeKit`, never
+`SemelCore`, and a type both servers need lives in a shared library, never in either
+program. Delivered in four phases, each leaving the repository working.
+
+1. ~~**The extraction, with no behaviour change.**~~ Done 2026-10-11.
+   - **`SemelTransport`** holds the whole wire: `SocketConnection` (from `SemelCLI`), with its
+     correlation, streamed replies (B-137) and pipelining (#163); `ServerConnection` (from
+     `SemelServer`); and `FrameServer`, the listener half of `Server.swift` — the claim and
+     probe of a socket file, its watch, one connection per client, the stop that unwinds
+     them, and the fan-out of events. What a request means stays with the server: a
+     connection asks a `ConnectionService` of its own to prepare each request into a
+     `PreparedAnswer` (whether it blocks, and the answer), and is told when its client has
+     gone. `SemelServer`'s `SessionService` is the engine's — the handler under the client's
+     session, `wait` the request that blocks — and `ConnectionRegistry` is gone. Both the
+     connection and the listener take an `Endpoint`, a Unix socket path or a TCP host and
+     port (0 for any, reported back once listening), since NWConnection and NWListener carry
+     frames over either. `semel-watch` and `semel-monitor` link the transport directly.
+   - **`SemelCache`**, a package of its own linking the node kit alone: `ProcessCacheEntry`
+     with its encoding (`encoded()`, `decoded(from:)`), `CacheKeyMaterial` and its lines
+     (`CacheKeyEntry`, `CacheKeyProperty`), the canonical text and the one hash of it, the
+     entry's cost (`CacheCost`), B-148's accounting types (`CachedObject`, `CacheAccount`,
+     `CacheEntrySize`), `CacheEvictionPolicy`, `CacheTrim` and the trim itself, written once
+     over the `CacheStore` protocol it declares: the bytes under a key, a save with the
+     objects an entry holds, a hit's stamp, an eviction, the running total, every entry's
+     size, and an entry's objects. `SemelCore`'s `SQLiteCacheStore` implements it over the
+     same tables, which stay in the graph's database; what only the engine asks — closing a
+     settle, what the input file system holds, which key a node's outputs came from — is
+     beside the protocol, not in it. The engine re-exports the package, as it does the
+     database models. A fixture pins an entry's bytes, its material's text and its key as
+     `SemelCore` wrote them before the move.
+   - **`semel.engine.config`**, beside `semel.base` in the home, in the same strict
+     `key value` form under a heading: the engine's own settings, which never enter
+     `input:` or a key (AGENTS.md's new invariant names the machine file as the wrong place).
+     B-148's limit moved there as `cache.limit`, written in its exact size (`20G`, `1536M`);
+     `semelserv` reads it before it starts the engine, so the first idle trims to the home's
+     limit and not the default, and refuses to start, naming the file and the line, over a
+     file it cannot read. `cache limit <size>` writes the file and then applies the limit
+     through the same request as before; the `limitBytes` column is gone from
+     `CacheAccount`. Protocol unchanged (27).
+
+   Decided along the way: the key stays a `String` until phase 2's protocol gives it a type
+   of its own (`CacheKey`), since nothing crosses a process with it before then; the hash
+   of an object is spelled `String` inside `SemelCache`, because `DataObjectHash` is the
+   database models' alias and the package links the node kit only; and the SQLite store is
+   in `SemelCore` for now, where the design puts it — phase 2's server needs the same
+   queries without the graph's tables, and moving them below the engine is its first step.
+2. **The server.** `semel-cache` with `CacheRequest`/`CacheResponse` beside the daemon's
+   messages, a store under its own home (the node kit's object store, and the cache's
+   tables through `CacheStore`), `Hello` with `wantsWrite` and `--writers all|none`, B-148's
+   limit and order with uses counted in requests, `purge <key>` and `purge --all`, and
+   `semel-cache status`. Tested over an in-memory store, then over TCP on localhost with
+   two clients at once.
+3. **The engine as a client.** `cache.server` and `cache.identity` in `semel.engine.config`,
+   set at the prompt; the remote path behind `loadCachedOutputs` and
+   `saveCacheForAllInputsAndOutputs`, a population queue off the processing path, the fetch
+   policy over `cost`; the audit of what a tool observes that no key names; `cache` showing
+   the remote's figures. Every remote failure is a miss.
+4. **The acceptance test.** Two homes on one Mac and `semel-cache` on localhost: the second
+   home, cold, builds a roster project byte for byte from the first one's entries, and
+   again with the server stopped halfway; in CI as a fixture run. Then sharing is on when a
+   server is named.
 
 **B-137** `done` — **A reply too large for one frame was refused.**
 Done 2026-10-01. Found when the owner removed a large tree with `rm` and was answered

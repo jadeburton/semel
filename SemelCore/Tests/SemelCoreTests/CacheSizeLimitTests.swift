@@ -60,7 +60,7 @@ final class CacheSizeLimitTests: SemelCoreTestCase {
     }
 
     private func limit(_ bytes: Int) throws {
-        try database.cacheEntry.setLimit(bytes: bytes)
+        engine.applyCacheLimit(ByteCount(bytes: bytes))
     }
 
     private func remaining() throws -> Set<String> {
@@ -315,14 +315,13 @@ final class CacheSizeLimitTests: SemelCoreTestCase {
     // MARK: - The limit
 
     func test_theLimitIsTheDefaultUntilOneIsSetAndThenTheOneSet() throws {
-        XCTAssertEqual(try engine.cacheLimit().limit, ByteCount.gibibytes(10))
-        XCTAssertTrue(try engine.cacheLimit().isDefault)
+        XCTAssertEqual(engine.cacheLimit().limit, ByteCount.gibibytes(10))
+        XCTAssertTrue(engine.cacheLimit().isDefault)
 
         try engine.setCacheLimit(ByteCount(bytes: 3 * ByteCount.mebibyte))
 
-        XCTAssertEqual(try engine.cacheLimit().limit, ByteCount(bytes: 3 * ByteCount.mebibyte))
-        XCTAssertFalse(try engine.cacheLimit().isDefault)
-        XCTAssertEqual(try database.cacheEntry.account().limitBytes, 3 * ByteCount.mebibyte, "stored in the graph")
+        XCTAssertEqual(engine.cacheLimit().limit, ByteCount(bytes: 3 * ByteCount.mebibyte))
+        XCTAssertFalse(engine.cacheLimit().isDefault)
     }
 
     /// Lowering the limit trims at once, and `cache` says what that trim evicted.
@@ -338,25 +337,6 @@ final class CacheSizeLimitTests: SemelCoreTestCase {
         XCTAssertEqual(report.bytes, ByteCount(bytes: 100))
         XCTAssertEqual(report.limit, ByteCount(bytes: 150))
         XCTAssertEqual(report.lastTrim?.evictions.map(\.entry.hash), [cheap])
-    }
-
-    // MARK: - The policy on its own
-
-    func test_thePolicyLeavesOutHeldEntriesAndOrdersTheRest() {
-        func size(_ name: String, cost: Int, bytes: Int, lastUse: Int = 1, held: Bool = false) -> CacheEntrySize {
-            CacheEntrySize(hash: name, nodeType: "SampleTool", cost: cost, lastUse: lastUse, bytes: bytes, sharedBytes: 0,
-                           heldByNode: held)
-        }
-        let sizes = [size("held", cost: 0, bytes: 100, held: true),
-                     size("empty", cost: 0, bytes: 0),
-                     size("recent", cost: 0, bytes: 100, lastUse: 2),
-                     size("dear", cost: 900, bytes: 100),
-                     size("cheap", cost: 1, bytes: 100),
-                     size("cheapToo", cost: 1, bytes: 100)]
-
-        let order = CacheEvictionPolicy.order(sizes, lastUsingSettle: 2).map(\.hash)
-
-        XCTAssertEqual(order, ["cheap", "cheapToo", "dear", "empty", "recent"])
     }
 }
 
