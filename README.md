@@ -108,7 +108,7 @@ rm build/**
 | `check` | Walk the graph and report every invariant that does not hold — a wire whose endpoint is gone, a product nothing produces, a manifest disagreeing with its folder. Repairs nothing; `reset` is the repair. Ask it of a settled graph (`wait`, or after `build`): a node the engine is still wiring has no wires yet, and the reply says how many nodes were still scheduled |
 | `collect` | Delete every object in the store that nothing refers to — no port, no cached build, no artifact snapshot, no archived graph, and no tree or content-root document that a referenced object is — and say how many went and how many stayed. The engine runs the same collection itself at idle, once after launch and then whenever the store has grown by 64 MB; an object younger than a minute is never collected |
 | `cache` | List every cached build, largest first: the bytes it alone holds in the store — an object another entry or a pushed file also holds is not its to give back — its cost, its node type and its key, and whether a node of the graph holds values from it or the last settle used it; above them, what the cache holds against its limit, and below them what the last trim evicted |
-| `cache limit [<size>]` | Show the cache limit, or set it: a number of bytes, or one with `K`, `M` or `G` after it (`512M`, `20G`), binary units. A setting of this home, kept in its graph database; 10 GB until one is set. After every settle the engine evicts, until the cache is under its limit, the entries with the lowest cost per byte among those the last settle did not use, then among those it did, and never an entry a node of the graph holds values from; it says what it evicted, and the collector gives the bytes back. A limit below what the cache holds evicts at once |
+| `cache limit [<size>]` | Show the cache limit, or set it: a number of bytes, or one with `K`, `M` or `G` after it (`512M`, `20G`), binary units. A setting of this home, kept in `semel.engine.config` beside the graph and read by `semelserv` when it starts — a setting of the engine, so it enters no build's input and no cache key; 10 GB until one is set. After every settle the engine evicts, until the cache is under its limit, the entries with the lowest cost per byte among those the last settle did not use, then among those it did, and never an entry a node of the graph holds values from; it says what it evicted, and the collector gives the bytes back. A limit below what the cache holds evicts at once |
 | `t` / `tools [prefix] [--platform <p>]` | List the installed tools as config settings, one block per namespace, as this server's plugins found them; a prefix narrows it to namespaces starting with it (`tools clang`). A report only: the machine's half of the configuration is written outside Semel, by `semel-clang` or `semel-swift prepare` |
 | `reset [--cache]` | Discard everything derived and rebuild it from the input file system, copying the discarded graph aside first; the cached builds are kept, so the rebuild is a pass of cache lookups, and `--cache` discards those too |
 
@@ -310,8 +310,11 @@ semel-server/    semelserv — the composition root: registers the toolchains, s
 semel/           semel — the prompt; opens a connection to semelserv and nothing else
   CommandInterpreter/  SemelCLI: the REPL, its command plugins and renderers — the error
                        report's lines are drawn here, from the documents (ErrorReportRenderer)
-  Server/              SemelServer: the engine behind one RequestHandler, sessions, events
-  Transport/           SemelTransport: the Unix-socket listener and frame stream
+  Server/              SemelServer: the engine behind one RequestHandler, a session per
+                       client, events, and the home's engine settings (semel.engine.config)
+  Transport/           SemelTransport: the wire for every client and server — frames over a
+                       Unix socket or TCP, the client connection (correlation, streamed
+                       replies, pipelining) and the listener with a connection per client
 semel-swift/     semel-swift — `prepare`: finds a tree's roots, vendors git dependencies,
                  writes semel.fmla and the two config files (SemelSwiftTool)
 semel-clang/     semel-clang — writes semel.machine.config for the clang tools
@@ -331,7 +334,8 @@ The packages they link:
 ```
 SemelCore/       The engine
   BuildEngine          Async process loop, batch scheduling, deferred deletion; +Reset, +Versioning
-  Cache                Content-addressed cache of a node's outputs, keyed on type, properties and every input
+  Cache                The key material a node's inputs make, and the lookup and write around a run
+  SQLiteCacheStore     SemelCache's CacheStore over the cache's tables in the graph's database
   GraphSpec            A node's demand for an upstream subgraph, as text; GraphSpecApplier matches it against the graph
   FormulaParser        Reads .fmla text into a graph spec
   ErrorReport          Which failures the graph holds, as documents, at settle and on request
@@ -347,6 +351,12 @@ SemelCore/       The engine
     ConfigMerger       Lays one set of settings over another: the only place two meet
     TreeBuilder, TreeFile, TreeMerger   Trees of files on a port, and folder products
   Database             GRDB-backed persistence layer
+SemelCache/      What a build cache is, for the engine and a cache server alike — never
+                 links the engine
+  ProcessCacheEntry    A cached build as stored: output values, demanded specs, key material
+  CacheKeyMaterial     What a key is taken of, its canonical text and the one hash of it
+  CacheStore           Get and put by key, sizes, the running total; the engine's SQLite implements it
+  CacheEviction        B-148's order — cost per byte, the last settle's kept — and the trim
 SemelNodeKit/    Node-authoring API — no dependency on the engine
   Node                 Protocol for all build steps; wraps a NodeRecord
   NodeDescriptor       The ports a node type declares
