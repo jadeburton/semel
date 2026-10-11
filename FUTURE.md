@@ -3477,16 +3477,33 @@ application target, simulator only, all library code in packages. In suggested o
       `ClangCompiler`'s command line is unchanged, so it is not bumped. Pinned by
       `ClangAuditedRegionsTests`, whose real-clang test compiles the cast across the two
       stages.
-   12. **Firebase** — `open`, the Swift converter's. (a) GoogleUtilities,
-      GoogleDataTransport and Crashlytics include `"Crashlytics/Crashlytics/Components/…h"`
-      from the package's root, which their `.headerSearchPath("../..")` names and the
-      converter does not put on the preprocessor's path; (b) Promises' `FBLPromises`
-      leaves `#pragma clang module import FBLPromises` for its own headers in its own
-      preprocessed text, and the compile fails `module 'FBLPromises' not found`; (c) not
-      reached: nanopb's C, leveldb's C++, the binary xcframeworks. Stepped around by taking
-      the two Firebase products out of the app with the two sources that use them
-      (`SAAnalyticsConsentPolicy+Firebase.swift`, `ReportExceptionApplication.m`, the
-      app's principal class) and two calls in `SPAppController.m`.
+   12. **Firebase** — `open`, the Swift converter's. A fresh clone's build failed
+      on 180 package sources at the start of this slice, and fails on 13 now.
+      (a) ~~`.headerSearchPath("../..")`~~ done. GoogleUtilities, GoogleDataTransport
+      and Firebase include `"Crashlytics/Crashlytics/Components/…h"` from the package's
+      root. A search path is now resolved against the target's folder, and kept when it
+      reaches a folder the walk found or an ancestor of the target inside its package
+      (`PackageClangTarget`, `SwiftFormulaConverter` 24). Each preprocess of those
+      targets then places the package's tree, up to 4,993 files for firebase-ios-sdk,
+      which is most of why the cold build went from 314 s to 541 s. *ISSUE:* a header
+      folder places every file below it, not just the headers.
+      (b) ~~FBLPromises' import of its own module~~ done. In its own preprocessed text,
+      `-E` writes `#pragma clang module import FBLPromises` where a header of the module
+      is imported again after its text came in. `ClangPreprocessor` (12) takes it out
+      with the module's begin and end. Its dependents' imports of it, and of every C
+      target they reach that has a module map, now load at the compile stage: an
+      Objective-C target's compiler is given those targets' header trees on
+      `moduleTrees`.
+      (c) The wall: an Objective-C package target importing a module that SwiftPM writes
+      the map for. `@import FirebaseCore;` in `FirebaseCoreInternal.h` (9 sources)
+      names a C target whose map SwiftPM generates, which the preprocessor's header
+      folders do not hold; and `@import FirebaseCoreInternal;` and
+      `@import FirebaseCrashlyticsSwift;` (4 sources) name Swift targets, which the
+      Objective-C reaches through the module SwiftPM writes over the `-Swift.h` its
+      compiler emits. Next: give the preprocessor the same module trees as the compiler,
+      and write a Swift target's Objective-C interface and a module map over it for an
+      Objective-C target that depends on it. Not reached: linking the binary
+      xcframeworks (abseil, gRPC, GoogleAppMeasurement). nanopb's C compiled.
    13. **ibtool and actool not run** — `open`. The cause was Semel's own, B-152. Every
       xib, the storyboard and the catalog failed with `IBCurrentDirectoryPath …
       currentDirectoryPath is unexpectedly nil — Operation not permitted`, and so did

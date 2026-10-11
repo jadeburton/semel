@@ -136,10 +136,16 @@ struct PackageClangTarget: Equatable {
     /// itself (`publicHeadersPath: "."`); nil when the folder does not exist.
     let publicHeadersPath: String?
 
-    /// The `.headerSearchPath` folders relative to the target's folder, in manifest order,
-    /// each once: one more header folder for the target's own preprocessor, which is what
-    /// SwiftPM's `-I` for it is. A path naming no folder the walk found is left out, as
-    /// clang passes over a search path that is not there.
+    /// The `.headerSearchPath` folders by their full path, in manifest order, each once:
+    /// one more header folder for the target's own preprocessor, which is what SwiftPM's
+    /// `-I` for it is. A path naming no folder the walk found is left out, as clang passes
+    /// over a search path that is not there. A path may climb out of the target's folder:
+    /// GoogleUtilities, GoogleDataTransport and Firebase name the package's root as
+    /// `../..` and include `"Crashlytics/Crashlytics/Components/FIRCLSApplication.h"`
+    /// from it (B-77 item 4). So the path is resolved against the target's folder and kept
+    /// when the walk found the folder it reaches, or when that folder is one of the target
+    /// folder's own ancestors inside its package, which exist whether walked or not. The
+    /// walk covers target folders, not the package around them.
     let headerSearchPaths: [String]
 
     /// Whether a source the patterns take is Objective-C or Objective-C++: SwiftPM builds
@@ -176,7 +182,8 @@ struct PackageClangTarget: Equatable {
     ///
     /// `moduleName` is the target's c99 name, which a module map SwiftPM writes is named
     /// for and its umbrella header is looked for by.
-    init?(targetFolder: String, moduleName: String, rules: Rules, manifests: [String: FolderManifest]) {
+    init?(targetFolder: String, packageFolder: String? = nil, moduleName: String, rules: Rules,
+          manifests: [String: FolderManifest]) {
         guard manifests[targetFolder] != nil else {
             return nil
         }
@@ -256,9 +263,17 @@ struct PackageClangTarget: Equatable {
         }.sorted()
 
         var searchPaths: [String] = []
-        for searchPath in rules.headerSearchPaths.map(Self.normalized)
-        where manifests[Self.joined(targetFolder, searchPath)] != nil && !searchPaths.contains(searchPath) {
-            searchPaths.append(searchPath)
+        for searchPath in rules.headerSearchPaths.map(Self.normalized) {
+            guard let folder = Path(Self.joined(targetFolder, searchPath)).resolvingDotSegments?.string,
+                  !searchPaths.contains(folder) else {
+                continue
+            }
+            let isPackageAncestor = packageFolder.map { PackageResources.isAtOrUnder(folder, $0) } == true
+                && PackageResources.isAtOrUnder(targetFolder, folder)
+            guard manifests[folder] != nil || isPackageAncestor else {
+                continue
+            }
+            searchPaths.append(folder)
         }
         headerSearchPaths = searchPaths
     }

@@ -121,7 +121,9 @@ public struct ClangPreprocessor: Node {
     /// 10: the fingerprint of the SDK tree at `sdkPath` is in the key (B-47).
     /// 11: under ARC, the `arc_cf_code_audited` regions of the headers an Objective-C source
     /// reads as text are written back around their text (`ClangAuditedRegions`, B-77 item 4).
-    public static let implementationVersion = 11
+    /// 12: an import of the target's own module is taken out of its text with the module's
+    /// begin and end (B-77 item 4).
+    public static let implementationVersion = 12
 
     /// `preprocessed` with the `#pragma clang module begin`/`end` lines around the target's
     /// own module taken out, and everything between them kept.
@@ -135,27 +137,50 @@ public struct ClangPreprocessor: Node {
     /// its inputs. Without them the text is what it is in SwiftPM's build of the file, the
     /// target's headers read as text. Any other module's pragmas are kept, begin and end
     /// paired, though `-E` writes an import for another module's header, never a begin.
+    ///
+    /// An import of the target's own module is taken out as well. `-E` writes one where a
+    /// header of the module is imported again after its text came in: FBLPromises'
+    /// `FBLPromise+Async.h` imports `"FBLPromise.h"`, already included, and the text holds
+    /// `#pragma clang module import FBLPromises /* clang -E: implicit import … */`. The
+    /// compiler, which has no map for the module it is compiling, fails on it with `module
+    /// 'FBLPromises' not found`, and what it would load is in the text already (B-77
+    /// item 4).
     /// Bytes, not a string: preprocessed text holds whatever bytes its string literals do.
     static func ownModuleAsText(_ preprocessed: [UInt8], moduleName: String) -> [UInt8] {
-        let beginPrefix = Array("#pragma clang module begin ".utf8)
-        let endPrefix   = Array("#pragma clang module end".utf8)
-        let ownModule   = Array(moduleName.utf8)
+        let beginPrefix  = Array("#pragma clang module begin ".utf8)
+        let endPrefix    = Array("#pragma clang module end".utf8)
+        let importPrefix = Array("#pragma clang module import ".utf8)
+        let ownModule    = Array(moduleName.utf8)
+        /// Whether the module a pragma line names after `prefix` is the own module or one of
+        /// its submodules.
+        func namesOwnModule(_ line: ArraySlice<UInt8>, after prefix: [UInt8]) -> Bool {
+            let named = line.dropFirst(prefix.count).prefix { $0 != UInt8(ascii: " ") && $0 != UInt8(ascii: "\t") }
+            return named.elementsEqual(ownModule)
+                || (named.starts(with: ownModule) && named.dropFirst(ownModule.count).first == UInt8(ascii: "."))
+        }
         let lines = preprocessed.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false)
         var keptLines: [ArraySlice<UInt8>] = []
         keptLines.reserveCapacity(lines.count)
         // For each begin still open, whether it was taken out, so its end goes with it.
         var openBegins: [Bool] = []
         for line in lines {
-            if line.starts(with: beginPrefix) {
-                let named = line.dropFirst(beginPrefix.count).prefix { $0 != UInt8(ascii: " ") && $0 != UInt8(ascii: "\t") }
-                let isOwn = named.elementsEqual(ownModule)
-                    || (named.starts(with: ownModule) && named.dropFirst(ownModule.count).first == UInt8(ascii: "."))
+            switch true {
+            case line.starts(with: beginPrefix):
+                let isOwn = namesOwnModule(line, after: beginPrefix)
                 openBegins.append(isOwn)
                 if isOwn {
                     continue
                 }
-            } else if line.starts(with: endPrefix), let isOwn = openBegins.popLast(), isOwn {
-                continue
+            case line.starts(with: endPrefix):
+                if openBegins.popLast() == true {
+                    continue
+                }
+            case line.starts(with: importPrefix):
+                if namesOwnModule(line, after: importPrefix) {
+                    continue
+                }
+            default:
+                break
             }
             keptLines.append(line)
         }

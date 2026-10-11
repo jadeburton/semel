@@ -139,7 +139,10 @@ struct SwiftFormulaConverter: Node {
     /// product imports or links stops at a macro; and a manifest with a macro asks for the
     /// platform, a macro reached in a build for another than the Mac being the conversion's
     /// error (B-80).
-    public static let implementationVersion = 23
+    /// 24: a `.headerSearchPath` climbing out of the target's folder is resolved against it,
+    /// and a header folder when it reaches a folder the walk found or an ancestor of the
+    /// target inside its package (B-77 item 4).
+    public static let implementationVersion = 24
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -489,8 +492,9 @@ struct SwiftFormulaConverter: Node {
                                           rootPackageFolder: rootPackageFolder,
                                           platform: platform,
                                           binaryArtifacts: binaryWalk.locations,
-                                          clangInfo: { target, folder in
-                                              PackageClangTarget(targetFolder: folder, moduleName: target.moduleName,
+                                          clangInfo: { target, folder, packageFolder in
+                                              PackageClangTarget(targetFolder: folder, packageFolder: packageFolder,
+                                                                 moduleName: target.moduleName,
                                                                  rules: target.clangRules, manifests: folderManifests)
                                           },
                                           hasSwiftSource: { target, folder in
@@ -1829,7 +1833,7 @@ struct SwiftFormulaConverter: Node {
                                  rootPackageFolder: String,
                                  platform: String?,
                                  binaryArtifacts: [String: BinaryArtifactLocation] = [:],
-                                 clangInfo: (SPMTarget, String) -> PackageClangTarget?,
+                                 clangInfo: (SPMTarget, String, String) -> PackageClangTarget?,
                                  hasSwiftSource: (SPMTarget, String) -> Bool,
                                  resources: (SPMTarget, String) -> [PackageResource] = { _, _ in [] }) throws -> String {
         // Every lookup below walks the external packages in one fixed order. Dictionary
@@ -1851,7 +1855,7 @@ struct SwiftFormulaConverter: Node {
             // builds it; the package is vendored whatever the platform, as SwiftPM
             // resolves it (`referencedDependencies`).
             placed.dependencies = target.dependencies.filter { Self.holds(platforms: $0.platforms, on: platform) }
-            placed.clangInfo = clangInfo(target, folder)
+            placed.clangInfo = clangInfo(target, folder, packageFolder ?? rootPackageFolder)
             placed.hasSwiftSource = hasSwiftSource(target, folder)
             placed.resources = resources(placed, folder)
             return placed
@@ -2076,9 +2080,12 @@ struct SwiftFormulaConverter: Node {
             // included), and one object per source file of every C target reached: the
             // for-each expands over the target folder's manifest, which ProjectBuilder
             // wires for exactly that.
-            let objectWires = allTargets.map { t in
+            var objectWires = allTargets.map { t in
                 "        '\(t.name).o': \(compilerFuncName(for: t.name))().object"
-            } + clangTargets.flatMap { clangObjectEntries(target: $0, packageFolder: rootPackageFolder) }
+            }
+            for target in clangTargets {
+                objectWires += clangObjectEntries(target: target, packageFolder: rootPackageFolder, lookupAll: allTargetsNamed)
+            }
 
             // Every system library the product reaches, so a vendored static archive
             // dropped in one of those folders is linked in.  The linker needs the same
@@ -2503,9 +2510,12 @@ struct SwiftFormulaConverter: Node {
             namespace: SwiftLinkerConfiguration.settingNamespace,
             packageFolder: buildRoot(defaultingTo: packageFolder),
             literals: ["linkage": SwiftLinkage.executable.rawValue, "outputName": macro.moduleName])
-        let objectWires = swiftTargets.map {
+        var objectWires = swiftTargets.map {
             "        '\($0.name).o': \(compilerFuncName(for: $0.name))().object"
-        } + clangTargets.flatMap { clangObjectEntries(target: $0, packageFolder: packageFolder) }
+        }
+        for target in clangTargets {
+            objectWires += clangObjectEntries(target: target, packageFolder: packageFolder, lookupAll: lookupAll)
+        }
         var linkerArgs =
             "        configuration: ['config': \(linkerConfig)],\n" +
             "        input: [\n" + objectWires.joined(separator: ",\n") + "\n        ]"
@@ -2688,9 +2698,8 @@ struct SwiftFormulaConverter: Node {
         if ownHeaders != folder {
             folders.append(ownHeaders)
         }
-        for searchPath in target.clangInfo?.headerSearchPaths ?? [] {
-            let searchFolder = PackageClangTarget.joined(folder, searchPath)
-            if !folders.contains(searchFolder) { folders.append(searchFolder) }
+        for searchFolder in target.clangInfo?.headerSearchPaths ?? [] where !folders.contains(searchFolder) {
+            folders.append(searchFolder)
         }
         for dependency in collectTransitiveClangTargets(root: target, lookupAll: lookupAll) {
             let dependencyHeaders = headerFolder(of: dependency, packageFolder: packageFolder)
@@ -2715,7 +2724,15 @@ struct SwiftFormulaConverter: Node {
     /// sources at any depth — a `**/*.<ext>` per extension its tree holds — less what its
     /// `exclude:` names, compiling each preprocessed file. The patterns are plain strings,
     /// so the generated text needs no path literal.
-    private func clangObjectEntries(target: SPMTarget, packageFolder: String) -> [String] {
+    ///
+    /// An Objective-C target is built with modules, and its preprocessed text imports the
+    /// C targets it reaches as modules where their public headers carry a module map —
+    /// Firebase's `#import <FBLPromises/FBLPromises.h>` becomes `#pragma clang module
+    /// import FBLPromises`. So its compiler is given those targets' header trees, the
+    /// shape a Swift importer takes, on `moduleTrees`, from which it loads them again
+    /// (B-77 item 4).
+    private func clangObjectEntries(target: SPMTarget, packageFolder: String,
+                                    lookupAll: (String) -> [SPMTarget]) -> [String] {
         guard let clangInfo = target.clangInfo else {
             return []
         }
@@ -2731,11 +2748,18 @@ struct SwiftFormulaConverter: Node {
             }
             return items
         }
+        var moduleTrees = ""
+        if clangInfo.hasObjectiveC {
+            let modules = collectTransitiveClangTargets(root: target, lookupAll: lookupAll)
+                .filter { $0.clangInfo?.moduleMap != nil }
+                .map { headerTreeWire(for: $0.name) }
+            moduleTrees = modules.isEmpty ? "" : ", moduleTrees: [" + modules.joined(separator: ", ") + "]"
+        }
         var entries: [String] = []
         if !clangInfo.sourcePatterns.isEmpty {
             entries.append("        {f: \(items(clangInfo.sourcePatterns))} \"%%f%%.o\": ClangCompiler(" +
                            "configuration: ['config': \(configExpr)], " +
-                           "input: [\"%%f%%.p\": \(preprocessorFuncName(for: target.name))(path: f)])")
+                           "input: [\"%%f%%.p\": \(preprocessorFuncName(for: target.name))(path: f)]\(moduleTrees))")
         }
         // A `.s` has no preprocessing phase, so the compiler takes the file itself (B-55).
         if !clangInfo.assemblyPatterns.isEmpty {

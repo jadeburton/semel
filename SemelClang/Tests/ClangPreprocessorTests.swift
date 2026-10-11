@@ -185,6 +185,20 @@ final class ClangPreprocessorTests: SemelClangTestCase {
     /// Only the target's own module, a submodule of it included, and each end with its own
     /// begin; bytes that are not UTF-8 pass through untouched. Without modules, or for a
     /// language that loads none, the output is clang's as it stands.
+    /// An import of the own module, which `-E` writes for a header of it imported again
+    /// after its text came in, goes too; another module's import, and one whose name only
+    /// starts with the own module's, stay (B-77 item 4).
+    func test_anImportOfTheOwnModuleIsTakenOut() {
+        let text = Array(("#pragma clang module import FBLPromises /* clang -E: implicit import for #import \"FBLPromise.h\" */\n"
+                          + "#pragma clang module import FBLPromises.Private\n#pragma clang module import Foundation\n"
+                          + "#pragma clang module import FBLPromisesTestHelpers\nint x;\n").utf8)
+
+        let kept = ClangPreprocessor.ownModuleAsText(text, moduleName: "FBLPromises")
+
+        XCTAssertEqual(String(decoding: kept, as: UTF8.self),
+                       "#pragma clang module import Foundation\n#pragma clang module import FBLPromisesTestHelpers\nint x;\n")
+    }
+
     func test_onlyTheOwnModulesPragmasAreTakenOut() throws {
         let text = Array("#pragma clang module begin Kit.Private\na\n#pragma clang module begin Other\nb\n".utf8)
             + [0xFF, 0x0A]
