@@ -13,6 +13,7 @@ scripts/build.sh test --package-path SemelCache     # the cache's entry, key, ac
 scripts/build.sh test --package-path SemelSwift     # the Swift toolchain nodes (~163)
 scripts/build.sh test --package-path SemelClang     # the C/C++ toolchain nodes (~61)
 scripts/build.sh test --package-path SemelApple     # the Apple platform nodes: asset and string catalogs, Info.plist (~64)
+scripts/build.sh test --package-path SemelCMake     # the CMake translator: its parser, evaluator and emitter (~40)
 scripts/build.sh test --package-path SemelExamples  # the tutorial's reference node (~4)
 scripts/build.sh test --package-path SemelCore      # the engine tests (~497)
 scripts/build.sh test                               # the CLI, transport, server and end-to-end fixture tests (~272)
@@ -35,7 +36,7 @@ still the only thing that runs their tests.
 A root test run covers **only** the root package's test targets: `SemelCLITests`,
 `SemelTransportTests`, `SemelServerTests`, `SemelWatchTests`, `SemelMonitorTests` and `SemelEndToEndTests`. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
-all nine.
+all ten.
 
 `SemelDatabaseModels` has no line here and none in CI: it has no `Tests` directory, so
 there is nothing to run.

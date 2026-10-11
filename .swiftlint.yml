@@ -63,9 +63,12 @@ included:
   - SemelClang/Tests
   - SemelApple/Sources
   - SemelApple/Tests
+  - SemelCMake/Sources
+  - SemelCMake/Tests
   - SemelExamples/Sources
   - SemelExamples/Tests
   - semel
+  - semel-cmake
   - semel-watch
   - semel-monitor
   - EndToEnd/Tests

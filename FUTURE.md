@@ -49,7 +49,7 @@
 
 - Get it working with large c or c++ project
 
-- Maybe, if at all technically possible, a tool to convert a makefile or cmake file to a Formula file. Or even a Node that does it. Technically this is trying to convert imperative code to functional, but a "pure" makefile can in fact be functional. Cmake still has add_xxx methods and a mess of a syntax.
+- A tool to convert a makefile or cmake file to a Formula file, or even a Node that does it: B-156 below. Technically this is trying to convert imperative code to functional, but a "pure" makefile can in fact be functional, and the declarative core of a CMakeLists.txt is what `semel-cmake` reads.
 
 - Make github repo public
 
@@ -869,6 +869,47 @@ and `XCFrameworkSliceSelectorTests`. What remains:
    its pinned states, its links and modes and its contents. The subtree manifest reads the
    manifest instead of the rows; the content root could share the manifest's reads the same
    way.
+
+### CMake and makefile conversion
+
+**B-156** `doing` — **`semel-cmake`: a CMakeLists.txt tree as a formula, by translation.**
+Two ways to read a CMake project were weighed. Running `cmake` and reading its file API, or
+`make -n`, gives the effective compile and link steps and dodges both languages, but what
+it gives is a flattened command list with every machine-probed value baked in, and the
+formula a person then edits looks nothing like the file they wrote. Translating the rules
+themselves keeps the structure: `add_library` is a product, `target_include_directories`
+is `headerFolders`, a `file(GLOB)` is a for-each pattern, and `PUBLIC` is the propagation
+the emitter applies. Decided 2026-10-11: translate, and refuse the procedural rest by
+name and line rather than run it. An external tool and not a node, because the person
+will edit the formula after it is generated: `semel-cmake <folder>` writes `semel.fmla`
+and `semel.config` once and never overwrites them, then writes the clang machine file as
+`semel-clang` does.
+
+*As built, first slice.* Three stages in a new `SemelCMake` package, depending on
+`SemelNodeKit` alone and touching no disk, so that a converter node could wrap them
+later: `CMakeFile.parse` reads the language into commands with their arguments and lines,
+references kept unexpanded; `CMakeEvaluation.evaluate` reads the declarative subset into
+`CMakeProject` — directory-scoped variables, `set`, `option`, `list` and `string`'s pure
+subcommands, `project`, `add_executable` and `add_library`, every `target_*` command with
+its visibility kept, the directory defaults `include_directories` and its kin give later
+targets, `add_subdirectory` and `include` of the project's own files through a reader,
+`file(GLOB)` as the pattern it names, and `if` where a fixed table of facts (`APPLE`,
+`CMAKE_SYSTEM_NAME`, an option's default) decides the condition — and refuses the rest
+as `CMakeUntranslated` values, a block with an undecidable condition skipped whole; and
+`CMakeFormulaEmitter` writes the formula in the funcs the clang prelude gives, the
+prelude's own chain for a target that adds nothing, a target's defines, options and
+header folders as literals over each tool's slice otherwise, with what a target links
+publicly reaching its consumers and what a static library links reaching whoever links
+it. The config states the target and the standards the sources need, CMake's number with
+its extensions as clang's `gnu17`. `semel-cmake/Library` is the disk: read, evaluate,
+write once, machine file.
+
+Not yet: a fixture in the end-to-end roster, which needs the harness to run the tool
+before a build as it runs `prepare`; the makefile side, which shares the emitter and the
+flag-splitting rule and adds a rule resolver and a recipe classifier; `configure_file`;
+Objective-C sources, which the clang nodes take but the emitter does not yet mark;
+`-install_name` and the rest a shared library's link line wants; a define holding a comma
+or a quote, which no setting can carry.
 
 ### Cache
 

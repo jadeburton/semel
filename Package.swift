@@ -10,6 +10,7 @@ let package = Package(
         .executable(name: "semel", targets: ["semel"]),
         .executable(name: "semel-swift", targets: ["semel-swift"]),
         .executable(name: "semel-clang", targets: ["semel-clang"]),
+        .executable(name: "semel-cmake", targets: ["semel-cmake"]),
         // The binary is `semelserv`; the target is `semel-server`, and the library it links
         // is `SemelServer`, not `SemelServ`. No target may be a case variant of any product
         // name: SwiftPM names build directories after targets, but Xcode names an
@@ -26,6 +27,7 @@ let package = Package(
         .package(path: "SemelSwift"),
         .package(path: "SemelClang"),
         .package(path: "SemelApple"),
+        .package(path: "SemelCMake"),
         .package(path: "SemelExamples"),
     ],
     targets: [
@@ -180,6 +182,27 @@ let package = Package(
             exclude: ["Library"],
             sources: ["main.swift"]
         ),
+        // The CMake translation tool (B-156): reads a CMakeLists.txt tree and writes the
+        // formula and the project's config beside it, once, then the clang machine file. The
+        // three stages — parse, evaluate, emit — live in the SemelCMake package and touch
+        // no disk; this library is where the files are read and written.
+        .target(
+            name: "SemelCMakeTool",
+            dependencies: [
+                "SemelClangTool",
+                "SemelMachineFile",
+                .product(name: "SemelCMake", package: "SemelCMake"),
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+            ],
+            path: "semel-cmake/Library"
+        ),
+        .executableTarget(
+            name: "semel-cmake",
+            dependencies: ["SemelCMakeTool", .product(name: "SemelNodeKit", package: "SemelNodeKit")],
+            path: "semel-cmake",
+            exclude: ["Library"],
+            sources: ["main.swift"]
+        ),
         // The file watcher's library (B-126): the filter, the coalescer, the batch planner,
         // the stream protocol and the loop, which drives a `CommandInterpreter` as a person
         // drives the prompt. It sees the CLI and the node kit's lister, never the engine.
@@ -280,6 +303,7 @@ let package = Package(
                 "SemelServer",
                 "SemelSwiftTool",
                 "SemelClangTool",
+                "SemelCMakeTool",
                 "SemelMachineFile",
                 "SemelTransport",
                 .product(name: "SemelCore", package: "SemelCore"),
@@ -288,6 +312,7 @@ let package = Package(
                 .product(name: "SemelSwift", package: "SemelSwift"),
                 .product(name: "SemelClang", package: "SemelClang"),
                 .product(name: "SemelApple", package: "SemelApple"),
+                .product(name: "SemelCMake", package: "SemelCMake"),
             ],
             path: "semel/Tests"
         ),

@@ -34,7 +34,7 @@ cd semel
 swift build -c release
 ```
 
-The build places six executables under `.build/release`: `semelserv`, the engine; `semel`, the CLI; `semel-swift`, a tool to prepare a Swift project/package for Semel, including placing SPM dependendencies; `semel-clang`, which adds a Semel configuration file to the C/C++ source directory; `semel-watch`, which pushes a tree into the engine as you save; and `semel-monitor`, which shows at the top right of the screen what each settle did.
+The build places seven executables under `.build/release`: `semelserv`, the engine; `semel`, the CLI; `semel-swift`, a tool to prepare a Swift project/package for Semel, including placing SPM dependendencies; `semel-clang`, which adds a Semel configuration file to the C/C++ source directory; `semel-cmake`, which translates a `CMakeLists.txt` tree into a formula and a config, once, for the user to edit from there; `semel-watch`, which pushes a tree into the engine as you save; and `semel-monitor`, which shows at the top right of the screen what each settle did.
 
 ## Usage
 
@@ -319,6 +319,8 @@ semel-swift/     semel-swift — `prepare`: finds a tree's roots, vendors git de
                  writes semel.fmla and the two config files (SemelSwiftTool)
 semel-clang/     semel-clang — writes semel.machine.config for the clang tools
                  (SemelClangTool)
+semel-cmake/     semel-cmake — translates a CMakeLists.txt tree into semel.fmla and
+                 semel.config, once, then writes the clang machine file (SemelCMakeTool)
 semel-watch/     semel-watch — watches a tree with FSEvents and, after two quiet seconds,
                  runs the push and rm a person would type, through SemelCLI; one per tree
   Sources/SemelWatch/  SemelWatch: the filter, the coalescer, the batch planner, the loop
@@ -394,6 +396,11 @@ SemelApple/      Apple platform node types — what an app bundle needs beyond c
   InfoPlistBuilder       Merges base, partial plists and keys; resolves $(VAR)
   CoreDataModelCompiler  momc over an .xcdatamodel(d) → .mom or .momd (a tree)
   XcodeProjectConverter  Turns an .xcodeproj and its xcconfig into a formula for the app and its extensions
+SemelCMake/      CMake projects as formulas — no dependency on the engine, no file system
+  CMakeSyntax            The CMake language as commands and arguments, references unexpanded
+  CMakeEvaluation        The declarative subset into a CMakeProject; the rest refused by line
+  CMakeProject           The model: targets and what each declares, in CMake's vocabulary
+  CMakeFormulaEmitter    The model as the formula and config a hand-written C project carries
 SemelExamples/   Nodes that exist to be read
   LineCounter            One `name: count` line per input wire — the tutorial's reference copy
 SemelDatabaseModels/        GRDB schema models (NodeRecord, Wire, OutputPort, …)
