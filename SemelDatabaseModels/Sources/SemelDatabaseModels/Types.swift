@@ -8,4 +8,3 @@
 import Foundation
 
 public typealias ObjectID = Int64
-public typealias DataObjectHash = String

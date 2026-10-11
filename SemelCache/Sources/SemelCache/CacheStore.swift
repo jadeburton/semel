@@ -10,13 +10,12 @@
 import Foundation
 import SemelNodeKit
 
-/// An object an entry holds in the object store, with its size there. The hash is the
-/// store's name for the object, a `DataObjectHash`.
+/// An object an entry holds in the object store, with its size there.
 public struct CachedObject: Equatable, Hashable {
-    public let hash:  String
+    public let hash:  DataObjectHash
     public let bytes: Int
 
-    public init(hash: String, bytes: Int) {
+    public init(hash: DataObjectHash, bytes: Int) {
         self.hash  = hash
         self.bytes = bytes
     }
@@ -113,7 +112,7 @@ public protocol CacheStore {
     func sizes() throws -> [CacheEntrySize]
 
     /// The objects an entry holds, by hash, sorted.
-    func objects(ofEntry hash: String) throws -> [String]
+    func objects(ofEntry hash: String) throws -> [DataObjectHash]
 }
 
 extension CacheStore {

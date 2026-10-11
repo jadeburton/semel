@@ -10,6 +10,7 @@ import Foundation
 import GRDB
 import SemelCache
 import SemelDatabaseModels
+import SemelNodeKit
 
 extension DatabaseLayer {
 
@@ -143,7 +144,7 @@ public struct SQLiteCacheStore: DataAccessType, CacheStore {
     }
 
     /// The objects an entry holds, by hash, sorted.
-    public func objects(ofEntry hash: String) throws -> [String] {
+    public func objects(ofEntry hash: String) throws -> [DataObjectHash] {
         try read { db in
             try db.cachedValues("SELECT objectHash FROM CacheEntryObject WHERE entryHash = ? ORDER BY objectHash", arguments: [hash])
         }
