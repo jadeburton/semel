@@ -87,6 +87,9 @@ final class RecordingToolRunner: ToolRunner {
     var producedFiles: [String: [UInt8]] = [:]
     /// Trees the fake tool "produces": folder -> relative path -> bytes.
     var producedTrees: [String: [String: [UInt8]]] = [:]
+    /// Trees for each run in turn, the first for the first run: what a tool that writes
+    /// differently from run to run leaves. A run past the list writes `producedTrees`.
+    var producedTreesByRun: [[String: [String: [UInt8]]]] = []
     /// Symbolic links the fake tool leaves in its trees: folder -> relative path -> target.
     var producedLinks: [String: [String: String]] = [:]
     var exitCode: Int32 = 0
@@ -120,8 +123,9 @@ final class RecordingToolRunner: ToolRunner {
         for name in expectedOutputFileNames {
             output.write(name, try (producedFiles[name] ?? []).intern())
         }
+        let trees = invocations.count <= producedTreesByRun.count ? producedTreesByRun[invocations.count - 1] : producedTrees
         for folder in expectedOutputFolders {
-            for (relativePath, data) in (producedTrees[folder] ?? [:]).sorted(by: { $0.key < $1.key }) {
+            for (relativePath, data) in (trees[folder] ?? [:]).sorted(by: { $0.key < $1.key }) {
                 output.writeTreeEntry(folder, relativePath, try data.intern(), FileMetadata.defaultMode)
             }
             for (relativePath, target) in (producedLinks[folder] ?? [:]).sorted(by: { $0.key < $1.key }) {

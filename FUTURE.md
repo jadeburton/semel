@@ -3317,13 +3317,19 @@ application target, simulator only, all library code in packages. In suggested o
    not add, so its export cannot be attached to by a debugger; the app group
    `$(TeamIdentifierPrefix)` in both entitlements files is an empty string in Semel's
    signature, as it is when Xcode does not sign.
-4. *Sequel Ace* — `open`; the first slice (2026-10-11): the header-lookup walls and the
-   framework targets are done, and with three things stepped around in the clone — the
-   lex files and the Core Data model out of the sources phase (1), Firebase out of the
-   app (12), one unbridged cast bridged (11) — every Objective-C and Swift source of the
-   app and of both frameworks compiles, and the link fails on the lex scanners' symbols
-   alone. A fresh clone stops at 1. Pinned at `1f2798da98d7cd8eef5cb5be97ce23de06733202`
-   (main, 2026-10-09). Chosen for Objective-C header finding, which no roster project
+4. *Sequel Ace* — done for the Mac (2026-10-11), in the roster as `sequel-ace`, from a
+   fresh clone with one of the project's xibs corrected by an overlay. The first slice took
+   the header-lookup walls and the framework targets. The second (items 1, 11 to 14,
+   B-152, B-154 and B-155) built the
+   lex scanners, the Core Data model and Firebase, ran the xibs, the storyboard and the
+   catalog, and built and signed the tunnel assistant. The app links, signs and verifies
+   deep and strict. Its export holds `SPMySQL.framework`, `QueryKit.framework` and the
+   vendored `ShortcutRecorder.framework`, each loaded by the install name Xcode gives it,
+   and the tool signed by itself beside the executable. Inspected, not run. The two
+   builds are byte-identical with no exemption. ibtool's nibs are put in canonical form,
+   and the project's `ImportAccessory.xib`, whose stored frames its constraints do not
+   give, is corrected by the overlay `Fixtures/external/sequel-ace` (B-154). Pinned at `1f2798da98d7cd8eef5cb5be97ce23de06733202` (main, 2026-10-09).
+   Chosen for Objective-C header finding, which no roster project
    had asked for: NetNewsWire's Objective-C sits in synchronized folders beside the
    headers it includes.
 
@@ -3369,14 +3375,27 @@ application target, simulator only, all library code in packages. In suggested o
    `ClangPreprocessor`/`ClangCompiler` with new optional ports and no new version — no
    command line they wrote before changes):
 
-   1. **Listed sources no node builds** — `open`. The sources phase lists
-      `SPSQLTokenizer.l` and `SPEditorTokens.l`, which Xcode's lex rule turns into C, and
-      `SPUserManager.xcdatamodel`, which `momc` compiles into the bundle; the converter
-      refuses them by name (`unsupportedSources`, pinned by `SequelAceFixtureTests`).
-      Next: a lex node (the toolchain's `lex`, `<name>.yy.c`, compiled through clang with
-      the target's settings) and a `momc` node (also wanted by Mastodon, item 5). Without
-      the scanners the link fails on `_yylex`, `_yy_scan_string`, `_yy_switch_to_buffer`,
-      `_yyuoffset` and `_yyuleng`, which is where the stepped-around build stops.
+   1. ~~**Listed sources no node builds.**~~ Done (second slice). The sources phase
+      lists `SPSQLTokenizer.l` and `SPEditorTokens.l`, which Xcode's lex rule turns into C,
+      and `SPUserManager.xcdatamodel`, which `momc` compiles into the bundle. Two new node
+      types build them. `LexGenerator` (kind 45, `SemelClang`, namespace
+      `clang.lexGenerator`) runs the toolchain's `lex` (flex 2.6.4 Apple(flex-35)), found
+      and versioned through `ToolDiscovery`. It writes `<name>.yy.c` beside the
+      description, which `preprocessGenerated_<Target>` preprocesses from lex's output
+      with the target's prefix header and header map, and which the compiler builds and
+      the linker links. `CoreDataModelCompiler` (kind 46, `SemelApple`, namespace
+      `apple.coreDataModelCompiler`, versioned by Xcode's version since momc reports
+      none) compiles an `.xcdatamodel` to `<name>.mom` and an `.xcdatamodeld` to a
+      `.momd`, into the bundle's resources, as the target's module. A versioned model
+      gets its current version from the project file's `XCVersionGroup.currentVersion`;
+      the model's own `.xccurrentversion` is hidden, and no push brings it, so the node
+      writes it. Both tools proved a function of their inputs. Both scanners and a
+      two-version model came out byte for byte the same from two runs in two folders
+      under another time zone and locale, the only paths in a scanner being the relative
+      names on its `#line`s. So each publishes what its tool wrote, and refuses an
+      output naming its sandbox. `prepare` writes their blocks only for a project that
+      has a lexer description or a model. *ISSUE:* entity classes whose codegen is
+      `class` or `category` are not generated; Sequel Ace's are `manual`.
    2. ~~**No prefix header.**~~ Done. `NSBeep`, `NSString`, `SPLog` undeclared in most of
       the app's sources: `GCC_PREFIX_HEADER` is forced into every C-family source,
       `-include`, on `ClangPreprocessor`'s new `prefixHeader` port. One outside the
@@ -3445,66 +3464,109 @@ application target, simulator only, all library code in packages. In suggested o
    10. ~~**Package modules in Objective-C.**~~ Done. `@import FMDB;`: the products' module
       trees reach both clang stages on a `moduleTrees` port, merged under `modules/`, each
       folder holding a module map an `-I`, as the Swift compiler has them.
-   11. **ARC's audited CF calls in preprocessed text** — `open`. SPMySQL's
-      `SPMySQLStreamingResultStore.m:316` passes `(CFMutableArrayRef)rowArray` to
-      `CFArrayAppendValue` with no `__bridge`, which ARC allows inside the SDK's
-      `#pragma clang arc_cf_code_audited` regions; `clang -E` does not write that pragma
-      out, so the compile of the preprocessed text refuses the cast. Reproduced outside
-      Semel: the file compiles directly and with modules, and `-E` then `-c` fails. The
-      split into two stages is what loses it (with modules the SDK's declarations come
-      from the module and keep it). Next: the clang stages, not the project — modules for
-      an Objective-C target that sets none, or `-frewrite-includes`. Stepped around with
-      `__bridge` in the clone.
-   12. **Firebase** — `open`, the Swift converter's. (a) GoogleUtilities,
-      GoogleDataTransport and Crashlytics include `"Crashlytics/Crashlytics/Components/…h"`
-      from the package's root, which their `.headerSearchPath("../..")` names and the
-      converter does not put on the preprocessor's path; (b) Promises' `FBLPromises`
-      leaves `#pragma clang module import FBLPromises` for its own headers in its own
-      preprocessed text, and the compile fails `module 'FBLPromises' not found`; (c) not
-      reached: nanopb's C, leveldb's C++, the binary xcframeworks. Stepped around by taking
-      the two Firebase products out of the app with the two sources that use them
-      (`SAAnalyticsConsentPolicy+Firebase.swift`, `ReportExceptionApplication.m`, the
-      app's principal class) and two calls in `SPAppController.m`.
-   13. **ibtool and actool not run** — not reached; the xibs, the storyboard and the
-      catalog failed in this session for a reason outside Semel and outside the project.
-      Every run said `IBCurrentDirectoryPath … currentDirectoryPath is unexpectedly nil —
-      Operation not permitted`, and so did `xcrun ibtool --compile` run by hand. That was
-      not a deleted working directory: each run's directory existed, and so did the
-      session's shells. It was not Semel either. The roster's nightly compiled
-      NetNewsWire's xibs and every catalog on this machine that night. The SemelApple
-      suite, including the real-ibtool and real-actool tests, passed at about 01:45, and
-      so did the root suite's `swift-binary-target-app` fixture, which has a catalog. At
-      02:31 those same tests and that fixture failed with the same message. ibtool and
-      actool hand their work to a per-user `ibtoold` daemon (`--sending-client-environment`).
-      Through 02:47 the one serving every client had been started at 02:31 from another
-      agent's worktree. `Operation not permitted` (not "no such file") suggests that
-      daemon inherited a restrictive sandbox from whatever launched it; that was not
-      confirmed. Semel runs every tool in a directory it creates for the run and removes
-      after, so no Semel code path runs a tool from a deleted directory. Stepped around
-      for the compile with `ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO`, so the
-      Swift does not wait for actool's symbols. Next: rebuild with a fresh `ibtoold` and
-      see what the xibs and the catalog ask for.
-   14. **`SequelAceTunnelAssistant`** — `open`. A tool target of the project the app's
-      copy-files phase puts beside its executable; only the application and its
-      extensions are built, and the formula says the copy is not made. Next: a
-      `com.apple.product-type.tool` target built and copied (its own entitlements, signed).
+   11. ~~**ARC's audited CF calls in preprocessed text.**~~ Done (second slice).
+      SPMySQL's `SPMySQLStreamingResultStore.m:316` passes `(CFMutableArrayRef)rowArray`
+      to `CFArrayAppendValue` with no `__bridge`. ARC allows that inside the SDK's
+      `#pragma clang arc_cf_code_audited` regions, which open and close through
+      `CF_IMPLICIT_BRIDGING_ENABLED`/`…_DISABLED` 220 times in 189 headers. `clang -E`
+      acts on the pragma and prints nothing for it (it prints `assume_nonnull`), so the
+      compile of the preprocessed text refused the cast. `ClangPreprocessor` (11) now
+      writes the pragma pair back into the text of an Objective-C source under ARC,
+      around what each region of a header covers (`ClangAuditedRegions`). Each pragma is
+      followed by a line marker that puts the header's numbering and system flag back. A
+      header's regions are read from its text: an input by its hash, an SDK header where
+      the SDK is, whose fingerprint is in the key. `-frewrite-includes` was measured and
+      not taken. A file importing Foundation came to 22.5 MB of text against `-E`'s
+      4.9 MB, and it would have moved every preprocessed text and every compile key of
+      every project. The rewrite moves none where no region is reached. A C source, a
+      source without ARC and one whose SDK comes through modules are untouched.
+      `ClangCompiler`'s command line is unchanged, so it is not bumped. Pinned by
+      `ClangAuditedRegionsTests`, whose real-clang test compiles the cast across the two
+      stages.
+   12. ~~**Firebase**~~ Done (second slice), in the Swift converter. A fresh clone's
+      build failed on 180 package sources at the start of this slice and now builds
+      FirebaseAnalyticsCore and FirebaseCrashlytics whole: every target compiled, the
+      binary xcframeworks (GoogleAppMeasurement, abseil) linked, nanopb's C and the
+      resource bundles in the app.
+      (a) `.headerSearchPath("../..")`. GoogleUtilities, GoogleDataTransport and Firebase
+      include `"Crashlytics/Crashlytics/Components/…h"` from the package's root. A search
+      path is now resolved against the target's folder, and kept when it reaches a folder
+      the walk found or an ancestor of the target inside its package. An ancestor is
+      searched for its headers alone (`ClangPreprocessor.headersOnlyFolders`), since
+      firebase-ios-sdk's root holds 4,993 files, 1,415 of them headers, and every
+      preprocess took each one as a wire.
+      (b) FBLPromises' import of its own module. In its own preprocessed text, `-E`
+      writes `#pragma clang module import FBLPromises` where a header of the module is
+      imported again after its text came in. `ClangPreprocessor` (12) takes it out, with
+      the module's begin and end.
+      (c) Objective-C importing modules SwiftPM writes. An Objective-C package target's
+      preprocessor is given the maps SwiftPM generates for the C targets it reaches, its
+      own among them, laid in their public folders (`@import FirebaseCore;`). It also
+      gets the Objective-C interface of each Swift target it reaches, `<Module>-Swift.h`
+      under a map of its own (`@import FirebaseCoreInternal;`). The compiler is given
+      the same, the C targets' header trees and the Swift interfaces, on `moduleTrees`,
+      and the target's defines, under which the modules it loads are built: nanopb
+      declares `pb_release` only under GoogleDataTransport's `PB_ENABLE_MALLOC`
+      (`ClangCompiler` 7). A Swift target reached only through an Objective-C one
+      (`FirebaseCoreInternal`, `FirebaseCrashlyticsSwift`) is the product's, compiled and
+      linked, and writes its interface. It is also on the import path of a Swift target
+      that reaches it through a C one (`FirebaseSessions`).
+      `SwiftCompiler` (9) reads a listed path with a slash behind as the folder it names:
+      `sources: ["Crashlytics/Rollouts/"]` compiled nothing. `SwiftFormulaConverter` 25.
+   13. ~~**ibtool and actool not run**~~ Done (second slice). The cause was Semel's own,
+      B-152. Every xib, the storyboard and the catalog failed with
+      `IBCurrentDirectoryPath … currentDirectoryPath is unexpectedly nil — Operation not
+      permitted`, and so did `xcrun ibtool --compile` run by hand. This slice's first
+      account put that outside Semel and the project, and it was wrong. ibtool and actool
+      share a per-user pool of `ibtoold` daemons. An actool request leaves its daemon in
+      the client's working directory, and Semel removed each run's folder, so the daemon
+      sat in a folder that was gone. Every client on the machine then failed until the
+      daemons went idle and exited. A later ibtool client also has its relative paths
+      resolved against that daemon's folder (measured 2026-10-11). The two tools now run
+      with `IBToolNeverDeque=YES`, so each run starts a daemon of its own. With that,
+      the rebuild compiled the twenty-five xibs, the Mac storyboard
+      (`ProgressWindowController.storyboardc`) and the catalog, `Assets.car` and
+      `AppIcon.icns`, with nothing more asked of the emitter. The catalog's Swift symbols
+      are generated by default. ibtool is not a function of its input for two of the
+      documents (B-154). The storyboard's UUIDs and connection order vary in form, and the
+      node now puts them in canonical form (`NibCanonicaliser`). `ImportAccessory.xib`
+      is misplaced: its frames are not what its constraints give, and ibtool updates them
+      differently each run. The node compiles every document twice and refuses that one
+      (`toolOutputVaries`). The project's xib is the fault, and the roster's overlay
+      corrects its six frames to what AppKit lays out at run time.
+   14. ~~**`SequelAceTunnelAssistant`**~~ Done (second slice). A command-line tool of
+      the project (`com.apple.product-type.tool`) that a Mac app's copy-files phase copies
+      is built as the app's sources are. This one has its own Swift and Objective-C, and
+      the Swift's interface is under the project's `sequel-ace-Swift.h`. It depends on
+      `SPMySQL.framework` without linking it and imports its headers, which Xcode finds in
+      the products folder, so a framework a referenced project builds that a target
+      depends on is compiled against (`XcodeProject.referencedTargetDependencies`). The
+      tool is signed by itself, ad-hoc, with its entitlements and the hardened runtime, as
+      Xcode signs it on copy: `CodeSigner` (6) signs a tree of one file named as the wire
+      as the executable it is. It is then copied where the phase says, `Contents/MacOS`.
+      No Info.plist, since the target sets no `CREATE_INFOPLIST_SECTION_IN_BINARY`.
+      `XcodeProjectConverter` 23.
 
-   *Not reached*: the link with the scanners, the Core Data model, signing with the
-   sandbox entitlements and the nested frameworks (`SPMySQL`'s dylibs keep their
-   vendor's signature), the export, launching. A cold build over a fresh home of the clone
-   with 1, 11 and 12 stepped around and asset symbols off (13): 378 s, 1,318 nodes, with
-   the CI runner busy on the same machine; it ends at the link (1) and at ibtool and
-   actool (13). A fresh clone with nothing stepped around stops at 1 in 58 s, nearly all
-   of it the push of 41,392 files. Not in the roster, so no `buildTimeout` yet; the next
-   slice starts at 1 and 11.
+   *Times*: `prepare` 32 to 43 s over a warm SwiftPM cache. A cold build with release
+   binaries took 610 s with `SEMEL_JOBS=4`, on a machine with Xcode, CLion, a simulator
+   and a virtual machine running. The roster's run, two cold builds with debug binaries,
+   took 1,531 s whole, so `buildTimeout` is 25 minutes a step. The server's footprint
+   reaches about 7.5 GB after the push of the clone's 41,392 files (B-155, open). Six
+   cold builds before B-155's first fix were killed about thirteen minutes in, with the server
+   past 24 GB.
 
    *Noticed on the way*: twice a `semelserv` started over a home a moment after
    `semel stop` — by `semel`'s autostart, and by `launchd` respawning a submitted job —
    died at once on `Could not record the name 'output' in the database`
    (`DatabaseVolumeError`), apparently while the old server still held the database; the
-   next start over the same home was fine. Not chased.
+   next start over the same home was fine. Not chased. A dynamic library the linker
+   writes has no x bits (`SwiftLinker`), where Xcode's framework binaries are 755: loaded
+   all the same, and the roster checks the modes of the app's executable and the tool
+   alone. A framework target that defines a module and names no map gets none, and a
+   framework's resources that a compiler takes are copied, not built (item 9's ISSUE),
+   neither of which Sequel Ace's two frameworks need.
 5. *Mastodon iOS (official)* — IceCubes's domain with different structure: a Core Data
-   `.xcdatamodeld` (wants a `momc` node), several extensions, generated-code build phases,
+   `.xcdatamodeld` (`CoreDataModelCompiler` since Sequel Ace's 1), several extensions, generated-code build phases,
    a big local SDK package.
 6. *Wikipedia iOS* — heavy Objective-C and Swift mixing, bridging headers, generated
    `-Swift.h`. An app target's Objective-C and its bridging header are built since
@@ -3514,7 +3576,7 @@ Expected to surface: script build phases, framework and dynamic-library targets,
 Data models. Non-synchronized groups surfaced with item 1 and are read; Objective-C in
 the application target, and storyboards and xibs (`ibtool`), with item 2 (its 6 and 8),
 and are built; framework targets of a referenced project with item 4 (its 9), and are
-built, and a Core Data model with item 4 (its 1), and is not yet.
+built, and a Core Data model and lex scanners with item 4 (its 1), and are built.
 
 **B-78** `open` — **More Swift packages.**
 

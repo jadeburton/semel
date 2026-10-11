@@ -35,7 +35,7 @@ final class InstalledToolsTests: XCTestCase {
 
     func test_everyToolTheToolchainsDeclareIsFoundOnThisMachine() {
         XCTAssertEqual(Set(registry.registeredDescriptors.map(\.name)),
-                       ["clang", "libtool", "swiftc", "swift", "actool", "ibtool", "xcstringstool", "codesign"])
+                       ["clang", "libtool", "lex", "swiftc", "swift", "actool", "ibtool", "xcstringstool", "codesign", "momc"])
     }
 
     /// B-17. Every tool found here is registered under a fingerprint of the binary behind

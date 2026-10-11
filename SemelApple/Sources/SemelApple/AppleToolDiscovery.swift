@@ -5,8 +5,8 @@
 //  Where the resource tools are on this machine and what version they report — what this
 //  package declares to `ToolDiscovery` when it registers. They report their versions
 //  differently from the compilers: `actool` and `ibtool` answer `--version` with a plist,
-//  and `xcstringstool` answers nothing, so a tool with no version of its own is identified
-//  by the Xcode that ships it, which is what decides its behaviour. `codesign` answers
+//  and `xcstringstool` and `momc` answer nothing, so a tool with no version of its own is
+//  identified by the Xcode that ships it, which is what decides its behaviour. `codesign` answers
 //  nothing either and ships with the system, so its binary's own project stamp names it.
 //
 
@@ -22,6 +22,8 @@ enum AppleToolDiscovery {
             ToolFinder(name: "ibtool", locate: { locate("ibtool") }, version: ibtoolVersion(at:)),
             ToolFinder(name: "xcstringstool", locate: { locate("xcstringstool") }, version: { _ in xcodeVersion() }),
             ToolFinder(name: "codesign", locate: { locate("codesign") }, version: codesignVersion(at:)),
+            // momc answers no `--version`; the Xcode that ships it decides its output.
+            ToolFinder(name: "momc", locate: { locate("momc") }, version: { _ in xcodeVersion() }),
         ]
     }
 

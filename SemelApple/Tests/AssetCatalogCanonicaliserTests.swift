@@ -94,7 +94,7 @@ final class AssetCatalogCanonicaliserTests: SemelAppleTestCase {
                         "--minimum-deployment-target", "18.0", "--target-device", "iphone",
                         "--app-icon", "Icon", "--output-partial-info-plist", "partial.plist",
                         "--output-format", "human-readable-text"],
-            environment: [:],
+            environment: InterfaceBuilderDaemon.environment,
             inputFiles: inputs,
             expectedOutputFileNames: ["partial.plist"],
             expectedOutputFolders: ["out"])

@@ -133,12 +133,20 @@ public enum XcodeProjectFacts {
     /// formula names beyond Swift's: a C-family source, compiled through clang, and a xib or
     /// a storyboard, compiled by ibtool (B-77).
     public struct CompiledSources: Equatable {
+        /// A C-family source, or a lexer description, whose scanner is one.
         public var hasCFamilySources = false
         public var hasInterfaceBuilderDocuments = false
+        /// A lexer description, which lex turns into C (B-77 item 4).
+        public var hasLexSources = false
+        /// A Core Data model, which momc compiles (B-77 item 4).
+        public var hasDataModels = false
 
-        public init(hasCFamilySources: Bool = false, hasInterfaceBuilderDocuments: Bool = false) {
+        public init(hasCFamilySources: Bool = false, hasInterfaceBuilderDocuments: Bool = false,
+                    hasLexSources: Bool = false, hasDataModels: Bool = false) {
             self.hasCFamilySources            = hasCFamilySources
             self.hasInterfaceBuilderDocuments = hasInterfaceBuilderDocuments
+            self.hasLexSources                = hasLexSources
+            self.hasDataModels                = hasDataModels
         }
     }
 
@@ -154,10 +162,12 @@ public enum XcodeProjectFacts {
             return CompiledSources()
         }
         var paths: [String] = []
+        var hasDataModels = false
         for target in read.bundleTargets(of: application) {
             for synchronized in target.synchronizedFolders {
                 let root = folder.appendingPathComponent(synchronized.path, isDirectory: true)
                 paths += files(under: root).filter { !synchronized.excludes($0) }
+                hasDataModels = hasDataModels || holdsDataModel(root)
             }
             paths += target.sourcePaths(forSDK: sdk) + target.resourcePaths(forSDK: sdk) + target.borrowedFiles
         }
@@ -167,8 +177,29 @@ public enum XcodeProjectFacts {
             }
             return true
         }
-        return CompiledSources(hasCFamilySources: paths.contains(where: XcodeFormulaEmitter.isCFamilySource),
-                               hasInterfaceBuilderDocuments: hasInterfaceBuilderDocuments)
+        let hasLexSources = paths.contains(where: XcodeFormulaEmitter.isLexSource)
+        return CompiledSources(hasCFamilySources: hasLexSources || paths.contains(where: XcodeFormulaEmitter.isCFamilySource),
+                               hasInterfaceBuilderDocuments: hasInterfaceBuilderDocuments,
+                               hasLexSources: hasLexSources,
+                               hasDataModels: hasDataModels || paths.contains(where: XcodeFormulaEmitter.isDataModel))
+    }
+
+    /// Whether a Core Data model is anywhere under `root`, which `files(under:)` passes over
+    /// as one item.
+    static func holdsDataModel(_ root: URL) -> Bool {
+        guard let enumerator = FileManager.default.enumerator(atPath: root.path) else {
+            return false
+        }
+        while let path = enumerator.nextObject() as? String {
+            let name = (path as NSString).lastPathComponent
+            if XcodeFormulaEmitter.isDataModel(name) {
+                return true
+            }
+            if name.hasPrefix(".") || XcodeProjectConverter.isCompiledWhole(name) {
+                enumerator.skipDescendants()
+            }
+        }
+        return false
     }
 
     /// Every file under `root` at any depth, relative to it, hidden entries and what a

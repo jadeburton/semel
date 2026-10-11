@@ -124,6 +124,21 @@ final class ClangCompilerTests: SemelClangTestCase {
         XCTAssertFalse(arguments.contains { $0.hasPrefix("-fmodule-name") }, "\(arguments)")
     }
 
+    /// A module the preprocessed text imports is built again here, under the target's
+    /// defines: nanopb declares `pb_release` only under `PB_ENABLE_MALLOC` (B-77 item 4). A
+    /// source that loads no module is not given them, so its command line is as it was.
+    func test_theDefinesReachASourceThatLoadsModulesAndNoOther() throws {
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/Kit.m.p",
+                                                        otherSettings: ["modules": "true", "sdkPath": "/SDKs/MacOSX.sdk",
+                                                                        "defines": "SWIFT_PACKAGE=1,PB_ENABLE_MALLOC=1"]))
+        XCTAssertTrue(executor.lastArguments.contains("-DPB_ENABLE_MALLOC=1"), "\(executor.lastArguments)")
+        XCTAssertTrue(executor.lastArguments.contains("-DSWIFT_PACKAGE=1"), "\(executor.lastArguments)")
+
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/thread.c.p",
+                                                        otherSettings: ["modules": "true", "defines": "PB_ENABLE_MALLOC=1"]))
+        XCTAssertFalse(executor.lastArguments.contains { $0.hasPrefix("-D") }, "\(executor.lastArguments)")
+    }
+
     /// Without the SDK the compile would fail as `module 'Foundation' not found`, far from
     /// the cause; a missing machine setting names itself and the command that writes it.
     func test_modulesWithoutAnSDKPathFailNamingTheMachineSetting() throws {

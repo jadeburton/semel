@@ -156,6 +156,21 @@ final class ExternalProjectTests: XCTestCase {
         }
     }
 
+    /// B-77 item 4: Sequel Ace's Mac app from a fresh clone — Objective-C with Swift beside
+    /// it, lex scanners, a Core Data model, two framework targets of referenced projects,
+    /// Firebase built from its packages, a command-line tool signed by itself. Signed,
+    /// verified deep and strict, and inspected, not run.
+    func test_sequelAceBuildsTwiceForTheMac() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.sequelAce)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("sequel-ace\n\(error)")
+        }
+    }
+
     /// B-80: package macros built from swift-syntax — the macro's executable linked from
     /// every swift-syntax target it reaches and loaded by the library declaring its macros.
     func test_swiftDependenciesBuildsItsMacroFromSwiftSyntax() throws {
@@ -172,6 +187,6 @@ final class ExternalProjectTests: XCTestCase {
     func test_everyExternalProjectInTheRosterHasATestHere() {
         XCTAssertEqual(Set(Projects.external.map(\.name)),
                        ["icecubes", "icecubes-app", "semel", "lua", "sqlite", "simdjson", "food-truck", "food-truck-mac",
-                        "netnewswire-mac", "netnewswire-ios", "codeedit", "swift-dependencies"])
+                        "netnewswire-mac", "netnewswire-ios", "codeedit", "sequel-ace", "swift-dependencies"])
     }
 }

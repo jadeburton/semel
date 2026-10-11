@@ -25,6 +25,13 @@ struct ClangCompilerConfiguration {
     /// found in the SDK. Required when a source loads modules, which the language decides.
     let sdkPath: String?
     let target: String  // e.g. "arm64-apple-macos14.0"
+    /// `defines`, as the preprocessor reads them, passed only to a source that loads
+    /// modules: a module the preprocessed text imports is built here again, from its
+    /// headers, and is built under the importer's macros. nanopb's `pb_release` is declared
+    /// under `PB_ENABLE_MALLOC`, which GoogleDataTransport defines, and without it the
+    /// module the compile builds declares none (B-77 item 4). Text already preprocessed has
+    /// no macro left for them to change.
+    let defines: [String]
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
@@ -37,6 +44,7 @@ struct ClangCompilerConfiguration {
         standards = .init(properties: properties)
         features  = try .init(properties: properties, namespace: Self.settingNamespace, readsModuleName: false)
         sdkPath   = properties["sdkPath"]
+        defines   = (properties["defines"] ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
     }
 
     /// `sdkPath` for a source in `language`: required when it loads modules, which fail
@@ -69,7 +77,8 @@ public struct ClangCompiler: Node {
     /// 5: a failure is published as an `ErrorDocument`, the typed value a client renders,
     /// where it was a sentence (B-145).
     /// 6: the fingerprint of the SDK tree at `sdkPath` is in the key (B-47).
-    public static let implementationVersion = 6
+    /// 7: `defines` reach a source that loads modules, which build under them (B-77 item 4).
+    public static let implementationVersion = 7
 
     // MARK: Ports
 
@@ -175,6 +184,9 @@ public struct ClangCompiler: Node {
             settings.append(.clangSysroot(key: "\(ClangCompilerConfiguration.settingNamespace).sdkPath", value: sdkPath))
         }
         arguments.append(contentsOf: inputs.configuration.features.arguments(forLanguage: language))
+        if inputs.configuration.features.loadsModules(forLanguage: language) {
+            arguments.append(contentsOf: inputs.configuration.defines.map { "-D\($0)" })
+        }
         arguments.append(contentsOf: inputs.modules.arguments)
         if !inputs.frameworkFiles.isEmpty {
             arguments.append("-F"); arguments.append(ClangPreprocessor.frameworksFolder)

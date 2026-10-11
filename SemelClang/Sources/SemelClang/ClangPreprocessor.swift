@@ -82,6 +82,13 @@ struct ClangPreprocessorConfiguration {
     /// `headerMapProduct`: the product a target's headers on `quoteHeaderTrees` are also
     /// imported under, `<Product>/Foo.h` (B-77 item 4). A literal from the converter.
     let headerMapProduct: String?
+    /// `headersOnlyFolders`: header folders of which only the headers are placed, by path,
+    /// comma-joined — a search path a package names above its target's folder, the
+    /// package's root (B-77 item 4). Firebase's root holds 4,993 files, and every
+    /// preprocess of every target naming it took each as a wire of its own, which is what
+    /// held a server at seven gigabytes; 1,415 of them are headers. A file below one that
+    /// another header folder holds as well is placed whatever it is.
+    let headersOnlyFolders: [String]
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
@@ -89,6 +96,7 @@ struct ClangPreprocessorConfiguration {
         target = required.value("target")
         try required.check()
         headerMapProduct = properties["headerMapProduct"].flatMap { $0.isEmpty ? nil : $0 }
+        headersOnlyFolders = (properties["headersOnlyFolders"] ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
 
         defines   = (properties["defines"] ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
         arguments = clangArguments(properties)
@@ -119,7 +127,11 @@ public struct ClangPreprocessor: Node {
     /// 9: a failure is published as an `ErrorDocument`, the typed value a client renders,
     /// where it was a sentence (B-145).
     /// 10: the fingerprint of the SDK tree at `sdkPath` is in the key (B-47).
-    public static let implementationVersion = 10
+    /// 11: under ARC, the `arc_cf_code_audited` regions of the headers an Objective-C source
+    /// reads as text are written back around their text (`ClangAuditedRegions`, B-77 item 4).
+    /// 12: an import of the target's own module is taken out of its text with the module's
+    /// begin and end, and a headers-only folder places only its headers (B-77 item 4).
+    public static let implementationVersion = 12
 
     /// `preprocessed` with the `#pragma clang module begin`/`end` lines around the target's
     /// own module taken out, and everything between them kept.
@@ -133,27 +145,50 @@ public struct ClangPreprocessor: Node {
     /// its inputs. Without them the text is what it is in SwiftPM's build of the file, the
     /// target's headers read as text. Any other module's pragmas are kept, begin and end
     /// paired, though `-E` writes an import for another module's header, never a begin.
+    ///
+    /// An import of the target's own module is taken out as well. `-E` writes one where a
+    /// header of the module is imported again after its text came in: FBLPromises'
+    /// `FBLPromise+Async.h` imports `"FBLPromise.h"`, already included, and the text holds
+    /// `#pragma clang module import FBLPromises /* clang -E: implicit import … */`. The
+    /// compiler, which has no map for the module it is compiling, fails on it with `module
+    /// 'FBLPromises' not found`, and what it would load is in the text already (B-77
+    /// item 4).
     /// Bytes, not a string: preprocessed text holds whatever bytes its string literals do.
     static func ownModuleAsText(_ preprocessed: [UInt8], moduleName: String) -> [UInt8] {
-        let beginPrefix = Array("#pragma clang module begin ".utf8)
-        let endPrefix   = Array("#pragma clang module end".utf8)
-        let ownModule   = Array(moduleName.utf8)
+        let beginPrefix  = Array("#pragma clang module begin ".utf8)
+        let endPrefix    = Array("#pragma clang module end".utf8)
+        let importPrefix = Array("#pragma clang module import ".utf8)
+        let ownModule    = Array(moduleName.utf8)
+        /// Whether the module a pragma line names after `prefix` is the own module or one of
+        /// its submodules.
+        func namesOwnModule(_ line: ArraySlice<UInt8>, after prefix: [UInt8]) -> Bool {
+            let named = line.dropFirst(prefix.count).prefix { $0 != UInt8(ascii: " ") && $0 != UInt8(ascii: "\t") }
+            return named.elementsEqual(ownModule)
+                || (named.starts(with: ownModule) && named.dropFirst(ownModule.count).first == UInt8(ascii: "."))
+        }
         let lines = preprocessed.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false)
         var keptLines: [ArraySlice<UInt8>] = []
         keptLines.reserveCapacity(lines.count)
         // For each begin still open, whether it was taken out, so its end goes with it.
         var openBegins: [Bool] = []
         for line in lines {
-            if line.starts(with: beginPrefix) {
-                let named = line.dropFirst(beginPrefix.count).prefix { $0 != UInt8(ascii: " ") && $0 != UInt8(ascii: "\t") }
-                let isOwn = named.elementsEqual(ownModule)
-                    || (named.starts(with: ownModule) && named.dropFirst(ownModule.count).first == UInt8(ascii: "."))
+            switch true {
+            case line.starts(with: beginPrefix):
+                let isOwn = namesOwnModule(line, after: beginPrefix)
                 openBegins.append(isOwn)
                 if isOwn {
                     continue
                 }
-            } else if line.starts(with: endPrefix), let isOwn = openBegins.popLast(), isOwn {
-                continue
+            case line.starts(with: endPrefix):
+                if openBegins.popLast() == true {
+                    continue
+                }
+            case line.starts(with: importPrefix):
+                if namesOwnModule(line, after: importPrefix) {
+                    continue
+                }
+            default:
+                break
             }
             keptLines.append(line)
         }
@@ -437,6 +472,9 @@ public struct ClangPreprocessor: Node {
     static let assembly = "assembler"
     static let assemblyLanguages: Set<String> = [assemblyWithPreprocessor, assembly]
 
+    /// What a headers-only folder places: the extensions of a header, lowercased.
+    static let headerExtensions: Set<String> = ["h", "hh", "hpp", "hxx", "h++", "inc", "def", "ipp", "tcc", "modulemap"]
+
     /// The source a preprocessed file was made from: its name without the `.p` this stage
     /// writes, which is what a compile's failure belongs to.
     static func sourcePath(ofPreprocessed filePath: String) -> String {
@@ -548,6 +586,15 @@ public struct ClangPreprocessor: Node {
            case .value(let preprocessed) = output {
             output = .value(try Self.ownModuleAsText(try preprocessed.resolve(), moduleName: moduleName).intern())
         }
+        if inputs.configuration.features.objectiveCARC, language.hasPrefix("objective-c"), case .value(let preprocessed) = output {
+            let text = try preprocessed.resolve()
+            let kept = ClangAuditedRegions.keepingRegions(in: text,
+                                                          facts: Self.auditFacts(inputFiles: inputFiles,
+                                                                                 sdkPath: inputs.configuration.sdkPath))
+            if kept != text {
+                output = .value(try kept.intern())
+            }
+        }
 
         return .init(output: output,
                      errorLog: .value(try result.errorOutput.intern()),
@@ -555,6 +602,26 @@ public struct ClangPreprocessor: Node {
                      headerInputFilesWireSpecs: headerInputFilesWireSpecs,
                      includeFileListWireSpecs: includeFileListWireSpecs,
                      headerFolderTreeWireSpecs: headerFolderTreeWireSpecs)
+    }
+
+    /// What a header the preprocessed text names says about its audited regions: an input
+    /// by its content, a header of the SDK read where it is — the SDK's fingerprint is in
+    /// the key, which is what covers reading it (B-47) — and anything else, a header of the
+    /// toolchain's own, as having none.
+    static func auditFacts(inputFiles: [FileNameAndContent], sdkPath: String?) -> (String) -> ClangAuditedRegions.FileFacts {
+        let inputs = Dictionary(inputFiles.map { ($0.filePath, $0) }, uniquingKeysWith: { first, _ in first })
+        return { path in
+            if let input = inputs[path] {
+                guard input.symbolicLinkTarget == nil else {
+                    return .none
+                }
+                return ClangAuditedRegions.cachedFacts(key: "hash \(input.hash)") { try? DataObjectStore.shared.read(hash: input.hash) }
+            }
+            guard let sdkPath, !sdkPath.isEmpty, path.hasPrefix(sdkPath.hasSuffix("/") ? sdkPath : sdkPath + "/") else {
+                return .none
+            }
+            return ClangAuditedRegions.cachedFacts(key: "path \(path)") { FileManager.default.contents(atPath: path).map { Array($0) } }
+        }
     }
 
     func process(inputs: ClangPreprocessorInputs) throws -> ClangPreprocessorOutputs {
@@ -581,9 +648,20 @@ public struct ClangPreprocessor: Node {
                 }
                 reached.merge(below) { existing, _ in existing }
             }
-            // The source itself sits in its own folder and is already an input.
-            let folderFileSpecs = FolderTreeWalk.fileSpecs(of: reached.keys.sorted().compactMap { reached[$0] }) {
-                $0 != inputs.inputSourceFile.filePath
+            // The source itself sits in its own folder and is already an input. Below a
+            // headers-only folder, a file no other header folder holds is placed when it is a
+            // header.
+            let restricted = inputs.configuration.headersOnlyFolders
+            let unrestricted = inputs.headerFolderManifests.map(\.1.baseFolderPath).filter { !restricted.contains($0) }
+            func isUnder(_ path: String, _ folder: String) -> Bool { path.hasPrefix(folder + "/") }
+            let folderFileSpecs = FolderTreeWalk.fileSpecs(of: reached.keys.sorted().compactMap { reached[$0] }) { path in
+                guard path != inputs.inputSourceFile.filePath else {
+                    return false
+                }
+                guard restricted.contains(where: { isUnder(path, $0) }), !unrestricted.contains(where: { isUnder(path, $0) }) else {
+                    return true
+                }
+                return Self.headerExtensions.contains((path as NSString).pathExtension.lowercased())
             }
 
             let treesArrived = treeSpecs.keys.allSatisfy { inputs.headerFolderTrees[$0] != nil }

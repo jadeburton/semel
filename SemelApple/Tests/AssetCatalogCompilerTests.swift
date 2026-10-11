@@ -123,6 +123,8 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
             "--output-format", "human-readable-text",
         ])
         XCTAssertEqual(executor.invocations.last?.expectedOutputFolders, ["out"])
+        // A daemon of its own, never one of the pool another run left in its folder (B-152).
+        XCTAssertEqual(executor.invocations.last?.environment, ["IBToolNeverDeque": "YES"])
         XCTAssertEqual(executor.invocations.last?.expectedOutputFileNames, ["partial.plist"])
     }
 
@@ -196,46 +198,43 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
     func test_actoolWritesTheSameSymbolsForTheSameCatalog() throws {
         let actool = try XCTUnwrap(AppleToolDiscovery.locate("actool"), "no actool on this machine")
         var written: [String] = []
+        // Through the runner the node uses and with the environment it gives actool: a run
+        // from a folder removed afterwards, on a daemon of the pool, would leave the daemon
+        // in it, and every client after it would fail (B-152).
+        let runner = try LocalFileSystemTool(localPath: actool)
         for order in [["Zeta", "amber", "folderBlue"], ["folderBlue", "amber", "Zeta"]] {
-            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("semel-symbols-\(UUID().uuidString)")
-            defer { try? FileManager.default.removeItem(at: folder) }
-            let catalog = folder.appendingPathComponent("Assets.xcassets")
-            try FileManager.default.createDirectory(at: catalog, withIntermediateDirectories: true)
-            try #"{"info":{"author":"xcode","version":1}}"#.write(to: catalog.appendingPathComponent("Contents.json"),
-                                                                atomically: true, encoding: .utf8)
+            var inputs = [FileNameAndContent(filePath: "Assets.xcassets/Contents.json",
+                                             hash: try #"{"info":{"author":"xcode","version":1}}"#.intern())]
             for name in order {
-                let colorSet = catalog.appendingPathComponent("\(name).colorset")
-                try FileManager.default.createDirectory(at: colorSet, withIntermediateDirectories: true)
-                try #"{"colors":[{"color":{"color-space":"srgb","components":{"alpha":"1.000","blue":"0.1","green":"0.6","red":"0.9"}},"idiom":"universal"}],"info":{"author":"xcode","version":1}}"#
-                    .write(to: colorSet.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
+                inputs.append(FileNameAndContent(
+                    filePath: "Assets.xcassets/\(name).colorset/Contents.json",
+                    hash: try #"{"colors":[{"color":{"color-space":"srgb","components":{"alpha":"1.000","blue":"0.1","green":"0.6","red":"0.9"}},"idiom":"universal"}],"info":{"author":"xcode","version":1}}"#
+                        .intern()))
             }
-            try FileManager.default.createDirectory(at: folder.appendingPathComponent("out"), withIntermediateDirectories: true)
             let symbols = AssetSymbolSettings(bundleIdentifier: "com.example.App", generatesExtensions: true,
                                               frameworks: "SwiftUI UIKit AppKit")
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: actool)
             // As the node's second run asks, with a partial plist asked for as well: told the
             // bundle identifier, actool writes the Swift and compiles nothing, which is why
             // the symbols are a run of their own.
-            process.arguments = ["Assets.xcassets", "--compile", "out", "--platform", "macosx", "--minimum-deployment-target", "14.0",
-                                 "--target-device", "mac", "--output-partial-info-plist", "partial.plist"]
-                              + symbols.arguments(writingTo: "GeneratedAssetSymbols.swift")
-                              + ["--output-format", "human-readable-text"]
-            process.currentDirectoryURL = folder
-            process.standardOutput = FileHandle.nullDevice
-            try process.run()
-            process.waitUntilExit()
-            XCTAssertEqual(process.terminationStatus, 0)
-            written.append(try String(contentsOf: folder.appendingPathComponent("GeneratedAssetSymbols.swift"), encoding: .utf8))
-            XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("out/Assets.car").path),
-                           "a run writing symbols compiles nothing")
-            XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("partial.plist").path))
+            let result = try runner.execute(
+                arguments: ["Assets.xcassets", "--compile", "out", "--platform", "macosx", "--minimum-deployment-target", "14.0",
+                            "--target-device", "mac", "--output-partial-info-plist", "partial.plist"]
+                           + symbols.arguments(writingTo: "GeneratedAssetSymbols.swift")
+                           + ["--output-format", "human-readable-text"],
+                environment: InterfaceBuilderDaemon.environment,
+                inputFiles: inputs,
+                expectedOutputFileNames: ["GeneratedAssetSymbols.swift", "partial.plist"],
+                expectedOutputFolders: ["out"])
+            XCTAssertEqual(result.exitCode, 0, result.printedOutput)
+            written.append(try XCTUnwrap(result.outputFiles["GeneratedAssetSymbols.swift"]).resolveAsString())
+            XCTAssertEqual(result.outputTrees["out"]?.map(\.path) ?? [], [], "a run writing symbols compiles nothing")
+            XCTAssertEqual(result.missingOutputFiles, ["partial.plist"])
         }
 
         XCTAssertEqual(written[0], written[1])
         XCTAssertTrue(written[0].contains("static let amber = "), written[0])
         XCTAssertTrue(written[0].contains("extension SwiftUI.Color"), written[0])
-        XCTAssertFalse(written[0].contains("semel-symbols-"), "no path is in the text")
+        XCTAssertFalse(written[0].contains("/var/folders/"), "no path is in the text")
     }
 
     func test_withoutAnAppIconNoneIsAskedFor() throws {

@@ -2387,7 +2387,71 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                       "got:\n\(preprocessor)")
         let compilerEntry = try XCTUnwrap(try productBlock("App", in: result).components(separatedBy: "\n")
                                               .first { $0.contains("preprocessCLib") })
-        XCTAssertTrue(compilerEntry.contains("SettingsLiteral(modules: 'true', objectiveCARC: 'true')"), "got:\n\(compilerEntry)")
+        XCTAssertTrue(compilerEntry.contains("SettingsLiteral(defines: 'SWIFT_PACKAGE=1', modules: 'true', objectiveCARC: 'true')"), "got:\n\(compilerEntry)")
+    }
+
+    /// An Objective-C target's preprocessed text imports the C targets it reaches as
+    /// modules where their public headers carry a map, as Firebase's Crashlytics imports
+    /// `FBLPromises` (B-77 item 4), so its compiler is given their header trees to load
+    /// them from. A target with no map is not one of them, and a plain C target, built
+    /// without modules, is given none.
+    func test_anObjectiveCTargetsCompilerLoadsTheModulesOfTheCTargetsItReaches() throws {
+        let json = appOverCLib.replacingOccurrences(of: #""path": "Sources/App", "dependencies": [{"byName": ["CLib", null]}]}"#,
+                                                    with: #""path": "Sources/App", "dependencies": [{"byName": ["CExt", null]}]}"#)
+        XCTAssertNotEqual(json, appOverCLib)
+        var tree = cFolders
+        tree["input:/pkg/src/include"] = [file("module.modulemap"), file("CLib.h")]
+        tree["input:/pkg/extensions"] = [file("Table.m"), folder("include")]
+        let result = try formula(json: json, folderContents: tree)
+
+        let product = try productBlock("App", in: result)
+        let extEntry = try XCTUnwrap(product.components(separatedBy: "\n").first { $0.contains("preprocessCExt") })
+        XCTAssertTrue(extEntry.contains(", moduleTrees: ['CLib': headersCLib().files])"), "got:\n\(extEntry)")
+        let libEntry = try XCTUnwrap(product.components(separatedBy: "\n").first { $0.contains("preprocessCLib") })
+        XCTAssertFalse(libEntry.contains("moduleTrees"), "got:\n\(libEntry)")
+    }
+
+    /// Firebase's shape (B-77 item 4): the app links an Objective-C target, `CLib`, which
+    /// depends on a Swift target, `Core`, that nothing Swift reaches. `Core` is the
+    /// product's, compiled and linked, and writes its Objective-C interface. `CLib`'s
+    /// preprocessor lays that interface under a map of its own, and lays the map SwiftPM
+    /// writes for `CLib`'s headers in their folder, so `@import Core;` and `@import CLib;`
+    /// find their modules. Its compiler loads the interface again, and builds what it
+    /// imports under the target's defines.
+    func test_anObjectiveCTargetImportsTheSwiftTargetsItReaches() throws {
+        let json = """
+            {
+              "name": "App",
+              "dependencies": [],
+              "products": [{"name": "App", "targets": ["App"], "type": {"executable": null}}],
+              "targets": [
+                {"name": "App",  "type": "executable", "path": "Sources/App", "dependencies": [{"byName": ["CLib", null]}]},
+                {"name": "CLib", "type": "regular", "path": "src", "dependencies": [{"byName": ["Core", null]}],
+                 "settings": [{"kind": {"define": {"_0": "PB_ENABLE_MALLOC=1"}}, "tool": "c"}]},
+                {"name": "Core", "type": "regular", "path": "Sources/Core", "dependencies": []}
+              ]
+            }
+            """
+        var tree = cFolders
+        tree["input:/pkg/src"] = [file("Lib.m"), folder("include")]
+        tree["input:/pkg/src/include"] = [file("CLib.h")]
+        tree["input:/pkg/Sources/Core"] = [file("Core.swift")]
+        let result = try formula(json: json, folderContents: tree)
+
+        XCTAssertTrue(try funcDefinition("compilerCore", in: result).contains("objectiveCHeaderName: 'Core-Swift.h'"), result)
+        XCTAssertFalse(try funcDefinition("compilerApp", in: result).contains("objectiveCHeaderName"), result)
+        let product = try productBlock("App", in: result)
+        XCTAssertTrue(product.contains("'Core.o': compilerCore().object"), product)
+        let interface = "TreeBuilder(input: ['Core-Swift.h': compilerCore().objectiveCHeader, "
+                      + "'module.modulemap': ModuleMapWriter(moduleName: 'Core', umbrellaHeader: 'Core-Swift.h').output]).files"
+        let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") })
+        XCTAssertTrue(preprocessor.contains("'swift-interfaces/Core': \(interface)"), preprocessor)
+        XCTAssertTrue(preprocessor.contains("'input:/pkg/src/include': TreeBuilder(input: ['module.modulemap': "
+                                            + "ModuleMapWriter(moduleName: 'CLib', umbrellaHeader: 'CLib.h').output]).files"), preprocessor)
+        let compilerEntry = try XCTUnwrap(product.components(separatedBy: "\n").first { $0.contains("preprocessCLib") })
+        XCTAssertTrue(compilerEntry.contains("'Core interface': TreeBuilder(input: ['Core/Core-Swift.h': compilerCore().objectiveCHeader"),
+                      compilerEntry)
+        XCTAssertTrue(compilerEntry.contains("defines: 'SWIFT_PACKAGE=1,PB_ENABLE_MALLOC=1'"), compilerEntry)
     }
 
     /// A plain C target is left as it was: SwiftPM would enable modules for it too, but its
@@ -2614,6 +2678,29 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                        "once, however it is spelled, got:\n\(preprocessor)")
         XCTAssertFalse(preprocessor.contains("missing"), "got:\n\(preprocessor)")
         XCTAssertFalse(preprocessor.contains("docs"), "a conditional search path is not carried, got:\n\(preprocessor)")
+    }
+
+    /// A search path may climb out of the target's folder: Firebase's targets name the
+    /// package's root as `../..` and include from it by the path below it (B-77 item 4).
+    /// It is resolved against the target's folder, and the package's root is a header folder
+    /// though the walk, which covers target folders, never listed it; one climbing out of
+    /// the package is left out.
+    func test_aSearchPathAboveTheTargetsFolderIsResolvedAgainstIt() throws {
+        let settings = """
+            "settings": [
+              {"kind": {"headerSearchPath": {"_0": "../"}}, "tool": "c"},
+              {"kind": {"headerSearchPath": {"_0": "lib/.."}}, "tool": "c"},
+              {"kind": {"headerSearchPath": {"_0": "../../.."}}, "tool": "c"}
+            ]
+            """
+        let result = try formula(json: cLibJSON(settings), folderContents: cLibTree)
+
+        let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") })
+        XCTAssertTrue(preprocessor.contains("'input:/pkg': Folder(path: 'input:/pkg').manifest"), "got:\n\(preprocessor)")
+        XCTAssertEqual(preprocessor.components(separatedBy: "'input:/pkg/src': Folder").count, 2,
+                       "`lib/..` is the target's own folder, once, got:\n\(preprocessor)")
+        XCTAssertFalse(preprocessor.contains(".."), "got:\n\(preprocessor)")
+        XCTAssertTrue(preprocessor.contains("headersOnlyFolders: 'input:/pkg'"), "the root is searched for its headers alone, got:\n\(preprocessor)")
     }
 
     // MARK: - A target at its package's root (B-134)

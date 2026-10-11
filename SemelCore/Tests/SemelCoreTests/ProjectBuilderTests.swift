@@ -421,6 +421,29 @@ final class ProjectBuilderTests: SemelCoreTestCase {
         XCTAssertTrue(spec.contains("fileMetadata"), "the entry's mode reaches the output file: \(spec)")
     }
 
+    /// An entry's spec is the one the whole walk over it gives — the formula's folder and the
+    /// project's root on every node that takes them — though only the entry's own nodes are
+    /// walked: the tree's expression, filled once, is shared by every entry, where a bundle
+    /// of thousands of files once copied it for each (B-155).
+    func test_aTreeEntrysSpecIsTheOneTheWholeWalkGives() throws {
+        let nested = "TreeMerger(under: 'outer', input: ['inner': \(treeNode)]).files"
+        let output = try process(formula: "product 'Hello.app/' = \(nested)",
+                                 trees: ["output:/repo/Hello.app": try tree(["Assets.car"])])
+
+        let published = try XCTUnwrap(output.inputWireSpecs[ProjectBuilder.productInputPort]?["output:/repo/Hello.app/Assets.car"])
+        let treeSpec = try XCTUnwrap(output.inputWireSpecs[ProjectBuilder.treesInputPort]?["output:/repo/Hello.app"])
+        let entryShape = GraphSpecNode(TreeFile.self, properties: [TreeFile.nameProperty: "Assets.car"],
+                                       inputs: [TreeFile.treeInputPort: ["tree": treeSpec]]).port(TreeFile.outputPort)
+        let walked = ProjectBuilder.fillingFormulaFolder("input:/repo", in: entryShape)
+            .adding(property: ProjectBuilder.projectRootProperty, value: "input:/repo", where: ProjectBuilder.isCacheable)
+        let expected = GraphSpecNode(OutputFile.self, properties: [OutputFile.pathProperty: "output:/repo/Hello.app/Assets.car"],
+                                     inputs: [OutputFile.inputPort: ["product": walked]])
+            .wiringFileMetadata().port(OutputFile.statusOutputPort)
+        XCTAssertEqual(published.asString(omitOutputPort: false), expected.asString(omitOutputPort: false))
+        XCTAssertTrue(published.asString(omitOutputPort: false).contains("TreeFile(name: 'Assets.car', projectRoot: 'input:/repo'"),
+                      published.asString(omitOutputPort: false))
+    }
+
     /// A plain product and a tree product share a folder — the executable beside the
     /// compiled resources is the whole point.
     func test_aTreeProductAndAPlainProductShareAFolder() throws {

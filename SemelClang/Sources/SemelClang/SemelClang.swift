@@ -46,23 +46,28 @@ public enum SemelClang {
             ClangPreprocessor.self,
             ClangIncludeFinder.self,
             ClangArchiver.self,
+            LexGenerator.self,
         ])
 
         // How clang and libtool are found on this machine and versioned. Declared here,
         // located when the engine starts.
         ToolDiscovery.register(ClangToolDiscovery.finder)
         ToolDiscovery.register(ClangToolDiscovery.libtoolFinder)
+        ToolDiscovery.register(ClangToolDiscovery.lexFinder)
 
         // What `tools` prints and `semel-clang` writes under each namespace (B-119). The
-        // compiler, preprocessor and linker run the one clang binary and the archiver runs
-        // libtool; the include finder runs no tool. The preprocessor and the linker read
-        // the SDK at `sdkPath`, a fact about the machine for a platform, so they declare it
-        // as one (B-109); so does the compiler, which takes preprocessed text but, with
-        // `modules`, loads the modules that text imports from the SDK (B-77). The archiver
-        // takes objects and reads no SDK. Each of the three declares the fingerprint of the
+        // compiler, preprocessor and linker run the one clang binary, the archiver runs
+        // libtool and the lexer generator lex; the include finder runs no tool. The
+        // preprocessor and the linker read the SDK at `sdkPath`, a fact about the machine for
+        // a platform, so they declare it as one (B-109); so does the compiler, which takes
+        // preprocessed text but, with `modules`, loads the modules that text imports from the
+        // SDK (B-77). The archiver takes objects and the lexer generator a `.l`, and neither
+        // reads an SDK. Each of the three declares the fingerprint of the
         // SDK's tree beside its path, so that an SDK that changes under one path changes the
         // file and wakes them (B-47).
         ToolNamespaceRegistry.register(.init(namespace: ClangArchiverConfiguration.settingNamespace, toolName: "libtool",
+                                             machineFileWriter: machineFileWriter))
+        ToolNamespaceRegistry.register(.init(namespace: LexGeneratorConfiguration.settingNamespace, toolName: "lex",
                                              machineFileWriter: machineFileWriter))
         for namespace in [ClangPreprocessorConfiguration.settingNamespace,
                           ClangCompilerConfiguration.settingNamespace,

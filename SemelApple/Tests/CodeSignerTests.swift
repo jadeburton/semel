@@ -81,6 +81,24 @@ final class CodeSignerTests: SemelAppleTestCase {
         XCTAssertEqual(try output.outputValues[CodeSigner.infoLog]?.expectValue().resolveAsString(), "")
     }
 
+    /// A command-line tool by itself — a tree whose one file is named as the wire, Sequel
+    /// Ace's `SequelAceTunnelAssistant` — is laid as the file it is and signed there, with
+    /// its entitlements and the hardened runtime, and comes back as the same one-entry tree
+    /// (B-77 item 4).
+    func test_aToolByItselfIsSignedAsTheFileItIs() throws {
+        executor.producedTrees["signed"] = ["Assistant": Array("signed binary".utf8)]
+        let output = try process(bundle: "Assistant", tree: try tree(["Assistant": "binary"], executables: ["Assistant"]),
+                                 entitlements: Self.entitlements(["com.apple.security.app-sandbox"]),
+                                 configuration: configuration() + "\nhardenedRuntime=true")
+
+        XCTAssertEqual(executor.lastArguments, ["--force", "--sign", "-", "--timestamp=none", "-o", "runtime",
+                                                "--entitlements", "entitlements.plist", "signed/Assistant"])
+        XCTAssertEqual(executor.lastInputFileNames, ["signed/Assistant", "entitlements.plist"])
+        let signed = try treeManifest(from: output.outputValues[CodeSigner.output])
+        XCTAssertEqual(signed.entries.map(\.path), ["Assistant"])
+        XCTAssertEqual(signed.entries.first?.mode, FileMetadata.executableMode)
+    }
+
     /// What only a provisioning profile grants would have the process killed at launch
     /// under an ad-hoc signature, so it is left out, and the log says which; the rest is
     /// signed with.
@@ -277,6 +295,11 @@ final class CodeSignerTests: SemelAppleTestCase {
             entries.append(.init(path: "\(framework)/Kit", symbolicLinkTarget: "Versions/Current/Kit"))
             entries.append(.init(path: "\(framework)/Resources", symbolicLinkTarget: "Versions/Current/Resources"))
             entries += appex.entries.map { $0.placed(under: Path("Contents/PlugIns/Share.appex")) }
+            // A command-line tool beside the executable, signed by itself with its own
+            // entitlements and the hardened runtime, as Sequel Ace's tunnel assistant is.
+            let helper = try sign(bundle: "Helper", entries: [.init(path: "Helper", hash: binary, mode: FileMetadata.executableMode)],
+                                  entitlements: extensionEntitlements, configuration: configuration + "\nhardenedRuntime=true")
+            entries += helper.entries.map { $0.placed(under: Path("Contents/MacOS")) }
             trees.append(try sign(bundle: "Tiny.app", entries: entries, entitlements: appEntitlements, configuration: configuration))
         }
 
@@ -310,6 +333,9 @@ final class CodeSignerTests: SemelAppleTestCase {
         let extensionDetails = try Self.run(codesign, ["-dv", app.appendingPathComponent("Contents/PlugIns/Share.appex").path])
         XCTAssertTrue(extensionDetails.output.contains("flags=0x10002(adhoc,runtime)"),
                       "the extension's hardened runtime survives the app's signing: \(extensionDetails.output)")
+        let helperDetails = try Self.run(codesign, ["-dv", app.appendingPathComponent("Contents/MacOS/Helper").path])
+        XCTAssertTrue(helperDetails.output.contains("flags=0x10002(adhoc,runtime)"),
+                      "the tool keeps its own signature in the app: \(helperDetails.output)")
     }
 
     private func sign(bundle: String, entries: [TreeManifestEntry], entitlements: String, configuration: String) throws -> TreeManifest {

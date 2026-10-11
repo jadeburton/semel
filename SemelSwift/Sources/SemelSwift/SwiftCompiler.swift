@@ -87,8 +87,8 @@ struct SwiftCompilerConfiguration {
         defines = Self.pathList(properties["defines"])
         packageName = properties["packageName"].flatMap { $0.isEmpty ? nil : $0 }
         unsafeFlags = try Self.flagList(properties["unsafeFlags"])
-        sourcePaths = Self.pathList(properties["sourcePaths"])
-        excludedPaths = Self.pathList(properties["excludedPaths"])
+        sourcePaths = Self.relativePathList(properties["sourcePaths"])
+        excludedPaths = Self.relativePathList(properties["excludedPaths"])
         resourceBundleName = properties["resourceBundleName"].flatMap { $0.isEmpty ? nil : $0 }
         objectiveCHeaderName = properties["objectiveCHeaderName"].flatMap { $0.isEmpty ? nil : $0 }
         importsUnderlyingModule = properties["importsUnderlyingModule"] == "true"
@@ -132,6 +132,17 @@ struct SwiftCompilerConfiguration {
     /// Configuration values are one line of `key=value`, so a list is comma-joined.
     private static func pathList(_ value: String?) -> [String] {
         (value ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
+    }
+
+    /// A list of paths relative to the target's folder, each as a manifest may write it —
+    /// `Crashlytics/Rollouts/`, `./Sources` — taken as the walk spells paths, with no `.`
+    /// segment and no slash behind, which is how SwiftPM reads it: Firebase's
+    /// `FirebaseCrashlyticsSwift` lists its one folder with the slash, and compiled nothing
+    /// (B-77 item 4).
+    static func relativePathList(_ value: String?) -> [String] {
+        pathList(value)
+            .map { $0.split(separator: "/").filter { $0 != "." }.joined(separator: "/") }
+            .filter { !$0.isEmpty }
     }
 
     /// `unsafeFlags` as the converter writes it: a JSON list of strings, on one line.
@@ -246,7 +257,9 @@ struct SwiftCompiler: Node {
     /// walk and the compile held it for good (B-149).
     /// 8: `objectiveCHeaderName` writes the module's Objective-C interface, published on the
     /// new `objectiveCHeader` port (B-77 item 4).
-    public static let implementationVersion = 8
+    /// 9: a listed or excluded path with a slash behind or a `.` segment is the folder it
+    /// names, where it named nothing (B-77 item 4).
+    public static let implementationVersion = 9
 
     // MARK: Ports
 

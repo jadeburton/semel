@@ -185,6 +185,20 @@ final class ClangPreprocessorTests: SemelClangTestCase {
     /// Only the target's own module, a submodule of it included, and each end with its own
     /// begin; bytes that are not UTF-8 pass through untouched. Without modules, or for a
     /// language that loads none, the output is clang's as it stands.
+    /// An import of the own module, which `-E` writes for a header of it imported again
+    /// after its text came in, goes too; another module's import, and one whose name only
+    /// starts with the own module's, stay (B-77 item 4).
+    func test_anImportOfTheOwnModuleIsTakenOut() {
+        let text = Array(("#pragma clang module import FBLPromises /* clang -E: implicit import for #import \"FBLPromise.h\" */\n"
+                          + "#pragma clang module import FBLPromises.Private\n#pragma clang module import Foundation\n"
+                          + "#pragma clang module import FBLPromisesTestHelpers\nint x;\n").utf8)
+
+        let kept = ClangPreprocessor.ownModuleAsText(text, moduleName: "FBLPromises")
+
+        XCTAssertEqual(String(decoding: kept, as: UTF8.self),
+                       "#pragma clang module import Foundation\n#pragma clang module import FBLPromisesTestHelpers\nint x;\n")
+    }
+
     func test_onlyTheOwnModulesPragmasAreTakenOut() throws {
         let text = Array("#pragma clang module begin Kit.Private\na\n#pragma clang module begin Other\nb\n".utf8)
             + [0xFF, 0x0A]
@@ -523,6 +537,26 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[ClangPreprocessor.headerFolderTrees]).keys.sorted(),
                        ["input:/pkg/src", "input:/pkg/src/include"])
         XCTAssertTrue(executor.invocations.isEmpty, "nothing runs until the headers are on the wire")
+    }
+
+    /// Below a headers-only folder — a package's root, which Firebase names above its
+    /// targets — only the headers are asked for, unless another header folder holds the
+    /// file as well (B-77 item 4).
+    func test_aHeadersOnlyFolderPlacesItsHeadersAlone() throws {
+        let root    = try folderManifest("input:/pkg", files: ["Package.swift", "top.h"], folders: ["src", "docs"])
+        let src     = try folderManifest("input:/pkg/src", files: ["blocks.c", "parser.h", "table.inc"], folders: [])
+        let docs    = try folderManifest("input:/pkg/docs", files: ["index.md", "api.h"], folders: [])
+        var inputValues = try makeFolderInput().inputValues
+        inputValues[ClangPreprocessor.headerFolders] = ["input:/pkg": root, "input:/pkg/src": src]
+        inputValues[ClangPreprocessor.headerFolderTrees] = try trees(of: ["input:/pkg": root, "input:/pkg/src": src],
+                                                                     below: ["input:/pkg/docs": docs])
+        let configuration = try inputValues[ClangPreprocessor.configuration]?.values.first?.expectValue().resolveAsString() ?? ""
+        inputValues[ClangPreprocessor.configuration] = ["configuration": .value(try (configuration + "\nheadersOnlyFolders=input:/pkg").intern())]
+
+        let output = try makeTool().process(input: ProcessInput(inputValues: inputValues))
+
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[ClangPreprocessor.headerInputFiles]).keys.sorted(),
+                       ["input:/pkg/docs/api.h", "input:/pkg/src/parser.h", "input:/pkg/src/table.inc", "input:/pkg/top.h"])
     }
 
     /// With every file on its wire the run places the nested ones at their paths, and

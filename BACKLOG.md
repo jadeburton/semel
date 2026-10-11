@@ -665,3 +665,115 @@ app and not their archives, and the linker writes small objc_msgSend stubs, so a
 executables are byte-reproducible. actool's is not, so `AssetCatalogCompiler` publishes
 each `Assets.car` in a canonical form that `assetutil` reads as the file actool wrote, and
 a signed bundle is byte-reproducible whole (B-89).
+
+**B-152** `done` — **ibtool and actool failed for every client on the machine: the pooled
+`ibtoold` kept the working directory of a sandbox Semel had removed.** Seen 2026-10-10
+and again 2026-10-11 (B-77 item 4, Sequel Ace). Every xib, storyboard and catalog of a
+build failed with `IBCurrentDirectoryPath … currentDirectoryPath is unexpectedly nil`. So
+did `xcrun ibtool --compile` run by hand from a folder that existed, and so did the
+SemelApple suite's real-ibtool tests, until the daemons went. One of the nine `ibtoold
+--sending-client-environment` processes then running had its working directory in
+`…/T/TemporaryItems/NSIRD_semelserv_…`, a tool-run folder that `LocalFileSystemTool` had
+made and then removed.
+
+The cause, found by experiment on Xcode 26.6 from folders that were kept: `ibtool` and
+`actool` are clients of a per-user pool of `ibtoold` daemons shared by every run on the
+machine. A daemon starts in `/`, whichever folder its client ran in; `ibtool --version`
+starts one. An `actool` request leaves its daemon in the client's working directory. Six
+`actool` runs from six folders left five daemons in five of them. With those folders
+removed, twelve `ibtool` runs out of twelve failed as above, from a folder that existed,
+until the daemons exited after about two minutes idle. That is why the failure cleared
+between sessions and came back with the next build: `LocalFileSystemTool` removed every
+run's folder. The first slice of B-77 item 4 put this down to something outside Semel. It
+was Semel.
+
+A first fix ran the two tools in sandbox folders that were emptied and reused rather than
+removed. That exposed the second half of the same fault. A pooled daemon left by an
+`actool` run in one folder resolves a later `ibtool` client's relative paths against that
+folder, not the client's own. Eleven of Sequel Ace's xibs failed with `Interface Builder
+could not open the document … because it does not exist`, naming the folder of the
+catalog compiled before them. Setting `PWD`, or passing the full environment, made no
+difference. Starting the daemon first from a lasting folder could not help either, since
+the daemon starts in `/` and each request moves it.
+
+Fixed 2026-10-11 by never using the pool. `ibtool` and `actool` both read
+`IBToolNeverDeque=YES` from the environment (it is in the binary's strings, beside
+`IBCLIServerNeverDequeue`), and with it a client starts a daemon of its own that leaves
+nothing behind. Measured: six parallel `ibtool` runs and three `actool` runs, with
+relative paths, all passed while a pooled daemon sat in a folder none of them used. No
+new daemon outlived them, and the pooled one did not move. `IBToolCompiler` and
+`AssetCatalogCompiler` pass it on every run (`InterfaceBuilderDaemon.environment`), and so
+do the real-tool tests. With a pooled daemon sitting in a foreign folder, the SemelApple
+suite passed. Each run's folder is a temporary one removed after the run, as for every
+other tool, and the command line keeps its relative paths. It costs a daemon started per
+run, about 0.6 s, where a pooled daemon answers at once.
+
+Residual: something else on the machine running `ibtool` or `actool` with the pool can
+still poison the pool for its own later clients, but never Semel's.
+
+**B-154** `open` — **ibtool is not a function of its input.** Found 2026-10-11 by the
+roster's byte comparison of Sequel Ace's two builds (B-77 item 4), and reproduced outside
+Semel on Xcode 26.6. Two kinds.
+
+**A storyboard's nibs vary in form. Fixed 2026-10-11.** ibtool gives a Mac storyboard's
+view controllers fresh UUIDs on every compile (`NSViewControllerIdentifiersToUUIDs` in the
+`.storyboardc`'s `Info.plist`, and inside its nibs). It also lists a scene's connections in
+a new order each run, which reorders the archive's objects, the object-to-parent table and
+the object ids with them. Three compiles of Sequel Ace's `ProgressWindowController.storyboard`
+gave three trees. `IBToolCompiler` (5) now publishes every NIBArchive it writes in
+canonical form (`NibArchive`, `NibCanonicaliser`):
+
+- the connections sorted by what they connect;
+- the parent and id tables sorted by object, with the ids handed out again in that order;
+- objects numbered by a depth-first walk from the root, keys sorted, classes in order of
+  first use;
+- each storyboard UUID derived from the document and the identifier.
+
+The canonical archive is read back and checked against ibtool's, object by object through
+the renumbering, and a nib that cannot be put in that form is `nibNotCanonical`. The three
+compiles now give one tree. Sequel Ace's other twenty-four xibs and NetNewsWire's, which
+ibtool wrote the same each run, keep their content. A canonical nib loads with `NSNib` to
+the same objects as ibtool's.
+
+**A document whose layout differs. Detected 2026-10-11; the project's to fix.** Sequel
+Ace's `ImportAccessory.xib` stores frames its constraints do not give: its accessory view at
+707 × 184 where the constraints make it 160 tall, and its labels, pop-ups and tab view at an
+older layout's places. ibtool updates such frames when it compiles, and does so differently
+from run to run: eight compiles gave four nibs, each view at one of two places 24 points
+apart. That is a different nib, not a different encoding of one, so no canonical form
+exists. `IBToolCompiler` therefore compiles every document twice and refuses one whose two
+canonical forms differ, as `toolOutputVaries`, with the remedy to resolve the layout. The
+roster's `sequel-ace` lays an overlay (`Fixtures/external/sequel-ace`) with the xib's six
+frames set to what AppKit's layout gives them at run time, which is what Interface
+Builder's "Update Frames" writes. Sixteen compiles of the corrected file gave one nib, and
+the roster's two builds are byte-identical with no exemption.
+
+Compiling twice doubles ibtool's time per document. With `IBToolNeverDeque=YES` (B-152)
+each run already costs about 0.6 s more, since it starts a daemon of its own instead of
+taking one from the pool. Still open: a document whose ambiguity the two runs happen to
+resolve alike passes, and is caught by the roster's comparison, not by the node.
+
+**B-155** `open` — **A large app made the server's memory grow without bound.** Seen
+2026-10-11 building Sequel Ace (B-77 item 4). Six cold builds in a row were killed with
+SIGKILL about thirteen minutes in. Swap went from 10 GB to 40 GB in three and a half minutes,
+and the server's footprint reached 24 GB and was still growing. A sample of the server put
+every compute thread in `ProjectBuilder.fillingFormulaFolder`, under `outputFileSpec`.
+
+Half fixed 2026-10-11. A tree product, `product 'Sequel Ace.app/' = signed_Sequel_Ace().files`,
+publishes one `OutputFile` per entry of the tree, each wrapping a `TreeFile` over the tree's
+expression. `outputFileSpec` filled each entry's spec with the formula's folder and the
+project's root by walking it whole: `fillingFormulaFolder` and `adding(property:)` each
+rebuild the tree below a node. So the signed bundle's expression, every compile of the app
+and its packages, was rebuilt for each of the bundle's 270 files. The expression is filled
+once already, for the wire that brings the tree. Each entry now shares it, and only the
+entry's own `TreeFile` and `OutputFile` are given the two properties
+(`ProjectBuilder.fillingTopNode`). The specs are the same as before. The cold build then
+completed: 610 s with `SEMEL_JOBS=4`.
+
+Still open. The server's footprint reaches 7.5 GB about ninety seconds into the same build,
+just after the push of the clone's 41,392 files, and stays between 4 and 6 GB to the end.
+`heap` at one of those moments counted 155 MB live in 27,580 allocations against 4.2 GB of
+footprint, and calling `malloc_zone_pressure_relief` every five seconds changed nothing. So
+the pages are dirty and held, by something `heap` does not attribute. Next: run the push of
+a large tree under `MallocStackLogging` and read `malloc_history` for where the burst is
+allocated.

@@ -79,7 +79,12 @@ public struct XcodeProjectConverter: Node {
     /// 21: a framework target of a project the application references (`PBXReferenceProxy`)
     /// is built — its project file demanded on the new `subprojects` port — linked against
     /// and embedded, laid out as a versioned Mac framework (B-77 item 4).
-    public static let implementationVersion = 21
+    /// 22: a lexer description is run through `LexGenerator` and its scanner compiled as a
+    /// source of the target, and a Core Data model compiled by `CoreDataModelCompiler` into
+    /// the bundle's resources, where both were refused (B-77 item 4).
+    /// 23: a command-line tool a Mac app's copy-files phase copies is built, signed by
+    /// itself and copied where the phase says (B-77 item 4).
+    public static let implementationVersion = 23
 
     // MARK: Ports
 
@@ -105,15 +110,19 @@ public struct XcodeProjectConverter: Node {
     /// targets it writes itself. The package formulas it includes select from
     /// `SwiftFormulaConverter`'s.
     public static let configNamespaces: [String] =
-        configNamespaces(compilingCFamilySources: true, compilingInterfaceBuilderDocuments: true, signingBundles: true)
+        configNamespaces(compilingCFamilySources: true, compilingInterfaceBuilderDocuments: true, signingBundles: true,
+                         generatingScanners: true, compilingDataModels: true)
 
     /// The ones a project's formula selects from, by what its targets hold: the clang
     /// tools only for a target with C-family sources, ibtool only for one with a xib or
     /// a storyboard, codesign only for a platform whose bundles are signed — the Mac's
-    /// (B-77). `prepare` writes a block for each of these and of the package formulas' and
-    /// no other, because a block nothing reads is reported as unused keys on every build.
+    /// (B-77), lex only for a target with a lexer description and momc only for one with a
+    /// Core Data model (B-77 item 4). `prepare` writes a block for each of these and of the
+    /// package formulas' and no other, because a block nothing reads is reported as unused
+    /// keys on every build.
     public static func configNamespaces(compilingCFamilySources: Bool, compilingInterfaceBuilderDocuments: Bool,
-                                        signingBundles: Bool) -> [String] {
+                                        signingBundles: Bool, generatingScanners: Bool,
+                                        compilingDataModels: Bool) -> [String] {
         var namespaces = [
             XcodeFormulaEmitter.swiftCompilerNamespace,
             XcodeFormulaEmitter.swiftLinkerNamespace,
@@ -128,6 +137,12 @@ public struct XcodeProjectConverter: Node {
         }
         if compilingCFamilySources {
             namespaces += [XcodeFormulaEmitter.clangPreprocessorNamespace, XcodeFormulaEmitter.clangCompilerNamespace]
+        }
+        if generatingScanners {
+            namespaces.append(XcodeFormulaEmitter.lexGeneratorNamespace)
+        }
+        if compilingDataModels {
+            namespaces.append(CoreDataModelCompilerConfiguration.settingNamespace)
         }
         return namespaces
     }
@@ -600,7 +615,7 @@ public struct XcodeProjectConverter: Node {
     /// mistaken for resources of their own. A `.lproj` is walked: its files are
     /// resources, each placed under its language folder.
     static func isCompiledWhole(_ folderName: String) -> Bool {
-        folderName.hasSuffix(".xcassets") || folderName.hasSuffix(".icon") || folderName.hasSuffix(".xcdatamodeld")
+        folderName.hasSuffix(".xcassets") || folderName.hasSuffix(".icon") || XcodeFormulaEmitter.isDataModel(folderName)
     }
 
     private func pending(_ reason: String, specs: [String: [String: GraphSpecNode]]) -> ProcessOutput {

@@ -53,7 +53,9 @@ public struct IBToolCompiler: Node {
     /// 3: a failure is published as an `ErrorDocument`, the typed value a client renders,
     /// where it was a sentence (B-145).
     /// 4: the fingerprint of the SDK tree at `sdkPath` is in the key (B-47).
-    public static let implementationVersion = 4
+    /// 5: what ibtool wrote is published in canonical form, and a document compiled twice
+    /// to two different canonical forms is an error, `toolOutputVaries` (B-154).
+    public static let implementationVersion = 5
 
     // MARK: Ports
 
@@ -145,25 +147,58 @@ public struct IBToolCompiler: Node {
 
         let tool = try ToolRunnerRegistry.instance.tool(descriptor: configuration.toolDescriptor,
                                                         namespace:  IBToolCompilerConfiguration.settingNamespace)
-        let result = try tool.execute(arguments: arguments,
-                                      environment: [:],
-                                      inputFiles: [documentFile],
-                                      expectedOutputFileNames: [],
-                                      expectedOutputFolders: [Self.outputFolder])
+        func compile() throws -> SimplifiedToolExecuteResult {
+            try tool.execute(arguments: arguments,
+                             environment: InterfaceBuilderDaemon.environment,
+                             inputFiles: [documentFile],
+                             expectedOutputFileNames: [],
+                             expectedOutputFolders: [Self.outputFolder])
+        }
+        let subject = ErrorDocument.Subject.resource(path: documentPath)
+        let result = try compile()
 
         // A clean exit that wrote nothing would place nothing in the bundle, and the app
         // would fail far from here, loading a nib that is not there.
-        let tree: NodeValue
+        var tree: NodeValue
         if result.exitCode == 0, (result.outputTrees[Self.outputFolder] ?? []).isEmpty {
-            tree = try result.wroteNothingDocument(tool: "ibtool", paths: [compiledPath], subject: .resource(path: documentPath))
-                .published()
+            tree = try result.wroteNothingDocument(tool: "ibtool", paths: [compiledPath], subject: subject).published()
         } else {
-            tree = try result.asTreeNodeValue(folder: Self.outputFolder, tool: "ibtool", subject: .resource(path: documentPath))
+            tree = try result.asTreeNodeValue(folder: Self.outputFolder, tool: "ibtool", subject: subject)
+        }
+        // ibtool is not a function of its input (B-154): what it wrote is published in
+        // canonical form (`NibCanonicaliser`), and the document is compiled a second time,
+        // whose canonical form must be the same. One that is not has a layout ibtool decides
+        // afresh each run — frames its constraints do not give, or ambiguous constraints —
+        // which is the document's to resolve.
+        if case .value = tree {
+            do {
+                let first = try NibCanonicaliser.canonicalTree(result.outputTrees[Self.outputFolder] ?? [], document: documentPath)
+                let again = try compile()
+                let second = again.exitCode == 0
+                    ? try NibCanonicaliser.canonicalTree(again.outputTrees[Self.outputFolder] ?? [], document: documentPath)
+                    : []
+                if let differing = Self.firstDifference(first, second) {
+                    tree = try ErrorDocument.engine(.toolOutputVaries(tool: "ibtool", path: differing), subject: subject,
+                                                    remedy: .resolveLayout(document: documentPath)).published()
+                } else {
+                    tree = .value(try TreeManifest(entries: first).toJSON().intern())
+                }
+            } catch let condition as ErrorCondition {
+                tree = try ErrorDocument.engine(condition, subject: subject).published()
+            }
         }
 
         return .init(outputValues: [Self.output:   tree,
                                     Self.infoLog:  .value(try result.infoOutput.intern()),
                                     Self.errorLog: .value(try result.errorOutput.intern())],
                      inputWireSpecs: [:])
+    }
+
+    /// The first path at which two trees differ, by path or by content; nil for one tree.
+    static func firstDifference(_ first: [TreeManifestEntry], _ second: [TreeManifestEntry]) -> String? {
+        let paths = Set(first.map(\.path)).union(second.map(\.path)).sorted()
+        let firstByPath  = Dictionary(first.map { ($0.path, $0) }, uniquingKeysWith: { earlier, _ in earlier })
+        let secondByPath = Dictionary(second.map { ($0.path, $0) }, uniquingKeysWith: { earlier, _ in earlier })
+        return paths.first { firstByPath[$0] != secondByPath[$0] }
     }
 }
