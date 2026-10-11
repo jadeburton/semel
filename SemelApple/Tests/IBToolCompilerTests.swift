@@ -147,7 +147,7 @@ final class IBToolCompilerTests: SemelAppleTestCase {
     func test_theRealIBToolCompilesNetNewsWiresMainWindowToTheSameBytesTwice() throws {
         let ibtool = try XCTUnwrap(AppleToolDiscovery.locate("ibtool"), "ibtool must be discoverable via xcrun")
         let sdkPath = try XCTUnwrap(SemelApple.sdkPath(forPlatform: .macos))
-        ToolRunnerRegistry.instance.registerTool(descriptor: descriptor, toolExecutor: try LocalFileSystemTool(localPath: ibtool))
+        ToolRunnerRegistry.instance.registerTool(descriptor: descriptor, toolExecutor: try LocalFileSystemTool(localPath: ibtool, reusingSandboxFoldersUnder: SemelPaths.reusedSandboxFolders))
         let xib = XcodeBuildSettingsTests.netNewsWire.appendingPathComponent("Mac/MainWindow/Base.lproj/MainWindow.xib")
         let configuration = self.configuration().replacingOccurrences(of: "/SDKs/MacOSX.sdk", with: sdkPath)
 

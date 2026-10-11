@@ -31,6 +31,15 @@ public enum SemelPaths {
         root.appendingPathComponent("graph.sqlite", isDirectory: false)
     }
 
+    /// The sandbox folders a tool that leaves a daemon in its working directory runs in
+    /// (`ReusedSandboxFolders`, B-152). Under the user's own Semel folder whatever
+    /// `SEMEL_HOME` says, deliberately: a test's home is removed when the test ends, and a
+    /// daemon whose folder went with it fails every client on the machine after it. One set
+    /// per user, as the daemon is.
+    public static var reusedSandboxFolders: URL {
+        URL.applicationSupportDirectory.appendingPathComponent("semel/tool-sandboxes", isDirectory: true)
+    }
+
     /// Where `semelserv` listens and `semel` connects, or `SEMEL_SOCKET` when set. A
     /// Unix-domain socket is a name in the file system that the kernel routes connections
     /// through; keeping it under the user's own root is what stands in for authentication.

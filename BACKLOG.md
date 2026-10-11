@@ -665,3 +665,45 @@ app and not their archives, and the linker writes small objc_msgSend stubs, so a
 executables are byte-reproducible. actool's is not, so `AssetCatalogCompiler` publishes
 each `Assets.car` in a canonical form that `assetutil` reads as the file actool wrote, and
 a signed bundle is byte-reproducible whole (B-89).
+
+**B-152** `done` — **ibtool and actool failed on every machine-wide client after one
+catalog: `ibtoold` stayed in a sandbox Semel had removed.** Seen 2026-10-10 and again
+2026-10-11 (B-77 item 4, Sequel Ace): every xib, storyboard and catalog of a build failed
+with `IBCurrentDirectoryPath … currentDirectoryPath is unexpectedly nil`, and so did
+`xcrun ibtool --compile` run by hand from a folder that existed, and the SemelApple suite's
+real-ibtool tests, until the daemons went. One of the nine `ibtoold
+--sending-client-environment` processes then running had as its working directory
+`…/T/TemporaryItems/NSIRD_semelserv_…`, a tool-run folder `LocalFileSystemTool` had made
+and removed.
+
+The cause, found by experiment on Xcode 26.6 from folders that were kept: `ibtool` and
+`actool` hand their work to a per-user pool of `ibtoold` daemons. A daemon starts in `/`,
+whichever folder the client that started it ran in, and `ibtool --version` and `actool
+--version` start one and leave it there. For a request it changes its working directory to
+the client's, and after an `actool` request it stays there: six `actool` runs from six
+folders left five daemons in five of them. With those folders removed, twelve `ibtool`
+runs of twelve, from a folder that existed, failed as above. An idle daemon exits after about
+two minutes, which is why the failure cleared by itself between sessions and came back with
+the next build: `LocalFileSystemTool` ran every tool in a fresh temporary folder and removed
+it after the run, so every catalog a build compiled left a daemon in a folder that was gone.
+The first slice of B-77 item 4 put this down to something outside Semel. It was Semel.
+
+Fixed 2026-10-11. A tool can be declared to run in a sandbox folder that is reused instead of
+removed (`ToolFinder.reusesSandboxFolders`, `ReusedSandboxFolders`): `slot-N` folders under
+`~/Library/Application Support/semel/tool-sandboxes`, whatever `SEMEL_HOME` says, since a
+test's home goes when the test ends. Each run takes a slot under an advisory lock on its
+`slot-N.lock`, so a server and a test run on one machine never share one. The slot is
+emptied before the run and after it, and the folder is never removed. `actool` and
+`ibtool` are declared so. The command line and what the tool writes are unchanged: every
+path is still relative to a folder that starts each run empty.
+
+Two other fixes were weighed. Starting the daemon first from a lasting folder does nothing,
+since the daemon starts in `/` and follows the client per request. Running the client from a
+lasting folder with absolute paths into the sandbox would put the sandbox on the command
+line, which `ToolSandbox` forbids. The real-tool tests that ran actool from a folder they
+then removed (the asset symbols test) run through the same runner now, and the others name
+the reused folders.
+
+The residual risk is outside Semel's code. A user who removes that folder while a daemon
+sits in it, or another program on the machine doing what Semel did, poisons the daemons
+until they exit. The remedy is to wait two minutes or to end the `ibtoold` processes.

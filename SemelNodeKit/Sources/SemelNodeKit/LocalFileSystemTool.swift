@@ -19,9 +19,14 @@ import SemelDatabaseModels
 /// through this process's memory (B-116).
 public class LocalFileSystemTool: ToolRunner {
     private let localPath: String
+    /// Where the tool's sandboxes are, when they are folders reused rather than temporary
+    /// ones removed after the run: for a tool whose daemon stays in the folder it ran in
+    /// (`ReusedSandboxFolders`, B-152).
+    private let reusedSandboxes: ReusedSandboxFolders?
 
-    public init(localPath: String) throws {
+    public init(localPath: String, reusingSandboxFoldersUnder sandboxParent: URL? = nil) throws {
         self.localPath = localPath
+        reusedSandboxes = sandboxParent.map(ReusedSandboxFolders.init(parent:))
 
         let fileManager = FileManager.default
         var isDirectory: ObjCBool = false
@@ -48,11 +53,17 @@ public class LocalFileSystemTool: ToolRunner {
         // 1. Create a temporary sandbox directory.
         let sandboxPath: String
         let canonicalSandboxPath: String
+        let slot = try reusedSandboxes?.take()
+        defer {
+            if let slot {
+                reusedSandboxes?.give(back: slot)
+            }
+        }
         do {
-            let sandboxURL = try fileManager.url(for: .itemReplacementDirectory,
-                                                 in: .userDomainMask,
-                                                 appropriateFor: fileManager.temporaryDirectory,
-                                                 create: true)
+            let sandboxURL = try slot?.folder ?? fileManager.url(for: .itemReplacementDirectory,
+                                                                 in: .userDomainMask,
+                                                                 appropriateFor: fileManager.temporaryDirectory,
+                                                                 create: true)
             sandboxPath = sandboxURL.path
             // On macOS, /var is a symlink to /private/var. Tools like SPM call
             // realpath() internally and write /private/var/... in their output
@@ -63,7 +74,11 @@ public class LocalFileSystemTool: ToolRunner {
             throw SandboxCreationError(underlying: error)
         }
 
-        defer { try? fileManager.removeItem(atPath: sandboxPath) }
+        defer {
+            if slot == nil {
+                try? fileManager.removeItem(atPath: sandboxPath)
+            }
+        }
 
         // 2. Populate input files in the sandbox via DataObjectStore (APFS clone).
         for inputFile in inputFiles {

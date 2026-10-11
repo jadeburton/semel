@@ -96,4 +96,12 @@ final class AppleToolDiscoveryTests: SemelAppleTestCase {
         let xcode = try XCTUnwrap(AppleToolDiscovery.xcodeVersion())
         XCTAssertTrue(xcode.hasPrefix("Xcode ") && xcode.contains("("), xcode)
     }
+
+    /// actool and ibtool run in sandbox folders that outlive the run: `ibtoold` stays in the
+    /// folder a run had, and one removed under it fails every client after (B-152). The
+    /// other tools run in temporary ones, as every tool did.
+    func test_theInterfaceBuilderToolsReuseTheirSandboxFolders() {
+        let reusing = AppleToolDiscovery.finders.filter(\.reusesSandboxFolders).map(\.name).sorted()
+        XCTAssertEqual(reusing, ["actool", "ibtool"])
+    }
 }
