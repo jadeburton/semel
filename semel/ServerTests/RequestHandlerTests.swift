@@ -10,6 +10,7 @@
 @testable import SemelCore
 @testable import SemelServer
 import SemelDatabaseModels
+import SemelCache
 import SemelNodeKit
 import SemelProtocol
 import XCTest
@@ -119,7 +120,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     func test_debugWithAKeyReturnsThatEntrysKeyMaterial() throws {
         let key = try storeOneCacheEntry()
 
-        let (response, body) = try daemon(.debug(cacheKey: key))
+        let (response, body) = try daemon(.debug(cacheKey: CacheKey(hash: key)))
 
         XCTAssertEqual(response, .debug)
         let text = String(decoding: try XCTUnwrap(body), as: UTF8.self)
@@ -130,7 +131,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     }
 
     func test_debugWithAKeyNothingIsStoredUnderSaysSo() throws {
-        let (_, body) = try daemon(.debug(cacheKey: String(repeating: "f", count: 64)))
+        let (_, body) = try daemon(.debug(cacheKey: CacheKey(hash: String(repeating: "f", count: 64))))
 
         XCTAssertTrue(String(decoding: try XCTUnwrap(body), as: UTF8.self).contains("no cache entry"))
     }
@@ -149,7 +150,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertEqual(summary.limit, BuildEngine.defaultCacheLimit)
         XCTAssertTrue(summary.limitIsDefault)
         let records = try MessageCoder.decode([CacheEntryRecord].self, from: try XCTUnwrap(body))
-        XCTAssertEqual(records.map(\.key), [key])
+        XCTAssertEqual(records.map(\.key), [CacheKey(hash: key)])
         XCTAssertEqual(records.first?.nodeType, "KeyedSampleNode")
         XCTAssertEqual(records.first?.bytes, summary.bytes, "the one entry holds all the cache holds")
     }

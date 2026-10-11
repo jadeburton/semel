@@ -20,6 +20,7 @@ let package = Package(
         .executable(name: "semel-monitor", targets: ["semel-monitor"]),
     ],
     dependencies: [
+        .package(path: "SemelCache"),
         .package(path: "SemelCore"),
         .package(path: "SemelNodeKit"),
         .package(path: "SemelProtocol"),
@@ -36,6 +37,7 @@ let package = Package(
         .target(
             name: "SemelCLI",
             dependencies: [
+                .product(name: "SemelCache", package: "SemelCache"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
                 "SemelTransport",
@@ -268,6 +270,7 @@ let package = Package(
                 "SemelTransport",
                 "SemelTestSupport",
                 "semel-server",
+                .product(name: "SemelCache", package: "SemelCache"),
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
@@ -287,6 +290,7 @@ let package = Package(
                 "SemelClangTool",
                 "SemelMachineFile",
                 "SemelTransport",
+                .product(name: "SemelCache", package: "SemelCache"),
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),

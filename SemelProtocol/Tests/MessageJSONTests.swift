@@ -8,6 +8,7 @@
 //
 
 @testable import SemelProtocol
+import SemelCache
 import SemelNodeKit
 import XCTest
 
@@ -163,7 +164,7 @@ final class MessageJSONTests: XCTestCase {
             .nudge,
             .wait,
             .debug(cacheKey: nil),
-            .debug(cacheKey: "285a5050ac7e8501af9c3bab064c1cf5432b67646d915ae3477fe816dced6419"),
+            .debug(cacheKey: CacheKey(hash: "285a5050ac7e8501af9c3bab064c1cf5432b67646d915ae3477fe816dced6419")),
             .explain(fileSystem: .output, path: "hello/hello"),
             .subscribe,
             .checkpoint(name: nil),
@@ -322,7 +323,7 @@ final class MessageJSONTests: XCTestCase {
 
     /// The entries `cache` lists travel in the body as records.
     func test_encodesCacheEntryRecords() throws {
-        let records = [CacheEntryRecord(key: "4d5d", nodeType: "SwiftCompiler", bytes: ByteCount(bytes: 1_024), cost: 900,
+        let records = [CacheEntryRecord(key: CacheKey(hash: "4d5d"), nodeType: "SwiftCompiler", bytes: ByteCount(bytes: 1_024), cost: 900,
                                         usedByLastSettle: true, heldByNode: false)]
         XCTAssertEqual(try MessageCoder.decode([CacheEntryRecord].self, from: try MessageCoder.encode(records)), records)
     }

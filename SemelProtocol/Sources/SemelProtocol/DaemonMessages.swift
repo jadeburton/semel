@@ -10,6 +10,7 @@
 // only its own object.
 
 import Foundation
+import SemelCache
 import SemelNodeKit
 
 // MARK: - Shared records
@@ -430,7 +431,7 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
     /// With no key, the whole graph as text. With one, that cache entry's key material —
     /// the text its key is the hash of, which is what makes two builds that disagreed a
     /// diff rather than two hashes. Either answer travels in the reply's body.
-    case debug(cacheKey: String?)
+    case debug(cacheKey: CacheKey?)
     case subscribe
 
     // MARK: Locked folders and checkpoints (B-146)

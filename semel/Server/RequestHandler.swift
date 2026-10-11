@@ -219,7 +219,7 @@ public final class RequestHandler {
                 guard let cacheKey else {
                     return (.daemon(.debug), Data(try engine.graphDescription().utf8))
                 }
-                return (.daemon(.debug), Data(engine.cacheEntryDescription(key: cacheKey).utf8))
+                return (.daemon(.debug), Data(engine.cacheEntryDescription(key: cacheKey.hash).utf8))
             case .subscribe:
                 session.isSubscribed = true
                 return (.daemon(.ok), nil)

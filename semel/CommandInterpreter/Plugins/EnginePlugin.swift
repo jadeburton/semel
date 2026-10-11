@@ -5,6 +5,7 @@
 // explain / why, reset, t / tools, wait, watch, unwatch
 
 import Foundation
+import SemelCache
 import SemelNodeKit
 import SemelProtocol
 
@@ -46,7 +47,15 @@ final class EnginePlugin: CommandPlugin {
             context.outputError("debug: takes at most one argument, the key of a cache entry")
             return
         }
-        let (response, body) = try context.request(.debug(cacheKey: tokens.first))
+        var cacheKey: CacheKey?
+        if let token = tokens.first {
+            guard let parsed = CacheKey(parsing: token) else {
+                context.outputError("debug: '\(token)' is not a cache key, which is 64 hex digits")
+                return
+            }
+            cacheKey = parsed
+        }
+        let (response, body) = try context.request(.debug(cacheKey: cacheKey))
         guard case .debug = response else {
             return
         }
@@ -406,7 +415,7 @@ final class EnginePlugin: CommandPlugin {
         let type = entry.nodeType.padding(toLength: typeWidth, withPad: " ", startingAt: 0)
         let columns = String(repeating: " ", count: max(0, 9 - size.count)) + size + "  "
                     + String(repeating: " ", count: max(0, 9 - cost.count)) + cost + "  "
-                    + type + "  " + String(entry.key.prefix(16))
+                    + type + "  " + String(entry.key.hash.prefix(16))
         return notes.isEmpty ? columns : columns + "  " + notes.joined(separator: ", ")
     }
 

@@ -6,11 +6,12 @@
 // client renders them.
 
 import Foundation
+import SemelCache
 import SemelNodeKit
 
 /// One cached build as `cache` lists it.
 public struct CacheEntryRecord: Codable, Equatable, Sendable {
-    public let key: String
+    public let key: CacheKey
     public let nodeType: String
     /// What the entry alone holds in the store: what evicting it would give back.
     public let bytes: ByteCount
@@ -22,7 +23,7 @@ public struct CacheEntryRecord: Codable, Equatable, Sendable {
     /// being evicted.
     public let heldByNode: Bool
 
-    public init(key: String, nodeType: String, bytes: ByteCount, cost: Int, usedByLastSettle: Bool, heldByNode: Bool) {
+    public init(key: CacheKey, nodeType: String, bytes: ByteCount, cost: Int, usedByLastSettle: Bool, heldByNode: Bool) {
         self.key              = key
         self.nodeType         = nodeType
         self.bytes            = bytes
