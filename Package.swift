@@ -17,6 +17,7 @@ let package = Package(
         // directory on a case-insensitive volume and the two builds corrupt each other.
         .executable(name: "semelserv", targets: ["semel-server"]),
         .executable(name: "semel-watch", targets: ["semel-watch"]),
+        .executable(name: "semel-monitor", targets: ["semel-monitor"]),
     ],
     dependencies: [
         .package(path: "SemelCore"),
@@ -213,6 +214,40 @@ let package = Package(
             ],
             path: "semel-watch/Tests"
         ),
+        // The monitor's model (B-150): the planner that turns events into cards, the card's
+        // words, the clock, and the subscription that reopens itself. No AppKit, so all of
+        // it is tested without a screen.
+        .target(
+            name: "SemelMonitor",
+            dependencies: [
+                "SemelCLI",
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+            ],
+            path: "semel-monitor/Sources/SemelMonitor"
+        ),
+        // The monitor itself: its arguments, `--print`, and the AppKit shell — the status
+        // item and the panels — which only draws what the planner decided.
+        .executableTarget(
+            name: "semel-monitor",
+            dependencies: [
+                "SemelMonitor",
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+            ],
+            path: "semel-monitor",
+            exclude: ["Sources", "Tests"],
+            sources: ["main.swift", "App"]
+        ),
+        .testTarget(
+            name: "SemelMonitorTests",
+            dependencies: [
+                "SemelMonitor",
+                "SemelCLI",
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+            ],
+            path: "semel-monitor/Tests"
+        ),
         .testTarget(
             name: "SemelServerTests",
             dependencies: [
@@ -263,6 +298,7 @@ let package = Package(
                 "semel-swift",
                 "semel-clang",
                 "semel-watch",
+                "semel-monitor",
             ],
             path: "EndToEnd/Tests"
         ),

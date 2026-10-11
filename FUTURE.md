@@ -1402,6 +1402,55 @@ node, its ports and its carriers; colour at a terminal unless `NO_COLOR`. `Error
 `BuildCommandTests`, `SettleTimeErrorCountingTests`, `WatcherTests` and
 `ErrorReportEndToEndTests` (the C fixture with an `#error`, line for line) pin it.
 
+**B-150** `open` — **A Mac app that shows what the build did.**
+Designed 2026-10-11 (`docs/superpowers/specs/2026-10-11-semel-monitor-design.md`, with
+mockups beside it and an "As built (phase 1)" addendum), decided to be delivered in three
+phases, each a working app. `semel-monitor`, a fifth client of `semelserv`, subscribes to
+the engine's events and changes nothing: it pushes nothing, builds nothing and starts no
+server. One settle that moved a product or broke one is one card at the top right of the
+screen, in the engine's vocabulary — appeared, changed, disappeared, without a value — with
+products named as the error report names them (B-145). The engine stays a time-free zone;
+the eight seconds a result card stays are the app's.
+
+1. ~~**Notifies, nothing more.**~~ Done 2026-10-11. The `SemelMonitor` library holds the
+   model, tested without a screen: `NotificationPlanner` reads a settle as the prompt
+   does — `errors`, then `settled`, then `artifacts`, each only when it has something to
+   say — and makes one card of it, nothing for a settle that moved nothing; `CardText`
+   draws `3 products changed, 1 appeared`, three names and `and N more`, `3 computed · 9
+   from cache`, and for errors `2 products without a value`, the first cause's line one
+   from the report's renderer, the names and the report's summary line. Result cards go
+   after eight seconds on a `Clock` the tests drive, held while the pointer is over them;
+   error cards stay until clicked or until a later settle gives their products a value
+   (or leaves the graph without errors). Five on screen at most, the older folded into
+   the bottom card's `and N earlier`; *Pause notifications* swallows cards and *Resume*
+   shows the last settle's; `--only <folder>` keeps products under those folders of
+   `output:`. `EngineSubscription` opens the socket as `semel` does and reopens it with
+   the watcher's backoff, resubscribing each time; the status item has two states, no
+   engine and connected. The executable is the AppKit shell — an accessory application, a
+   status item, non-activating panels — and `--print` writes each card as lines
+   (`card: …`, indented lines, `dismissed: …`), which `MonitorEndToEndTests` reads against
+   a real `semelserv` over the C fixture, stopped and started again under it. Focus is not
+   read: no public API answers an unbundled process, so *Pause* is the switch.
+2. **The products window and export.** *Products…* and a click on a card open a window
+   listing `output:` by folder, marking the settle's products, showing the errors' lines,
+   and exporting a selection to a destination chosen in a save panel through the prompt's
+   export code. No *Reveal in Finder* and no knowledge of where anyone else exported.
+   With it, two follow-ups the owner approved on 2026-10-11:
+   a. **A Semel glyph of its own** for the status item in place of the SF Symbol circles:
+      a monochrome shape drawn in code as a template image, so it tints as the system's
+      items do — a small graph of three nodes and two wires is the suggestion.
+   b. **The errors state on the status item** while an error card is held. Phase 1
+      already knows it from the planner's cards, without `progress`.
+3. **The running card and the live window.** A card updated in place from `progress`
+   while a settle runs — `Building · 12 running · 48 ahead`, the running nodes named — and
+   *Show window* with the running nodes, the queue and the counts. A view of the graph
+   itself needs requests that do not exist yet and is designed when this phase has shown
+   what people look at.
+4. **A tree product's entries name their folder.** The `artifacts` event names each entry
+   of a tree product by its own path, so a result card counts and names an `.app`'s
+   entries one by one where an error card names the bundle; the event would carry each
+   path's tree folder as `StoppedProduct` does (B-142) for a card to name it once.
+
 ### Formula language
 
 **B-108** `open` — **Formula preludes: built-in functions a plugin provides — residuals.**

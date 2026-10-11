@@ -77,7 +77,7 @@ struct ErrorBlock: Equatable {
     var facts:    [ErrorFacts]
 }
 
-enum ErrorReportRenderer {
+public enum ErrorReportRenderer {
 
     /// How many products a heading names before it counts the rest.
     static let productsNamed = 3
@@ -153,9 +153,34 @@ enum ErrorReportRenderer {
         return parts.joined(separator: " · ")
     }
 
+    /// The report's summary line for these records, with no export: what a view too small
+    /// for the report — a notification card — says under the error it shows.
+    public static func summaryLine(for records: [ErrorRecord]) -> String {
+        let blocks = Self.blocks(for: records)
+        return summaryLine(errors: blocks.count, productsWithoutValue: productCount(blocks), export: nil)
+    }
+
+    /// How many errors the report counts for these records: one per cause, merged as its
+    /// blocks are.
+    public static func errorCount(of records: [ErrorRecord]) -> Int {
+        blocks(for: records).count
+    }
+
+    /// Line one of the first error the report prints — the first block under its first
+    /// heading — drawn plain. Nil for no records. A view that shows one error shows this
+    /// one, so it reads as the report's top line and as the tool wrote it.
+    public static func firstLine(of records: [ErrorRecord]) -> String? {
+        let blocks = Self.blocks(for: records)
+        guard let index = groups(of: blocks).first?.blocks.first else {
+            return nil
+        }
+        let renderer = BlockRenderer(names: ProductNames(products: blocks.flatMap(\.products)), style: ErrorReportStyle())
+        return renderer.lines(for: blocks[index]).first
+    }
+
     /// The products a report's records name, each once, as the headings count them: a
     /// tree product once, by its folder.
-    static func productsWithoutValue(_ records: [ErrorRecord]) -> Set<String> {
+    public static func productsWithoutValue(_ records: [ErrorRecord]) -> Set<String> {
         Set(records.flatMap { $0.products.map(ProductNames.key(of:)) })
     }
 
@@ -277,10 +302,10 @@ enum ErrorReportRenderer {
 /// How a heading names products: by file name, and by the path under `output:` only
 /// where two products of the report share a file name. A tree product is named by its
 /// folder, `IceCubesApp.app/`, once for all its entries.
-struct ProductNames {
+public struct ProductNames {
     private let ambiguous: Set<String>
 
-    init(products: [StoppedProduct]) {
+    public init(products: [StoppedProduct]) {
         var keysByName: [String: Set<String>] = [:]
         for product in products {
             let key = Self.key(of: product)
@@ -291,7 +316,7 @@ struct ProductNames {
 
     /// The product a heading's name stands for: its own path, or its tree's folder with a
     /// separator.
-    static func key(of product: StoppedProduct) -> String {
+    public static func key(of product: StoppedProduct) -> String {
         product.treeFolder.map { "\($0)/" } ?? product.path
     }
 
@@ -311,8 +336,14 @@ struct ProductNames {
 
     /// A name as a heading carries it: a tree's without its separator, since the colon
     /// after it ends the name.
-    static func headingName(_ name: String) -> String {
+    public static func headingName(_ name: String) -> String {
         name.hasSuffix("/") ? String(name.dropLast()) : name
+    }
+
+    /// One product's name, a tree's with its separator: its file name, or its path under
+    /// `output:` where another product these names were made for shares the file name.
+    public func name(of product: StoppedProduct) -> String {
+        name(ofKey: Self.key(of: product))
     }
 
     func name(of path: String, isTree: Bool) -> String {

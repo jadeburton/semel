@@ -1,10 +1,11 @@
 # A Mac app that shows what the build did: notifications first, the graph later
 
-Status: design, for review before any code. Follows the 2026-10-11 request for a Mac app
-that shows notifications when build products appear, change or disappear, to grow later
-into a real-time view of the nodes at work. Mockups of the cards, the status item, the
-products window and the live window: `2026-10-11-semel-monitor-mockups.html` beside this
-file, a page with no dependencies that opens in any browser.
+Status: design; phase 1 built — see "As built (phase 1)" at the end. Follows the 2026-10-11
+request for a Mac app that shows notifications when build products appear, change or
+disappear, to grow later into a real-time view of the nodes at work. Mockups of the cards,
+the status item, the products window and the live window:
+`2026-10-11-semel-monitor-mockups.html` beside this file, a page with no dependencies that
+opens in any browser.
 
 ## The problem
 
@@ -170,3 +171,63 @@ Decided 2026-10-11: delivered in clear phases, each a working app on its own.
   client of the private file system: it lists `output:` and exports to a destination the
   person chooses, through the prompt's own export code, and that is its only relation to
   the disk. Above, under "a client of the private file system".
+
+## As built (phase 1)
+
+Built as phase 1 states; where the code and the design differed, or the design left a
+choice, this is what was done.
+
+- **A settle is read as the prompt reads it.** The engine sends one settle as `errors`
+  (only when it found new failures), `settled` (only when it scheduled anything) and
+  `artifacts` (only when a product moved), in that order — the order
+  `CommandInterpreter` prints them in. Nothing marks a settle's end, so the planner does
+  not wait for all three: an error settle's card is made at `settled` and the `artifacts`
+  after it only replaces older error cards; a result card is made at `artifacts`, with the
+  counts of the `settled` before it; the next settle's first event — a `progress`, an
+  `errors` after a `settled` — closes whatever is held. A removal that scheduled nothing
+  and still collected a product is a card with no counts line. No timer pairs events.
+- **The error card follows the mockup.** Its headline is `2 products without a value`
+  (or `1 error` for errors no product needs); the first cause's line one, as the report
+  draws it — the first block under the report's first heading — is the line under it,
+  then the names, then the report's own summary line, `1 error · 2 products without a
+  value`. The renderers are the report's: `ErrorReportRenderer` and `ProductNames` in
+  `SemelCLI` gained a small public surface (`firstLine(of:)`, `summaryLine(for:)`,
+  `errorCount(of:)`, `productsWithoutValue`, `ProductNames.name(of:)`) and nothing new
+  draws a name.
+- **Which error cards a later settle replaces.** An error card waits on its products,
+  keyed as the report keys them (a tree by its folder); an `artifacts` that gives every
+  one of them a value replaces it, and a `settled` whose error count is zero replaces
+  every error card, since the graph then holds no error. A card for errors no product
+  needs is replaced only by the latter.
+- **A tree product in a result card is not named by its folder.** The `artifacts` event
+  carries entry paths and no tree folder, and taking paths apart to guess one would read
+  text the event does not type. Error cards name a tree by its folder, from
+  `StoppedProduct.treeFolder`. Filed as B-150 item 4.
+- **The order of a result card's names** is changed, then appeared, then disappeared, each
+  in the event's path order — the headline's order, which leads with changed because a save
+  changes what was there.
+- **Folding.** The sixth card folds the oldest off the bottom; the new bottom card's
+  `earlier` is the folded card's plus one. A card that goes takes its count with it.
+- **Hover** holds a result card; leaving it gives the card its full eight seconds again.
+- **Pause** swallows new cards and nothing else: cards on screen still expire and error
+  cards are still replaced. *Resume* shows the last card made during the pause, unless it
+  was an error card a later settle replaced.
+- **`--print`** writes `card: <headline>` and the card's other lines indented two spaces,
+  `dismissed: <headline>` when one goes (expired, clicked or replaced), `folded:
+  <headline>` when one is folded, and `status: connected` / `status: no engine` when the
+  connection comes or goes, so a script can tell a quiet engine from a missing one.
+- **The subscription is in the library**, not in `main.swift`: `EngineSubscription` opens
+  the socket, says `hello` and `subscribe`, and reopens with the watcher's backoff (a
+  quarter of a second doubling to five). The socket tells only its waiters when it closes,
+  so an open connection is asked whether it still is four times a second. `Monitor` ties
+  the planner, the subscription and the one timer for the next expiry together on the main
+  queue; the panels and `--print` are its two front ends.
+- **The status item's menu** is the state line (`No engine`, `Connected · last settle: 3
+  changed, 1 appeared`), *Pause notifications* or *Resume*, and *Quit semel-monitor*.
+  *Products…* and *Show window* arrive with their phases.
+- **Focus is not read.** `NSWorkspace` has no public way to ask whether a Focus mode is
+  on, and `INFocusStatusCenter` answers only a bundled app the person has authorised, so
+  `--no-pause-on-focus` does not exist and *Pause notifications* is the switch.
+- **The Xcode workspace is unchanged.** `semel-monitor/` is a folder of the root package,
+  which the workspace already holds as `group:.`, as it holds `semel-watch/`; the lint
+  configuration's `included:` list names it.
