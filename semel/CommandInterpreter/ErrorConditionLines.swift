@@ -65,6 +65,8 @@ struct ConditionLines {
             return Drawn(headline: "\(tool) wrote the folder it ran in into \(file), which would differ from one run to the next")
         case .toolLaunchFailed(let reason):
             return Drawn(headline: "the tool cannot be started", details: [Detail(label: "reason", value: reason)])
+        case .toolOutputVaries(let tool, let file):
+            return Drawn(path: path(file), headline: " came out of \(tool) differently on two runs of one input")
         case .sourceNotTaken(let source, let tool, let takes):
             return Drawn(path: path(source), headline: " is not a file \(tool) takes",
                          details: [Detail(label: "takes", value: takes.joined(separator: ", "))])
@@ -378,6 +380,9 @@ struct ConditionLines {
             return Drawn(path: path(xcframework), headline: ": \(sentence(problem))")
         case .assetCatalogNotCanonical(let problem):
             return assetCatalog(problem)
+        case .nibNotCanonical(let file, let problem):
+            return Drawn(path: path(file), headline: " has no canonical form that reads as the nib ibtool wrote",
+                         details: [Detail(label: "problem", value: sentence(problem))])
 
         // MARK: Everything else
 
@@ -500,6 +505,18 @@ struct ConditionLines {
             }
             return Drawn(path: path(artifact), headline: " is not an .xcframework, which is the binary artifact linked here",
                          details: details)
+        }
+    }
+
+    private func sentence(_ problem: NibProblem) -> String {
+        switch problem {
+        case .notANibArchive:                       return "not a NIBArchive"
+        case .truncated(let offset):                return "truncated at byte \(offset)"
+        case .unknownValueType(let type, let offset): return "a value of unknown type \(type) at byte \(offset)"
+        case .indexOutOfRange:                      return "an index past the end of its table"
+        case .readBackDiffers(let object) where object < 0: return "read back, the archive does not match"
+        case .readBackDiffers(let object):          return "read back, object \(object) does not match"
+        case .storyboardIndexUnreadable:            return "the storyboard's Info.plist does not read as its index"
         }
     }
 

@@ -54,6 +54,10 @@ public enum ErrorCondition: Codable, Hashable, Sendable, Error, ErrorConditionCo
     case toolOutputNamesItsSandbox(tool: String, file: String)
     /// The tool's process could not be started: what the system said.
     case toolLaunchFailed(reason: String)
+    /// A tool that wrote different outputs for one input on two runs, past what the node
+    /// puts in canonical form: the file that differed (B-154). The input is what is
+    /// ambiguous, and no build of it can be deterministic.
+    case toolOutputVaries(tool: String, path: String)
     /// A file a tool node was handed that its tool does not take — a lexer generator handed
     /// something other than a lexer description — with the extensions it takes.
     case sourceNotTaken(path: String, tool: String, takes: [String])
@@ -282,6 +286,9 @@ public enum ErrorCondition: Codable, Hashable, Sendable, Error, ErrorConditionCo
     /// actool's `Assets.car` that cannot be put in canonical form, or whose canonical form
     /// does not read as the file actool wrote (B-89).
     case assetCatalogNotCanonical(problem: AssetCatalogProblem)
+    /// A nib ibtool wrote that cannot be put in canonical form, or whose canonical form does
+    /// not read as ibtool's did (B-154): the file, in the compiled document's tree.
+    case nibNotCanonical(file: String, problem: NibProblem)
 
     // MARK: - Everything else
 
@@ -518,6 +525,23 @@ public enum BinaryProblem: Codable, Hashable, Sendable {
 }
 
 /// Why actool's `Assets.car` is not published (B-89).
+/// Why a nib has no canonical form (B-154).
+public enum NibProblem: Error, Codable, Hashable, Sendable {
+    /// Not a NIBArchive, or shorter than its header.
+    case notANibArchive
+    /// A table runs past the end of the file, at this offset.
+    case truncated(offset: Int)
+    /// A value of a type the format does not have, at this offset.
+    case unknownValueType(type: Int, offset: Int)
+    /// An index into a table past its end.
+    case indexOutOfRange
+    /// The canonical archive read back does not say what ibtool's did, at this object of
+    /// ibtool's (-1 for the archive as a whole).
+    case readBackDiffers(object: Int)
+    /// A storyboard's `Info.plist` that does not read as the index of its scenes.
+    case storyboardIndexUnreadable
+}
+
 public enum AssetCatalogProblem: Codable, Hashable, Sendable {
     /// Which of the two catalogs `assetutil` was reading.
     public enum Copy: String, Codable, Hashable, Sendable {

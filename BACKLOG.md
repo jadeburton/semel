@@ -711,7 +711,49 @@ run, about 0.6 s, where a pooled daemon answers at once.
 Residual: something else on the machine running `ibtool` or `actool` with the pool can
 still poison the pool for its own later clients, but never Semel's.
 
-**B-153** `open` — **A large app made the server's memory grow without bound.** Seen
+**B-154** `open` — **ibtool is not a function of its input.** Found 2026-10-11 by the
+roster's byte comparison of Sequel Ace's two builds (B-77 item 4), and reproduced outside
+Semel on Xcode 26.6. Two kinds.
+
+**A storyboard's nibs vary in form. Fixed 2026-10-11.** ibtool gives a Mac storyboard's
+view controllers fresh UUIDs on every compile (`NSViewControllerIdentifiersToUUIDs` in the
+`.storyboardc`'s `Info.plist`, and inside its nibs). It also lists a scene's connections in
+a new order each run, which reorders the archive's objects, the object-to-parent table and
+the object ids with them. Three compiles of Sequel Ace's `ProgressWindowController.storyboard`
+gave three trees. `IBToolCompiler` (5) now publishes every NIBArchive it writes in
+canonical form (`NibArchive`, `NibCanonicaliser`):
+
+- the connections sorted by what they connect;
+- the parent and id tables sorted by object, with the ids handed out again in that order;
+- objects numbered by a depth-first walk from the root, keys sorted, classes in order of
+  first use;
+- each storyboard UUID derived from the document and the identifier.
+
+The canonical archive is read back and checked against ibtool's, object by object through
+the renumbering, and a nib that cannot be put in that form is `nibNotCanonical`. The three
+compiles now give one tree. Sequel Ace's other twenty-four xibs and NetNewsWire's, which
+ibtool wrote the same each run, keep their content. A canonical nib loads with `NSNib` to
+the same objects as ibtool's.
+
+**A document whose layout differs. Detected 2026-10-11; the project's to fix.** Sequel
+Ace's `ImportAccessory.xib` stores frames its constraints do not give: its accessory view at
+707 × 184 where the constraints make it 160 tall, and its labels, pop-ups and tab view at an
+older layout's places. ibtool updates such frames when it compiles, and does so differently
+from run to run: eight compiles gave four nibs, each view at one of two places 24 points
+apart. That is a different nib, not a different encoding of one, so no canonical form
+exists. `IBToolCompiler` therefore compiles every document twice and refuses one whose two
+canonical forms differ, as `toolOutputVaries`, with the remedy to resolve the layout. The
+roster's `sequel-ace` lays an overlay (`Fixtures/external/sequel-ace`) with the xib's six
+frames set to what AppKit's layout gives them at run time, which is what Interface
+Builder's "Update Frames" writes. Sixteen compiles of the corrected file gave one nib, and
+the roster's two builds are byte-identical with no exemption.
+
+Compiling twice doubles ibtool's time per document. With `IBToolNeverDeque=YES` (B-152)
+each run already costs about 0.6 s more, since it starts a daemon of its own instead of
+taking one from the pool. Still open: a document whose ambiguity the two runs happen to
+resolve alike passes, and is caught by the roster's comparison, not by the node.
+
+**B-155** `open` — **A large app made the server's memory grow without bound.** Seen
 2026-10-11 building Sequel Ace (B-77 item 4). Six cold builds in a row were killed with
 SIGKILL about thirteen minutes in. Swap went from 10 GB to 40 GB in three and a half minutes,
 and the server's footprint reached 24 GB and was still growing. A sample of the server put
@@ -735,26 +777,3 @@ footprint, and calling `malloc_zone_pressure_relief` every five seconds changed 
 the pages are dirty and held, by something `heap` does not attribute. Next: run the push of
 a large tree under `MallocStackLogging` and read `malloc_history` for where the burst is
 allocated.
-
-**B-154** `open` — **ibtool is not a function of its input for some documents.** Found
-2026-10-11 by the roster's byte comparison of Sequel Ace's two builds (B-77 item 4), and
-reproduced outside Semel on Xcode 26.6. Two kinds:
-
-- A Mac storyboard. `ProgressWindowController.storyboard` compiles to a `.storyboardc`
-  whose `Info.plist` maps each view controller to a fresh UUID on every run
-  (`NSViewControllerIdentifiersToUUIDs`), and the nibs carry the same UUIDs. With the
-  UUIDs replaced by ones derived from the document and the identifier, the
-  `ProgressWindowController.nib`s of two runs still differ in their NIBArchive header,
-  which suggests the archive's key table is written in a different order each run. Both
-  look canonicalisable the way `Assets.car` is (B-89): UUIDs derived from what they name,
-  and a NIBArchive rewritten with its tables in a stated order, checked by reading back.
-- A xib with ambiguous constraints. `ImportAccessory.xib` (`useAutolayout`, 130
-  constraints) is laid out by ibtool when it compiles, and one text field's frame came out
-  `{{173, 93}}`, `{{173, 117}}`, `{{173, 119}}` or `{{173, 143}}` across eight runs from one
-  file. That is a different nib, not a different encoding of one, so no canonical form
-  exists. The build would have to refuse the document, or lay it out itself.
-  NetNewsWire's thirty-five xibs come out the same on every run.
-
-The roster exempts the four files, the app's `CodeResources` that seals them, and the
-executable whose signature seals that. Next: the storyboard canonicaliser in
-`IBToolCompiler`, which would leave only `ImportAccessory.nib` and what seals it.

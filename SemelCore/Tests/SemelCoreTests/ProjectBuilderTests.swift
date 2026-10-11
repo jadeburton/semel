@@ -424,7 +424,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
     /// An entry's spec is the one the whole walk over it gives — the formula's folder and the
     /// project's root on every node that takes them — though only the entry's own nodes are
     /// walked: the tree's expression, filled once, is shared by every entry, where a bundle
-    /// of thousands of files once copied it for each (B-153).
+    /// of thousands of files once copied it for each (B-155).
     func test_aTreeEntrysSpecIsTheOneTheWholeWalkGives() throws {
         let nested = "TreeMerger(under: 'outer', input: ['inner': \(treeNode)]).files"
         let output = try process(formula: "product 'Hello.app/' = \(nested)",

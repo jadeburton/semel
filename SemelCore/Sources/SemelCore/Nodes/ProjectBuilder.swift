@@ -73,7 +73,7 @@ public struct ProjectBuilder: Node {
     /// inputs have them already. Both walks rebuild the whole tree below a node, and a tree
     /// product wraps one expression once per entry: Sequel Ace's signed bundle, an
     /// expression of every compile of the app, was rebuilt for each of its files, and the
-    /// server grew past twenty gigabytes (B-153). The expression is filled once, and each
+    /// server grew past twenty gigabytes (B-155). The expression is filled once, and each
     /// entry shares it.
     static func fillingTopNode(_ folder: String, projectRoot: String, in spec: GraphSpecNode) -> GraphSpecNode {
         var properties = spec.properties

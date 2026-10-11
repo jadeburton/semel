@@ -90,6 +90,10 @@ public struct ErrorDocument: PolySerializable, Hashable, Sendable {
         /// A stored object whose bytes are not the ones it is filed under: deleting the
         /// file makes it rebuild.
         case delete(path: String)
+        /// A document a tool lays out differently on each run — frames that do not match
+        /// its constraints, or constraints that are ambiguous: its frames updated to its
+        /// constraints, or its constraints resolved, so it has one layout (B-154).
+        case resolveLayout(document: String)
     }
 
     public let diagnostic: Diagnostic

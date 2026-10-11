@@ -76,7 +76,9 @@ final class IBToolCompilerTests: SemelAppleTestCase {
 
     /// A storyboard compiles to a folder of nibs, all of which travel in the tree.
     func test_compilesAStoryboardToAStoryboardcFolder() throws {
-        executor.producedTrees["out"] = ["Main.storyboardc/Info.plist": Array("plist".utf8),
+        let index = try PropertyListSerialization.data(fromPropertyList: ["UIStoryboardDesignatedEntryPointIdentifier": "abc"],
+                                                       format: .binary, options: 0)
+        executor.producedTrees["out"] = ["Main.storyboardc/Info.plist": [UInt8](index),
                                          "Main.storyboardc/UIViewController-abc.nib": Array("nib".utf8)]
 
         let output = try process(document: "Main.storyboard")
@@ -84,6 +86,17 @@ final class IBToolCompilerTests: SemelAppleTestCase {
         XCTAssertTrue(executor.lastArguments.suffix(3) == ["--compile", "out/Main.storyboardc", "Main.storyboard"], "\(executor.lastArguments)")
         XCTAssertEqual(try treeManifest(from: output.outputValues[IBToolCompiler.output]).entries.map(\.path),
                        ["Main.storyboardc/Info.plist", "Main.storyboardc/UIViewController-abc.nib"])
+    }
+
+    /// A storyboard's index that is not a property list cannot have its UUIDs put in
+    /// canonical form, and is refused rather than published as ibtool wrote it (B-154).
+    func test_aStoryboardIndexThatDoesNotReadIsRefused() throws {
+        executor.producedTrees["out"] = ["Main.storyboardc/Info.plist": Array("not a plist".utf8)]
+
+        let output = try process(document: "Main.storyboard")
+
+        XCTAssertEqual(try errorDocument(output.outputValues[IBToolCompiler.output]).diagnostic,
+                       .engine(.nibNotCanonical(file: "Main.storyboardc/Info.plist", problem: .storyboardIndexUnreadable)))
     }
 
     /// No module is no `--module`: a document whose classes name their module needs none.
@@ -139,13 +152,65 @@ final class IBToolCompilerTests: SemelAppleTestCase {
         XCTAssertNil(IBToolCompiler.compiledPath(of: "MainMenu.xcstrings"))
     }
 
+    /// Each document is compiled twice, and the same output both times is published.
+    func test_eachDocumentIsCompiledTwice() throws {
+        executor.producedTrees["out"] = ["Base.lproj/MainMenu.nib": Array("nib".utf8)]
+
+        let output = try process()
+
+        XCTAssertEqual(executor.invocations.count, 2)
+        XCTAssertEqual(try treeManifest(from: output.outputValues[IBToolCompiler.output]).entries.map(\.path), ["Base.lproj/MainMenu.nib"])
+    }
+
+    /// A document ibtool compiles to two different outputs from one input — Sequel Ace's
+    /// `ImportAccessory.xib`, whose misplaced frames it updates afresh each run — is
+    /// refused, naming the file that differed, with the document to resolve (B-154).
+    func test_aDocumentCompiledToTwoOutputsIsRefused() throws {
+        executor.producedTreesByRun = [["out": ["Base.lproj/MainMenu.nib": Array("one layout".utf8)]],
+                                       ["out": ["Base.lproj/MainMenu.nib": Array("another".utf8)]]]
+
+        let output = try process()
+
+        XCTAssertEqual(try errorDocument(output.outputValues[IBToolCompiler.output]),
+                       ErrorDocument.engine(.toolOutputVaries(tool: "ibtool", path: "Base.lproj/MainMenu.nib"),
+                                            subject: .resource(path: "Base.lproj/MainMenu.xib"),
+                                            remedy: .resolveLayout(document: "Base.lproj/MainMenu.xib")))
+    }
+
     // MARK: - This machine
 
-    /// NetNewsWire's main window, compiled twice by the real ibtool, each run in a sandbox
-    /// of its own: a nib at its place, and the same bytes both times. Unlike actool's
-    /// `Assets.car` (B-89), ibtool's output depends on nothing but its inputs and flags —
-    /// found for five of NetNewsWire's Mac xibs, three runs each, and two storyboards and a
-    /// xib of its iOS app (Xcode 26.6).
+    /// Sequel Ace's `ProgressWindowController.storyboard` compiled by the real ibtool three
+    /// times: ibtool gives its view controllers fresh UUIDs and lists its connections in a
+    /// new order every run, and the node publishes one tree all three times, the UUIDs the
+    /// ones derived from the document (B-154).
+    func test_theRealIBToolsStoryboardComesOutAsOneTree() throws {
+        let ibtool = try XCTUnwrap(AppleToolDiscovery.locate("ibtool"), "ibtool must be discoverable via xcrun")
+        let sdkPath = try XCTUnwrap(SemelApple.sdkPath(forPlatform: .macos))
+        ToolRunnerRegistry.instance.registerTool(descriptor: descriptor, toolExecutor: try LocalFileSystemTool(localPath: ibtool))
+        let storyboard = SequelAceFixtureTests.sequelAce.appendingPathComponent("Source/Controllers/Other/ProgressWindowController.storyboard")
+        let configuration = self.configuration(module: "Sequel_Ace").replacingOccurrences(of: "/SDKs/MacOSX.sdk", with: sdkPath)
+
+        var trees: [TreeManifest] = []
+        for _ in 0..<3 {
+            let node = try IBToolCompiler(thisNode: NodeRecord(id: 1, kind: IBToolCompiler.kind))
+            let output = try node.process(input: ProcessInput(inputValues: [
+                IBToolCompiler.configuration: ["configuration": .value(try configuration.intern())],
+                IBToolCompiler.document: ["ProgressWindowController.storyboard": .value(try DataObjectStore.shared.store(fileAt: storyboard))],
+            ]))
+            trees.append(try treeManifest(from: output.outputValues[IBToolCompiler.output]))
+        }
+
+        XCTAssertEqual(trees[0], trees[1])
+        XCTAssertEqual(trees[0], trees[2])
+        let plist = try XCTUnwrap(trees[0].entries.first { $0.path == "ProgressWindowController.storyboardc/Info.plist" }?.hash)
+        let index = try XCTUnwrap(try PropertyListSerialization.propertyList(from: Data(try plist.resolve()), format: nil) as? [String: Any])
+        XCTAssertEqual((index["NSViewControllerIdentifiersToUUIDs"] as? [String: String])?["ProgressViewController"],
+                       NibCanonicaliser.derivedUUID(document: "ProgressWindowController.storyboard", identifier: "ProgressViewController"))
+    }
+
+    /// NetNewsWire's main window, compiled by the real ibtool: a nib at its place, the same
+    /// tree twice. ibtool writes this xib the same way every run, and its canonical form is
+    /// the same nib, its tables reordered.
     func test_theRealIBToolCompilesNetNewsWiresMainWindowToTheSameBytesTwice() throws {
         let ibtool = try XCTUnwrap(AppleToolDiscovery.locate("ibtool"), "ibtool must be discoverable via xcrun")
         let sdkPath = try XCTUnwrap(SemelApple.sdkPath(forPlatform: .macos))

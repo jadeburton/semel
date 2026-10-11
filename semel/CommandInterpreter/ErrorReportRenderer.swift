@@ -528,6 +528,8 @@ struct BlockRenderer {
             return labelled("vendor with", "semel-swift prepare")
         case .delete(let path):
             return labelled("delete", path)
+        case .resolveLayout(let document):
+            return labelled("resolve the misplaced or ambiguous layout in", document)
         }
     }
 

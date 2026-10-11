@@ -99,6 +99,13 @@ final class ErrorRenderingTests: XCTestCase {
                        ["the tool cannot be started", "  reason: no such file"])
     }
 
+    func test_toolOutputVaries() {
+        XCTAssertEqual(block(.toolOutputVaries(tool: "ibtool", path: "ImportAccessory.nib"),
+                             remedy: .resolveLayout(document: "input:/app/ImportAccessory.xib")),
+                       ["ImportAccessory.nib came out of ibtool differently on two runs of one input",
+                        "  resolve the misplaced or ambiguous layout in: input:/app/ImportAccessory.xib"])
+    }
+
     func test_sourceNotTaken() {
         XCTAssertEqual(block(.sourceNotTaken(path: "Parsing/Tokens.y", tool: "lex", takes: [".l", ".lm"])),
                        ["Parsing/Tokens.y is not a file lex takes", "  takes: .l, .lm"])
@@ -796,6 +803,14 @@ final class ErrorRenderingTests: XCTestCase {
                        ["Base.lproj/Main.strings is not an Interface Builder document", "  compiled: .storyboard, .xib"])
     }
 
+    func test_nibNotCanonical() {
+        XCTAssertEqual(block(.nibNotCanonical(file: "Main.storyboardc/Window.nib", problem: .readBackDiffers(object: 4))),
+                       ["Main.storyboardc/Window.nib has no canonical form that reads as the nib ibtool wrote",
+                        "  problem: read back, object 4 does not match"])
+        XCTAssertEqual(block(.nibNotCanonical(file: "Main.nib", problem: .truncated(offset: 52))),
+                       ["Main.nib has no canonical form that reads as the nib ibtool wrote", "  problem: truncated at byte 52"])
+    }
+
     func test_bundleWireKeyInvalid() {
         XCTAssertEqual(block(.bundleWireKeyInvalid(key: "Contents/Tiny.app")),
                        ["the bundle's wire is keyed 'Contents/Tiny.app', which is not one folder's name"])
@@ -879,7 +894,7 @@ final class ErrorRenderingTests: XCTestCase {
             switch condition {
             case .toolExitedSilently, .toolWroteNothing, .toolNotInstalled, .toolNotFound, .toolNotExecutable,
                  .toolInputNotWritten, .toolOutputNotRead, .toolOutputNamesItsSandbox, .toolLaunchFailed,
-                 .sourceNotTaken,
+                 .sourceNotTaken, .toolOutputVaries,
                  .settingsMissing, .settingNotAccepted, .settingNotAList, .sdkNotFound, .sdkVersionDiffers, .settingNotSupported,
                  .notPushed, .removed, .inputInError, .documentUnreadable,
                  .unlinkedKind, .unknownTypeName, .requiredPortUnwired, .severalWiresOnOneWirePort, .portNotDeclared,
@@ -900,7 +915,7 @@ final class ErrorRenderingTests: XCTestCase {
                  .noSuchConfiguration, .unsupportedSources, .noApplicationTarget, .noApplicationForSDK,
                  .severalApplicationsForSDK, .noSuchApplication, .localPackagesNotFound, .xcconfigIncludeCycle,
                  .xcconfigMissing, .undefinedPlistVariables,
-                 .notAnInterfaceBuilderDocument, .bundleWireKeyInvalid, .xcframeworkUnusable, .assetCatalogNotCanonical,
+                 .notAnInterfaceBuilderDocument, .bundleWireKeyInvalid, .xcframeworkUnusable, .assetCatalogNotCanonical, .nibNotCanonical,
                  .unclassified:
                 return true
             }
