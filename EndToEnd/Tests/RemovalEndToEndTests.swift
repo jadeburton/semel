@@ -3,9 +3,9 @@
 //  SemelEndToEndTests
 //
 //  B-149. `rm` through the real executables: the C fixture built, then removed. The
-//  removal's settle runs the project finder and nothing else — no compiler, no linker, no
-//  copy of a product — writes no cache entry, and leaves no error behind; a source removed
-//  from a project that stays is named as removed and no tool says anything about it.
+//  removal's settle lets go of the project, writes no cache entry and leaves no error
+//  behind; a source removed from a project that stays is named as removed and no tool says
+//  anything about it.
 //
 
 import Foundation
@@ -98,20 +98,40 @@ final class RemovalEndToEndTests: XCTestCase {
             .sorted()
     }
 
-    func test_removingTheFixtureRunsOnlyTheFinderAndWritesNoEntry() throws {
+    /// Which nodes compute in the removal's settle is not pinned, only that no tool does.
+    /// The removal wakes the finder and, in the same round, the nodes reading the removed
+    /// sources: a tool among them is stopped by the state its input stands in, but a node
+    /// that tolerates an absent value — the `ConfigMerger` over the project's `semel.config`,
+    /// a `ClangIncludeFinder` over a source — runs beside the finder, and whether its result
+    /// is written before the finder's write lets go of it, or dropped because the collector
+    /// took it first, is the order two threads finish in (B-156). That no tool is started is
+    /// held where a run can be counted, in `RemovalSettleTests`; here the run is held to what
+    /// a client sees: nothing answered from the cache, no entry written, no error, and
+    /// nothing of the project left in either file system.
+    func test_removingTheFixtureLetsGoOfItAndWritesNoEntry() throws {
         let tree    = try buildFixture()
         let entries = try cacheEntryCount()
 
+        let inputBefore  = try semel("ls", step: "ls")
+        let outputBefore = try semel("ls -o", step: "ls -o")
+        XCTAssertTrue(listsTheProject(inputBefore), "the project is in input: to remove\n\(inputBefore)")
+        XCTAssertTrue(listsTheProject(outputBefore), "and its products in output:\n\(outputBefore)")
+
         let output = try semel("base \(tree.path)", "rm c", "wait", "errors", step: "rm")
 
-        let settle = try summary(in: output)
-        XCTAssertEqual(settle.computed, 1, "the finder lets go of the project, and nothing else runs:\n\(output)")
-        XCTAssertEqual(settle.fromCache, 0, output)
+        XCTAssertEqual(try summary(in: output).fromCache, 0, output)
         XCTAssertTrue(output.contains("No errors."), output)
         XCTAssertEqual(try cacheEntryCount(), entries, "a removal writes no entry")
 
-        let listing = try semel("ls /", step: "ls")
-        XCTAssertFalse(listing.contains("c"), "nothing of the project is left in input:\n\(listing)")
+        let inputListing = try semel("ls", step: "ls")
+        XCTAssertFalse(listsTheProject(inputListing), "nothing of the project is left in input:\n\(inputListing)")
+        let outputListing = try semel("ls -o", step: "ls -o")
+        XCTAssertFalse(listsTheProject(outputListing), "the finder let go of its products:\n\(outputListing)")
+    }
+
+    /// Whether `ls` named the fixture's folder, `c/`, in whatever state.
+    private func listsTheProject(_ listing: String) -> Bool {
+        listing.components(separatedBy: "\n").contains { $0.split(separator: " ").contains("c/") }
     }
 
     /// The machine file every tool's settings are read from, named by path in the formula:

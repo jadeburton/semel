@@ -381,6 +381,36 @@ deletions and the idle reports. A cold build was unchanged: 94.5 s before, 95.1 
 
 ## Design, correctness and code quality
 
+**B-156** `done` — **The removal end-to-end test counted a node that may or may not run.**
+Seen 2026-10-11: `RemovalEndToEndTests.test_removingTheFixtureRunsOnlyTheFinderAndWritesNoEntry`
+(B-149) failed in an agent's root suite run with 2 nodes computed where it expected 1, and
+1 time in 3 run alone. Under twelve CPU burners on the owner's ten-core Mac it failed 4
+rounds in 20, with 2, 3 and 6 computed. No cache entry was written and no error reported in
+any of them.
+
+Fixed 2026-10-12. The engine was right and the test over-specified. `rm c` wakes the
+`ProjectFinder` and, in the same round of the pass, every node reading a file it removed.
+A tool among them is stopped by the state its input stands in (`stateStoppingProcess`).
+A node that tolerates an absent value is not stopped, by design: the `ConfigMerger` over the
+project's `semel.config` (on `override`), and each `ClangIncludeFinder` over a source.
+These run in-process beside the finder. If one finishes after the finder's write, the
+collector has taken it and its result is dropped uncounted. If it finishes first, its
+result is written and counted computed, and the node is collected a moment later. A
+settle record logged per node showed this every time: the merger, or the merger and three or
+four include finders, written `computed` before the finder. "Exactly one computed" was the
+order two threads finish in, not something B-149 promised. The test is now
+`test_removingTheFixtureLetsGoOfItAndWritesNoEntry`. It asserts nothing from the cache, no
+entry written, no error, and the project gone from `input:` and `output:`. That no tool
+is started over a removed source is held by `RemovalSettleTests`, where the runner can
+count runs. The old listing check, `ls /`, printed `(empty)` whatever the graph held, so it
+was true before the removal too. The test now runs `ls` and `ls -o`, and checks first that
+both name the project. With the change, both tests of the class passed 40 rounds in 40, under the same burners and
+beside release builds of `SemelCore`.
+
+Not done: starting the finder alone when a pass wakes it, so that nothing it lets go of
+runs at all. That would serialise every settle that changes a listing behind the finder,
+50 to 200 ms on NetNewsWire, to save runs of nodes that cost less.
+
 **B-151** `done` — **Two settle tests failed now and then on a slow machine.** Seen
 2026-10-10 on the hosted runner (three cores), on a documentation-only pull request whose
 check passed on main just before: `CheckpointTests.test_aRestoreRoundTripsFilesAddedRemovedRelinkedAndReModed`
