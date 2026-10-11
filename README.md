@@ -255,7 +255,7 @@ An `.xcodeproj` is converted the way a package is: a formula names it, and the c
 include XcodeProjectConverter(path: <IceCubesApp.xcodeproj>, root: <.>, configuration: 'Debug', sdk: 'iphonesimulator').formula
 ```
 
-A target's sources are its synchronized folders or the files its sources phase lists; Swift is compiled as one module, and Objective-C, C and C++ through clang a file at a time, each finding headers the way Xcode's header map finds them — every header the project references, by name and as `<Product/Header.h>` — with `GCC_PREFIX_HEADER` forced in, the Swift's `SWIFT_OBJC_INTERFACE_HEADER_NAME` beside them, `HEADER_SEARCH_PATHS`, `USER_HEADER_SEARCH_PATHS` (a `/**` entry recursive) and `FRAMEWORK_SEARCH_PATHS` read as folders of the project, and a file's own `COMPILER_FLAGS` after the target's. The frameworks phase's SDK frameworks and libraries are linked by name, a framework or library in the project's tree as the files it is, and a framework target of a referenced project (`PBXReferenceProxy`) is built from that project — its `MODULEMAP_FILE`, `SWIFT_INCLUDE_PATHS`, install name and versions read — and embedded as a versioned framework where a copy-files phase puts it. FUTURE.md's B-77 lists what each roster project asked for and what is still not read.
+A target's sources are its synchronized folders or the files its sources phase lists; Swift is compiled as one module, and Objective-C, C and C++ through clang a file at a time, each finding headers the way Xcode's header map finds them — every header the project references, by name and as `<Product/Header.h>` — with `GCC_PREFIX_HEADER` forced in, the Swift's `SWIFT_OBJC_INTERFACE_HEADER_NAME` beside them, `HEADER_SEARCH_PATHS`, `USER_HEADER_SEARCH_PATHS` (a `/**` entry recursive) and `FRAMEWORK_SEARCH_PATHS` read as folders of the project, and a file's own `COMPILER_FLAGS` after the target's. The frameworks phase's SDK frameworks and libraries are linked by name, a framework or library in the project's tree as the files it is, and a framework target of a referenced project (`PBXReferenceProxy`) is built from that project — its `MODULEMAP_FILE`, `SWIFT_INCLUDE_PATHS`, install name and versions read — and embedded as a versioned framework where a copy-files phase puts it. A lexer description (`.l`) in a sources phase is run through `lex` and its scanner compiled with the target's sources, a Core Data model compiled by `momc` into the bundle's resources, and a command-line tool of the project that a Mac app's copy-files phase copies is built, signed by itself and copied there. FUTURE.md's B-77 lists what each roster project asked for and what is still not read.
 
 ### Dependencies
 
@@ -387,10 +387,12 @@ SemelClang/      Clang toolchain node types
   ClangArchiver          libtool over Clang object files → a static archive
   ClangPreprocessor      Preprocesses headers
   ClangIncludeFinder     Tracks #include dependencies
+  LexGenerator           lex over a .l → the scanner as C (.yy.c)
 SemelApple/      Apple platform node types — what an app bundle needs beyond code
   AssetCatalogCompiler   actool over .xcassets and .icon folders → Assets.car + icons (a tree)
   StringCatalogCompiler  xcstringstool over an .xcstrings → one .lproj per language (a tree)
   InfoPlistBuilder       Merges base, partial plists and keys; resolves $(VAR)
+  CoreDataModelCompiler  momc over an .xcdatamodel(d) → .mom or .momd (a tree)
   XcodeProjectConverter  Turns an .xcodeproj and its xcconfig into a formula for the app and its extensions
 SemelExamples/   Nodes that exist to be read
   LineCounter            One `name: count` line per input wire — the tutorial's reference copy
