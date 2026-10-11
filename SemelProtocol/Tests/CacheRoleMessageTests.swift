@@ -17,10 +17,19 @@ final class CacheRoleMessageTests: XCTestCase {
     // MARK: - Hello
 
     func test_aHelloSaysWhetherItMeansToWrite() throws {
-        XCTAssertEqual(try json(Hello(protocolVersion: 28, role: .cache, wantsWrite: true)),
-                       #"{"protocolVersion":28,"role":"cache","wantsWrite":true}"#)
+        XCTAssertEqual(try json(Hello(protocolVersion: 30, role: .cache, wantsWrite: true)),
+                       #"{"protocolVersion":30,"role":"cache","wantsWrite":true}"#)
         XCTAssertFalse(Hello(role: .cache).wantsWrite, "a client writes only when it says so")
         XCTAssertTrue(Hello(role: .cache, wantsWrite: true).wantsWrite)
+    }
+
+    /// The name an engine gives itself (`cache.identity`), and none when its home names none:
+    /// the key is then absent, as an older peer's hello has it.
+    func test_aHelloCarriesTheIdentityTheClientGivesWhenItGivesOne() throws {
+        XCTAssertEqual(try json(Hello(protocolVersion: 30, role: .cache, wantsWrite: true, identity: "ci")),
+                       #"{"identity":"ci","protocolVersion":30,"role":"cache","wantsWrite":true}"#)
+        XCTAssertEqual(try roundTrip(Hello(role: .cache, wantsWrite: true, identity: "jade-laptop")).identity, "jade-laptop")
+        XCTAssertNil(try MessageCoder.decode(Hello.self, from: Data(#"{"protocolVersion":30,"role":"cache"}"#.utf8)).identity)
     }
 
     /// An older peer sends no `wantsWrite`; its hello still decodes, so the server can tell
@@ -81,8 +90,11 @@ final class CacheRoleMessageTests: XCTestCase {
 
     // MARK: - Responses
 
-    func test_encodesAHitAsItsCostAlone() throws {
-        XCTAssertEqual(try json(Response.cache(.entry(cost: 900))), #"{"cache":{"entry":{"cost":900}}}"#)
+    /// A hit carries what the client weighs a fetch by: the build's cost and every object the
+    /// entry holds with its size.
+    func test_encodesAHitAsItsCostAndItsObjects() throws {
+        XCTAssertEqual(try json(Response.cache(.entry(cost: 900, objects: [CachedObject(hash: "0a0b", bytes: 512)]))),
+                       #"{"cache":{"entry":{"cost":900,"objects":[{"bytes":512,"hash":"0a0b"}]}}}"#)
     }
 
     func test_encodesAHashMismatchNamingBothHashes() throws {
@@ -94,7 +106,7 @@ final class CacheRoleMessageTests: XCTestCase {
         let status = CacheServerStatus(entries: 3, bytes: ByteCount(bytes: 4_096), limit: ByteCount.gibibytes(10),
                                        hits: 7, misses: 2)
         let responses: [CacheResponse] = [
-            .entry(cost: 900),
+            .entry(cost: 900, objects: [CachedObject(hash: "0a", bytes: 1)]),
             .miss,
             .stored,
             .missingObjects(hashes: ["0a"]),
@@ -116,7 +128,7 @@ final class CacheRoleMessageTests: XCTestCase {
     /// A cache reply is one frame, always: its bytes go in the body, whatever their size.
     func test_noCacheReplyStreams() {
         XCTAssertFalse(Response.cache(.miss).mayStream)
-        XCTAssertFalse(Response.cache(.entry(cost: 1)).mayStream)
+        XCTAssertFalse(Response.cache(.entry(cost: 1, objects: [])).mayStream)
     }
 
     // MARK: - Helpers

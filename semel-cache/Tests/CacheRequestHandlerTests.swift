@@ -37,6 +37,20 @@ final class CacheRequestHandlerTests: CacheServerTestCase {
         XCTAssertEqual(client.send(.status).0, .cache(.refused(reason: .helloRequired)), "a rejected hello grants nothing")
     }
 
+    /// The name an engine's hello gives is kept with the connection's grant, for the writers'
+    /// list a deployment will name; `--writers all` grants without reading it.
+    func test_anAcceptedHelloKeepsTheIdentityItGave() throws {
+        let store = try makeStore()
+        defer { store.close() }
+        let client = HandlerClient(store: store, writers: .all)
+
+        let (reply, _) = client.handler.handle(.hello(Hello(role: .cache, wantsWrite: true, identity: "ci")), body: nil,
+                                               session: client.session)
+
+        XCTAssertEqual(reply, .hello(.cacheAccepted(access: .readWrite)))
+        XCTAssertEqual(client.session.identity, "ci")
+    }
+
     func test_aDaemonRequestIsRefusedByRole() throws {
         let store = try makeStore()
         defer { store.close() }
@@ -81,7 +95,7 @@ final class CacheRequestHandlerTests: CacheServerTestCase {
                        .cache(.stored))
 
         let (reply, body) = client.send(.getEntry(key: key("a")))
-        XCTAssertEqual(reply, .cache(.entry(cost: 900)))
+        XCTAssertEqual(reply, .cache(.entry(cost: 900, objects: held(first, second))))
         XCTAssertEqual(body, entryBytes("a"), "the bytes come back as they were put, unread")
         XCTAssertEqual(store.status().hits, 1)
         XCTAssertEqual(store.status().entries, 1)
@@ -154,7 +168,7 @@ final class CacheRequestHandlerTests: CacheServerTestCase {
         client.hello(wantsWrite: false)
 
         let (reply, body) = client.send(.getEntry(key: key("a")))
-        XCTAssertEqual(reply, .cache(.entry(cost: 40)))
+        XCTAssertEqual(reply, .cache(.entry(cost: 40, objects: held(kept))))
         XCTAssertEqual(body, entryBytes("a"))
         XCTAssertEqual(client.send(.hasObjects(hashes: [kept.hash])).0, .cache(.missingObjects(hashes: [])))
     }
@@ -282,15 +296,15 @@ final class CacheRequestHandlerTests: CacheServerTestCase {
         // Three entry requests make a use: the puts were one, and these hits are the next,
         // which leaves `recent` the one entry the last use touched.
         for _ in 0..<3 {
-            XCTAssertEqual(client.send(.getEntry(key: key("recent"))).0, .cache(.entry(cost: 1)))
+            XCTAssertEqual(client.send(.getEntry(key: key("recent"))).0, .cache(.entry(cost: 1, objects: held(recent))))
         }
 
         XCTAssertEqual(client.putEntry(key("newcomer"), cost: 100, objects: [newcomer.hash], bytes: entryBytes("newcomer")),
                        .cache(.stored))
 
         XCTAssertEqual(client.send(.getEntry(key: key("cheap"))).0, .cache(.miss), "the cheapest per byte went")
-        XCTAssertEqual(client.send(.getEntry(key: key("costly"))).0, .cache(.entry(cost: 5_000)))
-        XCTAssertEqual(client.send(.getEntry(key: key("recent"))).0, .cache(.entry(cost: 1)),
+        XCTAssertEqual(client.send(.getEntry(key: key("costly"))).0, .cache(.entry(cost: 5_000, objects: held(costly))))
+        XCTAssertEqual(client.send(.getEntry(key: key("recent"))).0, .cache(.entry(cost: 1, objects: held(recent))),
                        "the cheapest of all, but used by the last use")
         XCTAssertEqual(client.send(.hasObjects(hashes: [cheap.hash])).0, .cache(.missingObjects(hashes: [cheap.hash])),
                        "an evicted entry's objects leave with it")
@@ -345,7 +359,7 @@ final class CacheRequestHandlerTests: CacheServerTestCase {
         XCTAssertEqual(client.send(.purge(key: key("poisoned"))).0, .cache(.purged(entries: 0)))
 
         XCTAssertEqual(client.send(.getEntry(key: key("poisoned"))).0, .cache(.miss))
-        XCTAssertEqual(client.send(.getEntry(key: key("good"))).0, .cache(.entry(cost: 1)))
+        XCTAssertEqual(client.send(.getEntry(key: key("good"))).0, .cache(.entry(cost: 1, objects: held(shared))))
         XCTAssertEqual(client.send(.hasObjects(hashes: [shared.hash, own.hash])).0, .cache(.missingObjects(hashes: [own.hash])))
     }
 

@@ -55,7 +55,9 @@ public struct IBToolCompiler: Node {
     /// 4: the fingerprint of the SDK tree at `sdkPath` is in the key (B-47).
     /// 5: what ibtool wrote is published in canonical form, and a document compiled twice
     /// to two different canonical forms is an error, `toolOutputVaries` (B-154).
-    public static let implementationVersion = 5
+    /// 6: the operating system's build is in the key, since ibtool archives through the
+    /// system's AppKit, and for an iOS SDK the simulator runtimes installed (B-153).
+    public static let implementationVersion = 6
 
     // MARK: Ports
 
@@ -102,14 +104,19 @@ public struct IBToolCompiler: Node {
     /// version may compile a document differently, and only a fingerprint of the binary
     /// tells them apart (B-17). And the SDK tree behind `--sdk`, whose frameworks a
     /// document's classes are looked up in (B-47). Read from the raw text, as the binary's
-    /// half is, because the key is computed before the configuration is checked.
+    /// half is, because the key is computed before the configuration is checked. And the
+    /// system's build, whose AppKit archives the nib, and for an iOS SDK the simulator
+    /// runtimes, whose UIKit does (B-153).
     public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
         guard case .value(let hash)? = try input.onlyWire(onOptionalPort: Self.configuration)?.value else {
             return nil
         }
         let properties = [String: String](plainText: try hash.resolveAsString())
         let lines = [sdkCacheKeyMaterial(sdkPathIn: properties),
-                     toolBinaryCacheKeyMaterial(configuration: properties)].compactMap { $0 }
+                     toolBinaryCacheKeyMaterial(configuration: properties),
+                     HostOperatingSystem.cacheKeyMaterial,
+                     SimulatorRuntimes.cacheKeyMaterial(family: properties[sdkPathSettingKey].flatMap(SimulatorRuntimes.family(ofSDKPath:)))]
+            .compactMap { $0 }
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 

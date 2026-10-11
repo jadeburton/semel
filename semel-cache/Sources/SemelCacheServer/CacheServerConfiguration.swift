@@ -14,6 +14,7 @@
 
 import Foundation
 import SemelNodeKit
+import SemelProtocol
 
 /// Who may write: everyone who asks, or nobody. A list of identities comes when a deployment
 /// needs one, as a change here and not to the protocol (the 2026-10-11 design).
@@ -22,60 +23,14 @@ public enum CacheWriters: String, CaseIterable, Equatable, Sendable {
     case none
 }
 
-/// A host and a port, as `--listen` and the file write one: `127.0.0.1:7070`, `[::1]:7070`.
-public struct CacheListenAddress: Equatable, Sendable, CustomStringConvertible {
-    public let host: String
-    /// 0 asks for any free port, which the server reports once it listens.
-    public let port: UInt16
-
-    public init(host: String, port: UInt16) {
-        self.host = host
-        self.port = port
-    }
-
-    /// Nil for anything that is not a host, a colon and a port number.
-    public init?(parsing text: String) {
-        guard let colon = text.lastIndex(of: ":") else {
-            return nil
-        }
-        var host = String(text[..<colon])
-        let portText = text[text.index(after: colon)...]
-        if host.hasPrefix("["), host.hasSuffix("]") {
-            host = String(host.dropFirst().dropLast())
-        }
-        guard !host.isEmpty, !host.contains(where: \.isWhitespace),
-              !portText.isEmpty, portText.allSatisfy(\.isASCII), let port = UInt16(portText) else {
-            return nil
-        }
-        self.init(host: host, port: port)
-    }
-
-    public var description: String {
-        host.contains(":") ? "[\(host)]:\(port)" : "\(host):\(port)"
-    }
-
-    /// Where a client on this machine reaches a server listening here: the loopback address
-    /// for a server listening on every interface.
-    public var localHost: String {
-        switch host {
-        case "0.0.0.0":
-            return "127.0.0.1"
-        case "::":
-            return "::1"
-        default:
-            return host
-        }
-    }
-}
-
 /// What `semel.cache.config` holds: each setting the file names, nil where it names none.
 public struct CacheServerConfiguration: Equatable {
 
-    public var listen: CacheListenAddress?
+    public var listen: CacheAddress?
     public var limit: ByteCount?
     public var writers: CacheWriters?
 
-    public init(listen: CacheListenAddress? = nil, limit: ByteCount? = nil, writers: CacheWriters? = nil) {
+    public init(listen: CacheAddress? = nil, limit: ByteCount? = nil, writers: CacheWriters? = nil) {
         self.listen  = listen
         self.limit   = limit
         self.writers = writers
@@ -152,7 +107,7 @@ public struct CacheServerConfiguration: Equatable {
             }
             switch key {
             case .listen:
-                guard let address = CacheListenAddress(parsing: value) else {
+                guard let address = CacheAddress(parsing: value) else {
                     throw CacheServerConfigurationError.notAnAddress(value, line: line)
                 }
                 configuration.listen = address

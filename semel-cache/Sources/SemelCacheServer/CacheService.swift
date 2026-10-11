@@ -17,6 +17,9 @@ import SemelTransport
 public final class CacheSession {
     /// Read and written on the connection's preparing queue only, in arrival order.
     public internal(set) var access: CacheAccess?
+    /// The name the client's hello gave, nil when it gave none. Kept for the writers' list a
+    /// deployment will need; `--writers all` and `none` decide without it.
+    public internal(set) var identity: String?
 
     public init() {}
 }
@@ -43,7 +46,8 @@ public struct CacheRequestHandler {
         case .hello(let hello):
             let answer = answer(hello)
             if case .cacheAccepted(let access) = answer {
-                session.access = access
+                session.access   = access
+                session.identity = hello.identity
             }
             return CacheAnswer(hello: answer)
         case .daemon:

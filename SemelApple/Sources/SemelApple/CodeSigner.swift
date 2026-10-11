@@ -78,7 +78,9 @@ public struct CodeSigner: Node {
     /// where it was a sentence (B-145).
     /// 6: a tree holding one file named as the wire is a command-line tool, signed as the
     /// file it is, where it was taken for a bundle (B-77 item 4).
-    public static let implementationVersion = 6
+    /// 7: the operating system's build and the bytes of `codesign_allocate` are in the key
+    /// (B-153).
+    public static let implementationVersion = 7
 
     // MARK: Ports
 
@@ -119,9 +121,19 @@ public struct CodeSigner: Node {
 
     // MARK: Processing
 
-    /// The binary behind the tool version the configuration names (B-17).
+    /// The binary behind the tool version the configuration names (B-17); the
+    /// `codesign_allocate` it runs, by its bytes, since the configuration names it by a path
+    /// two Xcodes can share; and the system's build, whose Security framework writes the
+    /// signature (B-153).
     public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
-        try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
+        guard case .value(let hash)? = try input.onlyWire(onOptionalPort: Self.configuration)?.value else {
+            return nil
+        }
+        let properties = [String: String](plainText: try hash.resolveAsString())
+        let allocator = properties["codesignAllocatePath"].flatMap(toolBinaryFingerprint(ofFileAt:)).map { "allocate=\($0)" }
+        let lines = [toolBinaryCacheKeyMaterial(configuration: properties), allocator,
+                     HostOperatingSystem.cacheKeyMaterial].compactMap { $0 }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
     /// A signature's failure belongs to the bundle it signs, by the wire's key.

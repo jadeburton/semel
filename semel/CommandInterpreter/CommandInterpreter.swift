@@ -718,6 +718,11 @@ public final class CommandInterpreter: CommandContext {
             HelpEntry(verbs: ["cache"], usage: "cache limit [<size>]",
                       description: "show or set this home's cache limit, 10 GB unless set, with K, M or G after the number; "
                                  + "a limit below what the cache holds evicts at once"),
+            HelpEntry(verbs: ["cache"], usage: "cache server <host:port>|--none",
+                      description: "name the shared cache (semel-cache serve) this engine reads from and writes to, or none; "
+                                 + "kept in semel.engine.config and connected at once"),
+            HelpEntry(verbs: ["cache"], usage: "cache identity <name>|--none",
+                      description: "the name this engine gives the shared cache when it connects"),
             HelpEntry(verbs: ["tools", "t"], usage: "tools [<prefix>] [--platform <platform>]",
                       description: "the installed tools as config settings, as the machine file holds them"),
             HelpEntry(verbs: ["debug", "d"], usage: "debug [<cache key>]",

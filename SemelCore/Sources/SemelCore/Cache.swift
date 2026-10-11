@@ -100,6 +100,12 @@ extension Node {
     /// The entry stored under `cacheKey`, as the graph applies it: the values, and the
     /// demands as the stored table, which the applier walks by identity — no tree is built
     /// and none is hashed (B-121).
+    ///
+    /// On a local miss the shared cache is asked, when the home names one (B-153): its entry,
+    /// with every object it holds fetched into the object store and verified, is written
+    /// into the local cache and answers as a local one would. Every failure on that path is
+    /// a miss, counted by the shared cache and never thrown, so a remote can make a node's
+    /// lookup slower and never make it fail.
     func loadCachedOutputs(cacheKey: String?) throws -> AppliedOutput? {
 
         guard let cacheKey, descriptor.cachesOutputs else {
@@ -115,9 +121,28 @@ extension Node {
         }
 
         // A row whose bytes are not an entry this Semel reads is a miss, as no row is.
-        guard let decodedCacheEntry = try database.cacheEntry.entry(forKey: cacheKey) else {
+        if let local = try database.cacheEntry.entry(forKey: cacheKey) {
+            return try applied(local, cacheKey: cacheKey, fetched: nil)
+        }
+        // A type with no static input port never writes an entry (`saveCacheFor…`), so no
+        // engine has put one there to fetch, and the round trip would be for nothing.
+        guard !descriptor.staticInputPorts.isEmpty, let sharedCache = BuildEngine.shared?.sharedCache else {
             return nil
         }
+        let lookup = sharedCache.fetch(key: CacheKey(hash: cacheKey))
+        guard let remote = lookup.fetched else {
+            Debug.log("the shared cache: \(lookup.debugName) for \(type(of: self)), nodeID \(thisNode.id ?? -1)")
+            return nil
+        }
+        return try applied(remote.entry, cacheKey: cacheKey, fetched: remote)
+    }
+
+    /// An entry found under `cacheKey` — in the local cache, or fetched from the shared one
+    /// — as the graph applies it, or nil when this Semel cannot apply it. A fetched entry
+    /// that can be is written into the local cache with the objects the shared cache said it
+    /// holds, so the next lookup is local and the trim and the collector account for it.
+    private func applied(_ decodedCacheEntry: ProcessCacheEntry, cacheKey: String,
+                         fetched: FetchedEntry?) throws -> AppliedOutput? {
 
         // An entry's specs demand a subgraph by naming node types, and a node type carries
         // no version for a type other than its own: a Semel that drops or renames a type
@@ -135,6 +160,18 @@ extension Node {
         // caught by the applier, which checks a row before making a node from it.
         guard decodedCacheEntry.specTable.referencesOnlyHeldRows() else {
             return nil
+        }
+
+        if let fetched {
+            // Stamped as used by the settle in progress, as every write is.
+            try database.cacheEntry.save(hash: cacheKey,
+                                         nodeType: decodedCacheEntry.keyMaterial.nodeType,
+                                         cost: fetched.cost,
+                                         content: fetched.content,
+                                         objects: fetched.objects)
+            Debug.log("using the shared cache: \(type(of: self)), nodeID \(thisNode.id ?? -1)")
+            return AppliedOutput(outputValues: decodedCacheEntry.outputValues,
+                                 specTable: decodedCacheEntry.specTable)
         }
 
         // Below every reason this lookup can answer nothing, so only a row that was used
@@ -194,14 +231,21 @@ extension Node {
         let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues,
                                            specTable: output.specTable,
                                            keyMaterial: keyMaterial)
+        let key     = try cacheEntry.key()
+        let cost    = CacheCost.milliseconds(of: processingDuration)
+        let content = try cacheEntry.encoded()
+        let objects = BuildEngine.heldObjects(outputValues: output.outputValues, in: DataObjectStore.shared)
 
         // Replaces rather than refuses: a key whose row this Semel could not read is a key
         // it just missed on, and the build that missed is the one thing that can put a
         // readable entry there.
-        try database.cacheEntry.put(cacheEntry,
-                                    cost: CacheCost.milliseconds(of: processingDuration),
-                                    objects: BuildEngine.heldObjects(outputValues: output.outputValues,
-                                                                     in: DataObjectStore.shared))
+        try database.cacheEntry.save(hash: key.hash, nodeType: keyMaterial.nodeType, cost: cost,
+                                     content: content, objects: objects)
+
+        // Handed to the shared cache's queue, which writes it on a thread of its own: this
+        // returns at once whatever the server is doing, and a server that never takes it
+        // costs the entry, never the settle (B-153).
+        BuildEngine.shared?.sharedCache?.populate(PopulationItem(key: key, cost: cost, objects: objects, content: content))
     }
 }
 

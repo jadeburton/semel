@@ -9,6 +9,7 @@ import Foundation
 import SemelCache
 import SemelCacheServer
 import SemelNodeKit
+import SemelProtocol
 import XCTest
 
 final class CacheServerConfigurationTests: CacheServerTestCase {
@@ -16,7 +17,7 @@ final class CacheServerConfigurationTests: CacheServerTestCase {
     // MARK: - The file
 
     func test_whatIsWrittenReadsBackAsTheSameSettings() throws {
-        let configuration = CacheServerConfiguration(listen: CacheListenAddress(host: "0.0.0.0", port: 7070),
+        let configuration = CacheServerConfiguration(listen: CacheAddress(host: "0.0.0.0", port: 7070),
                                                      limit: ByteCount(bytes: 1_536 * ByteCount.mebibyte),
                                                      writers: .all)
 
@@ -55,23 +56,23 @@ final class CacheServerConfigurationTests: CacheServerTestCase {
     /// `serve`'s arguments go over the file, setting by setting, and what neither names
     /// stays unset.
     func test_theArgumentsGoOverTheFileSettingBySetting() {
-        let file = CacheServerConfiguration(listen: CacheListenAddress(host: "127.0.0.1", port: 1), limit: ByteCount.gibibytes(5))
+        let file = CacheServerConfiguration(listen: CacheAddress(host: "127.0.0.1", port: 1), limit: ByteCount.gibibytes(5))
         let arguments = CacheServerConfiguration(writers: .all)
 
         XCTAssertEqual(file.overridden(by: arguments),
-                       CacheServerConfiguration(listen: CacheListenAddress(host: "127.0.0.1", port: 1),
+                       CacheServerConfiguration(listen: CacheAddress(host: "127.0.0.1", port: 1),
                                                 limit: ByteCount.gibibytes(5), writers: .all))
     }
 
     func test_anAddressIsAHostAndAPort() {
-        XCTAssertEqual(CacheListenAddress(parsing: "127.0.0.1:7070"), CacheListenAddress(host: "127.0.0.1", port: 7070))
-        XCTAssertEqual(CacheListenAddress(parsing: "[::1]:7070"), CacheListenAddress(host: "::1", port: 7070))
-        XCTAssertEqual(CacheListenAddress(host: "::1", port: 7070).description, "[::1]:7070")
-        XCTAssertEqual(CacheListenAddress(parsing: "cache.lan:80")?.host, "cache.lan")
-        XCTAssertNil(CacheListenAddress(parsing: "7070"))
-        XCTAssertNil(CacheListenAddress(parsing: "host:70000"))
-        XCTAssertNil(CacheListenAddress(parsing: ":7070"))
-        XCTAssertEqual(CacheListenAddress(host: "0.0.0.0", port: 1).localHost, "127.0.0.1")
+        XCTAssertEqual(CacheAddress(parsing: "127.0.0.1:7070"), CacheAddress(host: "127.0.0.1", port: 7070))
+        XCTAssertEqual(CacheAddress(parsing: "[::1]:7070"), CacheAddress(host: "::1", port: 7070))
+        XCTAssertEqual(CacheAddress(host: "::1", port: 7070).description, "[::1]:7070")
+        XCTAssertEqual(CacheAddress(parsing: "cache.lan:80")?.host, "cache.lan")
+        XCTAssertNil(CacheAddress(parsing: "7070"))
+        XCTAssertNil(CacheAddress(parsing: "host:70000"))
+        XCTAssertNil(CacheAddress(parsing: ":7070"))
+        XCTAssertEqual(CacheAddress(host: "0.0.0.0", port: 1).localHost, "127.0.0.1")
     }
 
     // MARK: - The command line
@@ -81,7 +82,7 @@ final class CacheServerConfigurationTests: CacheServerTestCase {
                                               "--limit", "20G", "--writers", "all"])
 
         XCTAssertEqual(command, .serve(home: CacheHome(folder: URL(fileURLWithPath: "/srv/cache", isDirectory: true)),
-                                       settings: CacheServerConfiguration(listen: CacheListenAddress(host: "0.0.0.0", port: 7070),
+                                       settings: CacheServerConfiguration(listen: CacheAddress(host: "0.0.0.0", port: 7070),
                                                                           limit: ByteCount.gibibytes(20),
                                                                           writers: .all)))
     }

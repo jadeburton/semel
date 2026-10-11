@@ -52,6 +52,7 @@ var runningServer: Server?
 func stopCleanly() {
     if engineStarted {
         BuildEngine.shared.stopProcessingLoop()
+        BuildEngine.shared.useSharedCache(nil)
     }
     guard let runningServer else {
         try? FileManager.default.removeItem(atPath: socketPath)
@@ -94,6 +95,9 @@ do {
     try SemelExamples.register()
     try BuildEngine.start(cacheLimit: engineConfiguration.cacheLimit)
     engineStarted = true
+    // The shared cache the home names, if any (B-153). Connected on a thread of its own:
+    // the server answers at once, and lookups are local misses until the connection is up.
+    BuildEngine.shared.useSharedCache(RequestHandler.sharedCache(for: engineConfiguration))
 } catch {
     try? FileManager.default.removeItem(atPath: socketPath)
     fail("cannot start the engine: \(error)", code: 1)
@@ -130,6 +134,9 @@ do {
 print("Semel server \(Semel.version)")
 print("Graph:  \(SemelPaths.database.path)")
 print("Socket: \(socketPath)")
+if let cacheServer = engineConfiguration.cacheServer {
+    print("Cache:  \(cacheServer)" + (engineConfiguration.cacheIdentity.map { " as \($0)" } ?? ""))
+}
 // A setting that silently fell back would be one nobody could trust, so an unusable
 // SEMEL_JOBS is named here beside the value that stands in for it.
 let jobs = Jobs.resolve()

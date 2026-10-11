@@ -9,10 +9,16 @@ import SemelNodeKit
 
 enum ClangToolDiscovery {
 
-    /// The compiler, linker and preprocessor are all the clang binary.
+    /// The compiler, linker and preprocessor are all the clang binary. A link runs `ld`
+    /// beside it, whose bytes the descriptor's fingerprint carries too: the linker ships
+    /// beside the compiler and can be updated without it.
     static var finder: ToolFinder {
-        ToolFinder(name: "clang", locate: { locate("clang") }, version: version(ofToolAt:))
+        ToolFinder(name: "clang", locate: { locate("clang") }, version: version(ofToolAt:),
+                   companionFingerprint: { siblingBinariesFingerprint(besideToolAt: $0, named: helpers) })
     }
+
+    /// What clang runs from beside itself.
+    static let helpers = ["ld"]
 
     /// The archiver runs libtool: clang writes no static archive itself (B-79).
     static var libtoolFinder: ToolFinder {

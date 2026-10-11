@@ -29,8 +29,9 @@ build and test step so that there is one command to keep true, not because a CI 
 it. What the flag buys is below.
 
 The root package links `SemelProtocol` through `SemelCLI` and `SemelServer`, and
-`SemelCache` through `SemelCore`, `SemelCLI` and `SemelCacheServer`, so the root build
-covers both; their own lines above are still the only thing that runs their tests.
+`SemelCache` through `SemelCore`, `SemelCLI`, `SemelCacheClient` and `SemelCacheServer`, so
+the root build covers both; their own lines above are still the only thing that runs their
+tests.
 
 A root test run covers **only** the root package's test targets: `SemelCLITests`,
 `SemelTransportTests`, `SemelServerTests`, `SemelWatchTests`, `SemelMonitorTests`,
@@ -84,6 +85,14 @@ libraries, never in either program: what an entry is, how a key is hashed and th
 eviction order are `SemelCache`'s, and the wire both speak, framing, correlation, streamed
 replies, pipelining and the listener, is `SemelTransport`'s. If a server wants something
 from `SemelCore` or `SemelServer`, it belongs in one of those libraries instead.
+The engine's side of a shared cache follows the same lines from the other end (phase 3):
+`SharedCache` in `SemelCache` is everything an engine does with one — the fetch on a local
+miss, the population queue, the reconnection, the fetch policy — over the `RemoteCache`
+protocol it declares, and the one conformance that speaks frames, `SocketRemoteCache`, is
+the root package's `SemelCacheClient`, which `SemelServer` installs from the home's
+settings. It cannot live in `SemelCache`: `SemelProtocol` links the cache for `CacheKey`
+and the transport links the protocol, so a cache that spoke frames would close a cycle. The
+engine never imports the transport and never sees a frame.
 `CacheServerDependencyRuleTests` reads the manifests and fails when `semel-cache` or its
 library names anything else. The server reads nothing inside an entry: the entry is the
 engine's encoding, carried and stored as bytes, and what the server files it by — the key,
@@ -326,14 +335,18 @@ read off a clock, and nothing else in the engine may order by it. Either policy 
 which builds a later settle has to run again, never what any settle computes. `semel-cache`
 is held to the same: the recorded cost is the one duration it reads, to order eviction,
 and what the last use touched is counted in requests (`CacheServerStore.requestsPerUse`),
-never read off a clock.
+never read off a clock. An engine's client of a shared cache (`SharedCache`, in
+`SemelCache`) is resource policy of the same kind and lives outside the engine's
+decisions: it measures a fetch's time to weigh the next fetch against an entry's cost, and
+waits between attempts to connect, and either decides only whether a build is fetched or
+run — never what it computes.
 
 **A setting that must not affect a build never enters `input:` and never enters a key.**
-The engine's own settings — the cache's limit (`cache.limit`), and the remote cache's
-address and the name this engine gives it when they come (B-153) — live in
+The engine's own settings — the cache's limit (`cache.limit`), the shared cache's address
+(`cache.server`) and the name this engine gives it (`cache.identity`, B-153) — live in
 `semel.engine.config` in the Semel home, beside `semel.base`, read by `semelserv` when it
-starts and written by the prompt (`cache limit <size>`) through a request to the running
-server (`EngineConfiguration`). The machine file, `semel.machine.config`, is exactly the
+starts and written by the prompt (`cache limit <size>`, `cache server <host:port>`, `cache
+identity <name>`) through a request to the running server (`EngineConfiguration`). The machine file, `semel.machine.config`, is exactly the
 wrong place for one: it is pushed into `input:` and read by nodes through config filters,
 so a line added there wakes every node reading that namespace and moves every key it
 reaches, and a setting that only says where the cache is would spoil the entries it was

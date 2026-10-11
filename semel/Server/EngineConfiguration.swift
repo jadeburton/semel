@@ -3,7 +3,8 @@
 //
 // The engine's own settings, kept across launches in `semel.engine.config` in the Semel home,
 // beside `semel.base`. `semelserv` reads the file when it starts and writes it when the
-// prompt changes a setting (`cache limit <size>`), then applies the change at once.
+// prompt changes a setting (`cache limit <size>`, `cache server <host:port>`, `cache
+// identity <name>`), then applies the change at once.
 //
 // None of these settings may affect what a build produces, so none of them enters `input:`
 // and none enters a cache key. That is why they have a file of their own: the machine file
@@ -15,6 +16,7 @@
 
 import Foundation
 import SemelNodeKit
+import SemelProtocol
 
 /// What `semel.engine.config` holds.
 ///
@@ -29,8 +31,17 @@ public struct EngineConfiguration: Equatable {
     /// applies.
     public var cacheLimit: ByteCount?
 
-    public init(cacheLimit: ByteCount? = nil) {
-        self.cacheLimit = cacheLimit
+    /// The shared cache the engine reads from and writes to (B-153), nil when the home names
+    /// none and the engine is its local cache alone.
+    public var cacheServer: CacheAddress?
+
+    /// The name the engine gives the shared cache in its hello, nil for none.
+    public var cacheIdentity: String?
+
+    public init(cacheLimit: ByteCount? = nil, cacheServer: CacheAddress? = nil, cacheIdentity: String? = nil) {
+        self.cacheLimit    = cacheLimit
+        self.cacheServer   = cacheServer
+        self.cacheIdentity = cacheIdentity
     }
 
     // MARK: - Where it lives
@@ -45,17 +56,18 @@ public struct EngineConfiguration: Equatable {
 
     // MARK: - The text
 
-    /// Named under `cache.` as the settings that come with a remote cache will be
-    /// (`cache.server`, `cache.identity`), so that `cache` at the prompt is where all of
-    /// them are seen.
+    /// Named under `cache.`, so that `cache` at the prompt is where all of them are seen.
     enum Key: String, CaseIterable {
-        case cacheLimit = "cache.limit"
+        case cacheLimit    = "cache.limit"
+        case cacheServer   = "cache.server"
+        case cacheIdentity = "cache.identity"
     }
 
     /// The first lines of the file, for whoever opens it without knowing what it is.
     static let heading = """
         # Semel's engine settings: read by semelserv when it starts. None of them enters a build's
-        # input or a cache key. `cache limit <size>` at the prompt writes cache.limit.
+        # input or a cache key. `cache limit <size>`, `cache server <host:port>` and
+        # `cache identity <name>` at the prompt write cache.limit, cache.server and cache.identity.
         """
 
     /// The file as it is written: the heading, then a line per setting that is set. A size
@@ -63,7 +75,13 @@ public struct EngineConfiguration: Equatable {
     public var text: String {
         var lines = [Self.heading]
         if let cacheLimit {
-            lines.append("\(Key.cacheLimit.rawValue)  \(cacheLimit.exactText)")
+            lines.append("\(Key.cacheLimit.rawValue)     \(cacheLimit.exactText)")
+        }
+        if let cacheServer {
+            lines.append("\(Key.cacheServer.rawValue)    \(cacheServer)")
+        }
+        if let cacheIdentity {
+            lines.append("\(Key.cacheIdentity.rawValue)  \(cacheIdentity)")
         }
         return lines.joined(separator: "\n") + "\n"
     }
@@ -99,7 +117,26 @@ public struct EngineConfiguration: Equatable {
             }
             configuration.cacheLimit = limit
         }
+        if let (value, line) = values[.cacheServer] {
+            guard let address = CacheAddress(parsing: value) else {
+                throw EngineConfigurationError.notAnAddress(Key.cacheServer.rawValue, value, line: line)
+            }
+            configuration.cacheServer = address
+        }
+        if let (value, line) = values[.cacheIdentity] {
+            guard Self.isIdentity(value) else {
+                throw EngineConfigurationError.notAnIdentity(Key.cacheIdentity.rawValue, value, line: line)
+            }
+            configuration.cacheIdentity = value
+        }
         return configuration
+    }
+
+    /// Whether `text` can be a client's name: one word of printable characters, so that it
+    /// is one value on its line and reads back as written.
+    public static func isIdentity(_ text: String) -> Bool {
+        !text.isEmpty && text.unicodeScalars.allSatisfy { !CharacterSet.whitespacesAndNewlines.contains($0)
+                                                          && !CharacterSet.controlCharacters.contains($0) }
     }
 
     // MARK: - On disk
@@ -137,6 +174,8 @@ public enum EngineConfigurationError: Error, Equatable, CustomStringConvertible,
     case repeatedKey(String, line: Int)
     case emptyValue(String, line: Int)
     case notASize(String, String, line: Int)
+    case notAnAddress(String, String, line: Int)
+    case notAnIdentity(String, String, line: Int)
     /// The file is there and could not be read as UTF-8 text.
     case unreadable(String, reason: String)
     case unwritable(String, reason: String)
@@ -152,6 +191,10 @@ public enum EngineConfigurationError: Error, Equatable, CustomStringConvertible,
             return "line \(line): '\(key)' has no value"
         case .notASize(let key, let value, let line):
             return "line \(line): '\(value)' is not a size for '\(key)'; give bytes, or a number with K, M or G after it"
+        case .notAnAddress(let key, let value, let line):
+            return "line \(line): '\(value)' is not an address for '\(key)'; give a host and a port, as 192.168.1.20:7070"
+        case .notAnIdentity(let key, let value, let line):
+            return "line \(line): '\(value)' is not a name for '\(key)'; give one word"
         case .unreadable(let path, let reason):
             return "\(path) could not be read: \(reason)"
         case .unwritable(let path, let reason):

@@ -10,8 +10,10 @@
 import Foundation
 import SemelNodeKit
 
-/// An object an entry holds in the object store, with its size there.
-public struct CachedObject: Equatable, Hashable {
+/// An object an entry holds in the object store, with its size there. Codable, because a
+/// shared cache answers an entry with the objects it holds and their sizes: what a client
+/// weighs a fetch by before it fetches anything.
+public struct CachedObject: Codable, Equatable, Hashable, Sendable {
     public let hash:  DataObjectHash
     public let bytes: Int
 

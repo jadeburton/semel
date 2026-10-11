@@ -351,17 +351,115 @@ final class EnginePlugin: CommandPlugin {
     // MARK: - cache (B-148)
 
     /// `cache`: every entry with what it alone holds, largest first, under a line with the
-    /// total and the limit; `cache limit` the limit; `cache limit <size>` sets it, and the
-    /// engine trims to it at once.
+    /// total and the limit and the shared cache's figures; `cache limit` the limit; `cache
+    /// limit <size>` sets it, and the engine trims to it at once; `cache server` and `cache
+    /// identity` name the shared cache and what this engine calls itself to it (B-153).
     private func handleCache(tokens: [String], context: any CommandContext) throws {
         guard let subcommand = tokens.first else {
             try listCache(context: context)
             return
         }
-        guard subcommand == "limit" else {
-            context.outputError("cache: '\(subcommand)' is not something `cache` does; `cache limit [<size>]` is")
+        switch subcommand {
+        case "limit":
+            try handleCacheLimit(tokens: tokens, context: context)
+        case "server":
+            try handleCacheServer(tokens: tokens, context: context)
+        case "identity":
+            try handleCacheIdentity(tokens: tokens, context: context)
+        default:
+            context.outputError("cache: '\(subcommand)' is not something `cache` does; `cache limit [<size>]`, "
+                              + "`cache server <host:port>|--none` and `cache identity <name>|--none` are")
+        }
+    }
+
+    /// `cache server <host:port>` names the shared cache, `cache server --none` names none.
+    private func handleCacheServer(tokens: [String], context: any CommandContext) throws {
+        guard tokens.count <= 2 else {
+            throw CommandParserError.tooManyArguments(command: "cache server")
+        }
+        guard let argument = tokens.dropFirst().first else {
+            context.outputError("cache server: give the shared cache's address, as 192.168.1.20:7070, or --none")
             return
         }
+        var address: CacheAddress?
+        if argument != "--none" {
+            guard let parsed = CacheAddress(parsing: argument) else {
+                context.outputError("cache server: '\(argument)' is not an address; give a host and a port, as 192.168.1.20:7070, "
+                                  + "or --none")
+                return
+            }
+            address = parsed
+        }
+        guard case .sharedCache(let summary) = try context.request(.cacheServer(address: address)).0 else {
+            return
+        }
+        Self.sharedCacheLines(summary).forEach(context.outputMessage)
+    }
+
+    /// `cache identity <name>` names this engine to the shared cache, `--none` unnames it.
+    private func handleCacheIdentity(tokens: [String], context: any CommandContext) throws {
+        guard tokens.count <= 2 else {
+            throw CommandParserError.tooManyArguments(command: "cache identity")
+        }
+        guard let argument = tokens.dropFirst().first else {
+            context.outputError("cache identity: give the name this engine says to the shared cache, or --none")
+            return
+        }
+        let identity: String? = argument == "--none" ? nil : argument
+        guard case .sharedCache(let summary) = try context.request(.cacheIdentity(identity: identity)).0 else {
+            return
+        }
+        Self.sharedCacheLines(summary).forEach(context.outputMessage)
+    }
+
+    /// The shared cache as `cache` heads it: where it is and under what name, how the
+    /// connection stands, and what it has done.
+    static func sharedCacheLines(_ summary: SharedCacheSummary) -> [String] {
+        let named = summary.identity.map { " as \($0)" } ?? ""
+        guard let server = summary.server else {
+            return ["No shared cache is set\(summary.identity.map { "; this engine is named \($0) to one" } ?? "")."]
+        }
+        var lines = ["Shared cache: \(server)\(named), \(connectionText(summary.connection))."]
+        guard let figures = summary.figures else {
+            return lines
+        }
+        let lookups = "\(figures.hits) hit\(figures.hits == 1 ? "" : "s"), \(figures.misses) miss\(figures.misses == 1 ? "" : "es"), "
+                    + "\(figures.failures) failed, \(figures.declined) declined, \(figures.unavailable) while down; "
+                    + "\(figures.bytesFetched) fetched"
+        var link: [String] = []
+        if let microseconds = figures.measuredMicrosecondsPerRequest {
+            link.append(String(format: "%.1f ms a request", Double(microseconds) / 1_000))
+        }
+        if let rate = figures.measuredBytesPerSecond {
+            link.append("\(ByteCount(bytes: rate))/s")
+        }
+        lines.append("  Lookups: \(lookups)\(link.isEmpty ? "" : " (" + link.joined(separator: ", ") + ")").")
+        lines.append("  Writes: \(figures.entriesSent) entr\(figures.entriesSent == 1 ? "y" : "ies") sent (\(figures.bytesSent)), "
+                   + "\(figures.queued) queued, \(figures.dropped) dropped, \(figures.writeFailures) failed.")
+        if let failure = figures.lastFailure {
+            lines.append("  Last failure: \(failure)")
+        }
+        return lines
+    }
+
+    private static func connectionText(_ connection: SharedCacheConnection?) -> String {
+        switch connection {
+        case .readWrite:
+            return "connected, read and write"
+        case .readOnly:
+            return "connected, read only"
+        case .down(let reason):
+            return "not connected, retrying: \(reason)"
+        case .rejected(let reason):
+            return "refused: \(reason)"
+        case .connecting, nil:
+            return "connecting"
+        }
+    }
+
+    /// `cache limit` the limit; `cache limit <size>` sets it, and the engine trims to it at
+    /// once.
+    private func handleCacheLimit(tokens: [String], context: any CommandContext) throws {
         guard tokens.count <= 2 else {
             throw CommandParserError.tooManyArguments(command: "cache limit")
         }
@@ -392,6 +490,9 @@ final class EnginePlugin: CommandPlugin {
         let count = summary.entries
         context.outputMessage("\(count) entr\(count == 1 ? "y holds" : "ies hold") \(summary.bytes) against a limit of "
                             + "\(summary.limit)\(summary.limitIsDefault ? " (the default)" : "").")
+        if summary.shared.server != nil || summary.shared.identity != nil {
+            Self.sharedCacheLines(summary.shared).forEach(context.outputMessage)
+        }
         let typeWidth = entries.map(\.nodeType.count).max() ?? 0
         for entry in entries {
             context.outputMessage(Self.entryLine(entry, typeWidth: typeWidth))

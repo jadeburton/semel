@@ -128,7 +128,8 @@ final class EnginePluginTests: XCTestCase {
                        CacheEntryRecord(key: CacheKey(hash: String(repeating: "b", count: 64)), nodeType: "ClangCompiler",
                                         bytes: ByteCount(bytes: 512), cost: 40, usedByLastSettle: false, heldByNode: false)]
         connection.reply(.cache(summary: CacheSummary(entries: 2, bytes: ByteCount(bytes: 3 * ByteCount.mebibyte + 512),
-                                                      limit: ByteCount.gibibytes(10), limitIsDefault: true, lastTrim: nil)),
+                                                      limit: ByteCount.gibibytes(10), limitIsDefault: true, lastTrim: nil,
+                                                      shared: Self.noSharedCache)),
                          body: try MessageCoder.encode(entries))
 
         try run("cache")
@@ -148,7 +149,7 @@ final class EnginePluginTests: XCTestCase {
                                    evictedByType: [CacheEvictedType(nodeType: "SwiftCompiler", count: 2),
                                                    CacheEvictedType(nodeType: "ClangCompiler", count: 1)])
         connection.reply(.cache(summary: CacheSummary(entries: 0, bytes: ByteCount(bytes: 1_024), limit: ByteCount(bytes: 2_048),
-                                                      limitIsDefault: false, lastTrim: trim)),
+                                                      limitIsDefault: false, lastTrim: trim, shared: Self.noSharedCache)),
                          body: try MessageCoder.encode([CacheEntryRecord]()))
 
         try run("cache")
@@ -157,6 +158,73 @@ final class EnginePluginTests: XCTestCase {
             "0 entries hold 1.0 KB against a limit of 2.0 KB.",
             "The last trim: evicted 3 entries (2.0 MB) — SwiftCompiler 2, ClangCompiler 1; the cache holds 1.0 KB.",
         ])
+    }
+
+    // MARK: - The shared cache (B-153)
+
+    static let noSharedCache = SharedCacheSummary(server: nil, identity: nil, connection: nil, figures: nil)
+
+    static func figures(hits: Int = 0, queued: Int = 0, lastFailure: String? = nil) -> SharedCacheFigures {
+        SharedCacheFigures(hits: hits, misses: 2, failures: 1, declined: 0, unavailable: 3,
+                           bytesFetched: ByteCount(bytes: 2 * ByteCount.mebibyte), entriesSent: 4,
+                           bytesSent: ByteCount(bytes: 1_024), queued: queued, dropped: 0, writeFailures: 0,
+                           measuredBytesPerSecond: nil, measuredMicrosecondsPerRequest: nil, lastFailure: lastFailure)
+    }
+
+    /// The shared cache heads the list when the home names one: where, under what name, how
+    /// the connection stands and what it has done.
+    func test_cacheShowsTheSharedCacheWithItsFigures() throws {
+        let shared = SharedCacheSummary(server: CacheAddress(host: "192.168.1.20", port: 7070), identity: "ci",
+                                        connection: .readWrite, figures: Self.figures(hits: 12, queued: 1))
+        connection.reply(.cache(summary: CacheSummary(entries: 0, bytes: ByteCount(bytes: 0), limit: ByteCount.gibibytes(10),
+                                                      limitIsDefault: true, lastTrim: nil, shared: shared)),
+                         body: try MessageCoder.encode([CacheEntryRecord]()))
+
+        try run("cache")
+
+        XCTAssertEqual(context.messages, [
+            "0 entries hold 0 B against a limit of 10.0 GB (the default).",
+            "Shared cache: 192.168.1.20:7070 as ci, connected, read and write.",
+            "  Lookups: 12 hits, 2 misses, 1 failed, 0 declined, 3 while down; 2.0 MB fetched.",
+            "  Writes: 4 entries sent (1.0 KB), 1 queued, 0 dropped, 0 failed.",
+        ])
+    }
+
+    func test_cacheServerSendsTheAddressAndSaysWhereTheConnectionStands() throws {
+        let address = CacheAddress(host: "cache.local", port: 7070)
+        connection.reply(.sharedCache(summary: SharedCacheSummary(server: address, identity: nil, connection: .connecting,
+                                                                  figures: Self.figures())))
+
+        try run("cache", ["server", "cache.local:7070"])
+
+        XCTAssertEqual(connection.daemonRequests, [.cacheServer(address: address)])
+        XCTAssertEqual(context.messages.first, "Shared cache: cache.local:7070, connecting.")
+    }
+
+    func test_cacheServerNoneSendsNoAddress() throws {
+        connection.reply(.sharedCache(summary: Self.noSharedCache))
+
+        try run("cache", ["server", "--none"])
+
+        XCTAssertEqual(connection.daemonRequests, [.cacheServer(address: nil)])
+        XCTAssertEqual(context.messages, ["No shared cache is set."])
+    }
+
+    func test_cacheServerRefusesWhatIsNotAnAddress() throws {
+        try run("cache", ["server", "cache.local"])
+
+        XCTAssertEqual(connection.daemonRequests, [])
+        XCTAssertEqual(context.errors, ["cache server: 'cache.local' is not an address; give a host and a port, as "
+                                      + "192.168.1.20:7070, or --none"])
+    }
+
+    func test_cacheIdentitySendsTheName() throws {
+        connection.reply(.sharedCache(summary: SharedCacheSummary(server: nil, identity: "laptop", connection: nil, figures: nil)))
+
+        try run("cache", ["identity", "laptop"])
+
+        XCTAssertEqual(connection.daemonRequests, [.cacheIdentity(identity: "laptop")])
+        XCTAssertEqual(context.messages, ["No shared cache is set; this engine is named laptop to one."])
     }
 
     func test_cacheLimitAloneAsksForTheLimit() throws {
@@ -197,7 +265,8 @@ final class EnginePluginTests: XCTestCase {
         try run("cache", ["clear"])
 
         XCTAssertEqual(connection.daemonRequests, [])
-        XCTAssertEqual(context.errors, ["cache: 'clear' is not something `cache` does; `cache limit [<size>]` is"])
+        XCTAssertEqual(context.errors, ["cache: 'clear' is not something `cache` does; `cache limit [<size>]`, "
+                                      + "`cache server <host:port>|--none` and `cache identity <name>|--none` are"])
     }
 
     func test_sizesAreReadInBinaryUnitsWithAnOptionalSuffix() {

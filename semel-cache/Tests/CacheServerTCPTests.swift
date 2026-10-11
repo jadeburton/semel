@@ -15,7 +15,7 @@ import XCTest
 final class CacheServerTCPTests: CacheServerTestCase {
 
     private func startServer(writers: CacheWriters) throws -> (CacheServer, UInt16) {
-        let server = try CacheServer(home: home, overrides: CacheServerConfiguration(listen: CacheListenAddress(host: "127.0.0.1", port: 0),
+        let server = try CacheServer(home: home, overrides: CacheServerConfiguration(listen: CacheAddress(host: "127.0.0.1", port: 0),
                                                                                      writers: writers))
         try server.start()
         return (server, try XCTUnwrap(server.port))
@@ -56,7 +56,7 @@ final class CacheServerTCPTests: CacheServerTestCase {
         var answered = 0
         for index in 0..<count {
             let (reply, _) = try reader.send(.cache(.getEntry(key: key("entry \(index)"))), body: nil)
-            XCTAssertTrue(reply == .cache(.miss) || reply == .cache(.entry(cost: index)), "\(reply)")
+            XCTAssertTrue(reply == .cache(.miss) || reply == .cache(.entry(cost: index, objects: held(objects[index]))), "\(reply)")
             answered += 1
         }
         wait(for: [wrote], timeout: 60)
@@ -64,7 +64,7 @@ final class CacheServerTCPTests: CacheServerTestCase {
         XCTAssertEqual(answered, count)
         for index in [0, count / 2, count - 1] {
             let (reply, body) = try reader.send(.cache(.getEntry(key: key("entry \(index)"))), body: nil)
-            XCTAssertEqual(reply, .cache(.entry(cost: index)))
+            XCTAssertEqual(reply, .cache(.entry(cost: index, objects: held(objects[index]))))
             XCTAssertEqual(body, entryBytes("entry \(index)"))
         }
         let (objectReply, objectBody) = try reader.send(.cache(.getObject(hash: objects[7].hash)), body: nil)

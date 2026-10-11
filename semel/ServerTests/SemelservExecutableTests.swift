@@ -107,7 +107,7 @@ final class SemelservExecutableTests: XCTestCase {
         XCTAssertEqual(server.waitForExit(timeout: 30), 0)
 
         let written = try String(contentsOf: settings, encoding: .utf8)
-        XCTAssertTrue(written.hasSuffix("\ncache.limit  20G\n"), written)
+        XCTAssertTrue(written.hasSuffix("\ncache.limit     20G\n"), written)
     }
 
     /// A settings file the server cannot read stops it before it opens the graph, naming
