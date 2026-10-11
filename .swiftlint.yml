@@ -65,6 +65,7 @@ included:
   - SemelExamples/Tests
   - semel
   - semel-watch
+  - semel-monitor
   - EndToEnd/Tests
 
 excluded:
