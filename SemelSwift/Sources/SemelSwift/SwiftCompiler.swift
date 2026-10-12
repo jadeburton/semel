@@ -261,7 +261,24 @@ struct SwiftCompiler: Node {
     /// names, where it named nothing (B-77 item 4).
     /// 10: a package's target compiled for the Mac finds the platform's testing modules,
     /// XCTest and Testing, on the search paths `swift build` gives it (B-80).
-    public static let implementationVersion = 10
+    /// 11: the implicit module cache is a folder of the sandbox, `-module-cache-path`, where
+    /// swiftc kept it in the user's cache folder (B-157). The bytes it writes are the same;
+    /// the command line is not.
+    public static let implementationVersion = 11
+
+    /// The implicit module cache, a folder of the sandbox, as clang's is
+    /// (`ClangLanguageFeatures.moduleCachePath`): the Clang modules and the SDK's modules a
+    /// compile builds are derived from the SDK and the inputs, so they live and die with the
+    /// run and are never an output. Without it swiftc keeps them in the user's cache
+    /// folder, which `HOME` and `TMPDIR` do not move — a writable folder every compile
+    /// reads, outside the sandbox, that only grows. Relative, like every path on the command
+    /// line. The compiler validates what the cache holds, so where it is changes no byte of
+    /// the object or the module: the module serializes no debugging options, and nothing
+    /// here asks for debug information.
+    /// ISSUE: a `-g` a target's own flags add records each module it imported at the `.pcm`'s
+    /// absolute path, which names the sandbox; in the user's cache folder it named a folder
+    /// of this machine instead.
+    static let moduleCachePath = "\(ToolSandbox.derivedStateFolderName)/swift-module-cache"
 
     // MARK: Ports
 
@@ -720,6 +737,7 @@ struct SwiftCompiler: Node {
         // frontend flag with no driver spelling.
         arguments.append("-file-compilation-dir");           arguments.append(ToolSandbox.canonicalRootName)
         arguments.append("-Xfrontend");                      arguments.append("-no-serialize-debugging-options")
+        arguments.append("-module-cache-path");              arguments.append(Self.moduleCachePath)
 
         if !inputs.moduleFiles.isEmpty {
             arguments.append("-I"); arguments.append(".")
