@@ -221,12 +221,18 @@ and the converter's passes included — and a build with nothing changed under a
 `swift build` of the same wrapper, packages resolved, took 17 s. A compile here is a module
 at a time with `-whole-module-optimization`, where SwiftPM's debug build compiles a module's
 files in batches across the cores, which is most of the gap on a package whose two largest
-modules, `SwiftSyntax` and `SwiftParser`, are most of its source. swift-syntax at its own
-root does not convert: `prepare` takes its nested `SwiftParserCLI` package for a root, whose
-manifest depends on `..` by path and names that package `swift-syntax`, and `dump-package`
-in the reader's sandbox, which holds the one manifest, names `..` for the sandbox's own
-folder and refuses the product. swift-dependencies 1.17.0, its macro built from swift-syntax, took 44 s
-cold under the same conditions.
+modules, `SwiftSyntax` and `SwiftParser`, are most of its source. swift-dependencies 1.17.0,
+its macro built from swift-syntax, took 44 s cold under the same conditions.
+
+Measured 2026-10-12, swift-syntax 603.0.2 at its own root (B-80 item 2): `prepare --platform
+macos` takes the package at the top as the one root and vendors nothing, and the build is
+every library product, the two test-support ones the wrapper left out among them — nineteen
+archives. Debug binaries, a fresh home started by the build itself, `SEMEL_JOBS` unset (ten
+jobs), an M4 shared with other agents' work (load average 5–7): two cold builds took 62 s and
+71 s, 128 nodes, and a build with nothing changed 2.1 s. `swift build` of the checkout, every
+target, took 57 s at a load average of 11–16. Where the time goes is the module-at-a-time
+compile above; a loaded machine moves the figure a long way — a cold build at a load average
+of 145–170 took 200 s.
 
 Measured 2026-10-01 again, on the same four trees assembled afresh — 4,530 files in 1,345
 folders, 166 MB: this repository as `git archive` exports it at `2957914`, the other three

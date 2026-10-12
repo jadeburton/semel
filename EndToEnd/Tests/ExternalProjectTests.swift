@@ -184,9 +184,22 @@ final class ExternalProjectTests: XCTestCase {
         }
     }
 
+    /// B-80 item 2: swift-syntax from its own root, its nested packages not roots, every
+    /// library product an archive.
+    func test_swiftSyntaxBuildsFromItsOwnRoot() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.swiftSyntax)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("swift-syntax\n\(error)")
+        }
+    }
+
     func test_everyExternalProjectInTheRosterHasATestHere() {
         XCTAssertEqual(Set(Projects.external.map(\.name)),
                        ["icecubes", "icecubes-app", "semel", "lua", "sqlite", "simdjson", "food-truck", "food-truck-mac",
-                        "netnewswire-mac", "netnewswire-ios", "codeedit", "sequel-ace", "swift-dependencies"])
+                        "netnewswire-mac", "netnewswire-ios", "codeedit", "sequel-ace", "swift-dependencies", "swift-syntax"])
     }
 }

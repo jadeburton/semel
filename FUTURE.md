@@ -3910,6 +3910,33 @@ are the acceptance tests, in rising cost:
    app uses `@Observable` and `@Model`; the sample itself is not in the roster.
 2. *swift-syntax* alone — no macro support needed to build it; a large pure-Swift build and
    a useful performance benchmark in its own right.
+
+   *Done 2026-10-12.* swift-syntax 603.0.2 converts and builds from its own root, and is in
+   the roster as `swift-syntax`, its nineteen library products as archives. Three things
+   stood in the way. `prepare` took the nested `SwiftParserCLI` for a root, since it
+   depends on `..` and nothing depends on it: a package nested in another package's folder
+   is now never a root — SwiftPM builds a package without the packages below it, its
+   tools, examples and fixtures — and of the rest a package is a root unless another
+   reaches it through any chain of path dependencies, an upward one included
+   (`PackageScan.roots`); `SwiftParserCLI`, `Examples`, `CodeGeneration` and
+   `SwiftSyntaxDevUtils` are built by nothing. The reader laid a manifest at the sandbox's
+   root, where `..` was the sandbox's parent under the sandbox's name: it now lays it at
+   its path in the input file system, as every tool's inputs are, and points
+   `dump-package` at that folder, so `..` is the folder it names, under its own name, and
+   is published as `..`, which the converter resolves against the package. And
+   `SwiftSyntaxMacrosTestSupport` imports XCTest: a package's target compiled for the Mac
+   is given the platform's `Developer/Library/Frameworks` and `Developer/usr/lib`, as
+   `swift build` gives every target there, and what they hold is in the compiler's
+   fingerprint beside its plugins.
+
+   The reader also reads the manifest SwiftPM would. It is wired to the package's folder as
+   well as its `Package.swift`, asks for every `Package@swift-<version>.swift` the folder
+   holds and lays them beside it, and `dump-package` chooses as it does on disk. The choice
+   is not made from the names: SwiftPM takes the one naming the toolchain's version
+   exactly, and failing that the newest older one only when its `swift-tools-version` is
+   newer than `Package.swift`'s, so a `Package@swift-5.7.swift` kept for older toolchains
+   is not read by 6.3. A version-specific manifest is an ordinary file of its folder, in
+   the lock's fold like any other.
 3. *swift-dependencies* or *swift-composable-architecture* — package-defined macros built
    from swift-syntax and run as compiler plugins.
 

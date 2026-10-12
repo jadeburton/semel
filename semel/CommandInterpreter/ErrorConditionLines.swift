@@ -467,6 +467,7 @@ struct ConditionLines {
         case .locks:                  noun = "locks of vendored packages"
         case .headerFolders:          noun = "header folders"
         case .includeFiles:           noun = "include files"
+        case .versionSpecificManifests: noun = "version-specific package manifests"
         }
         return paths.isEmpty ? "\(noun) have no value" : "\(noun) without a value: \(capped(paths))"
     }

@@ -2106,6 +2106,28 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertEqual(try externalSpecs(output).keys.sorted(), ["input:/repo/Models"])
     }
 
+    /// swift-syntax's `SwiftParserCLI` (B-80): a nested package depends on `..`, which the
+    /// reader publishes as `..` under the identity of the folder it names. The dependency
+    /// is the package one folder up, read by a reader of its `Package.swift` wired to its
+    /// folder as well, whose listing says which version-specific manifests sit beside it.
+    func test_aDependencyOnTheParentFolderIsThePackageThere() throws {
+        let output = try convert(packageFolder: "input:/repo/swift-syntax/SwiftParserCLI", json: """
+            {
+              "name": "SwiftParserCLI",
+              "dependencies": [{"fileSystem": [{"identity": "swift-syntax", "path": ".."}]}],
+              "products": [{"name": "swift-parser-cli", "targets": ["swift-parser-cli"], "type": {"executable": null}}],
+              "targets": [{"name": "swift-parser-cli", "type": "executable",
+                           "dependencies": [{"product": ["SwiftParser", "swift-syntax", null, null]}]}]
+            }
+            """)
+
+        let reader = try XCTUnwrap(try externalSpecs(output)["input:/repo/swift-syntax"])
+        XCTAssertTrue(reader.contains(#"packageFile: ["input:/repo/swift-syntax/Package.swift": "#
+                                      + "StaticFile(path: 'input:/repo/swift-syntax/Package.swift').output]"), reader)
+        XCTAssertTrue(reader.contains(#"packageFolder: ["input:/repo/swift-syntax": "#
+                                      + "Folder(path: 'input:/repo/swift-syntax').manifest]"), reader)
+    }
+
     // MARK: - C targets (B-54)
 
     // swift-cmark, reached through EmojiText and swift-markdown, is 34 C files in two

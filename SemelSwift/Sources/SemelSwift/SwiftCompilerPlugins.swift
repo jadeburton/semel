@@ -25,6 +25,9 @@
 // descriptor is per tool, not per SDK. A platform installed or removed therefore moves
 // every Swift key once, which is the cost of not knowing at discovery which platform a
 // build is for. Paths are recorded relative to the toolchain and to the platforms folder.
+// The Mac's platform adds its testing modules, which a package target's compile finds on
+// the search paths `swift build` gives it (`macTestingPaths`): read from the machine like
+// the plugins, so keyed like them.
 //
 // Each file is recorded by its path, size and modification time, not its bytes — the
 // scheme the SDK's fingerprint uses (`sdkContentFingerprint`), for the reason it does.
@@ -83,7 +86,7 @@ enum SwiftCompilerPlugins {
         if let platforms {
             let names = (try? FileManager.default.contentsOfDirectory(atPath: platforms.path)) ?? []
             for platform in names.filter({ $0.hasSuffix(".platform") }).sorted() {
-                for relative in platformPaths {
+                for relative in platformPaths + (platform == macPlatformName ? macTestingPaths : []) {
                     let path = platform + "/" + relative
                     lines += fileLines(at: platforms.appendingPathComponent(path), labelled: "platforms/" + path)
                 }
@@ -103,6 +106,17 @@ enum SwiftCompilerPlugins {
     static let platformPaths = ["Developer/usr/lib/swift/host/plugins",
                                 "Developer/usr/local/lib/swift/host/plugins",
                                 "Developer/usr/bin/swift-plugin-server"]
+
+    /// The Mac's platform, whose testing modules a package target compiles against
+    /// (`SwiftCompiler.testingSearchPaths`).
+    static let macPlatformName = "MacOSX.platform"
+
+    /// Under the Mac's `.platform`: the testing modules — XCTest, Testing and their
+    /// companions — that a package target finds on the search paths `swift build` gives
+    /// every target on the Mac. Read by such a compile as the plugins are, from the machine
+    /// and not from a wire, so covered by the same fingerprint; the Mac's alone, since no
+    /// other platform's compile is given the paths.
+    static let macTestingPaths = ["Developer/Library/Frameworks", "Developer/usr/lib/XCTest.swiftmodule"]
 
     private static let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
                                                  .contentModificationDateKey]

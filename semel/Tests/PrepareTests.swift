@@ -253,6 +253,38 @@ final class PrepareTests: XCTestCase {
         XCTAssertEqual(roots.map(\.name), ["Explore", "Timeline"])
     }
 
+    /// swift-syntax's shape (B-80): the package at the top, and below it the tools and
+    /// examples that depend on it by `..` — or on nothing local at all, as `CodeGeneration`
+    /// depends on a released swift-syntax by URL. A nested package is never a root, and a
+    /// dependency pointing up at its ancestor does not make the ancestor anyone's
+    /// dependency: the one root is the package at the top.
+    func test_aNestedPackageIsNotARootAndItsDependencyOnItsAncestorDoesNotHideIt() {
+        let summaries = [
+            summary("swift-syntax"),
+            summary("swift-syntax/SwiftParserCLI", dependsOn: ["swift-syntax"]),
+            summary("swift-syntax/Examples", dependsOn: ["swift-syntax"]),
+            summary("swift-syntax/CodeGeneration"),
+        ]
+
+        let roots = PackageScan.roots(of: summaries)
+
+        XCTAssertEqual(roots.map(\.name), ["swift-syntax"])
+    }
+
+    /// A dependency is followed through a nested package: a sibling that names a package's
+    /// tool reaches the package the tool names above it, so the sibling is the root.
+    func test_aPackageReachedThroughAnotherPackagesNestedToolIsNotARoot() {
+        let summaries = [
+            summary("Lib"),
+            summary("Lib/Tool", dependsOn: ["Lib"]),
+            summary("App", dependsOn: ["Lib/Tool"]),
+        ]
+
+        let roots = PackageScan.roots(of: summaries)
+
+        XCTAssertEqual(roots.map(\.name), ["App"])
+    }
+
     // MARK: - The formula
 
     func test_theFormulaNamesEachRootThroughOneBuildRoot() {

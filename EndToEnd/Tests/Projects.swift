@@ -624,9 +624,33 @@ enum Projects {
         expectedProducts: ["libDependencies.a", "libDependenciesMacros.a", "libDependenciesTestSupport.a"],
         buildTimeout: 5 * 60)
 
+    /// swift-syntax at its own root (B-80 item 2), at the commit its `603.0.2` tag names: a
+    /// large pure-Swift build and the benchmark B-80 names. `prepare` takes the package at
+    /// the top as the one root — `SwiftParserCLI`, `Examples`, `CodeGeneration` and
+    /// `SwiftSyntaxDevUtils` are nested packages, built by nothing its products reach — and
+    /// has nothing to vendor. The products are every library product, as archives, the
+    /// test-support ones among them: `SwiftSyntaxMacrosTestSupport` imports XCTest, found
+    /// on the platform's search paths as `swift build` finds it. A cold build takes 62–71 s
+    /// with debug binaries on a shared M4 and the whole test, clone, `prepare` and the four
+    /// hermeticity builds, 291 s; the budget is per step, four times the slower cold build.
+    static let swiftSyntax = Project(
+        name: "swift-syntax",
+        source: .git(url: "https://github.com/swiftlang/swift-syntax.git",
+                     commit: "79e4b74a295b6eb74a8b585e3a39d29e70c1dbd1",
+                     subfolder: "."),
+        buildFolder: "swift-syntax",
+        platform: "macos",
+        expectedProducts: ["libSwiftBasicFormat.a", "libSwiftCompilerPlugin.a", "libSwiftDiagnostics.a", "libSwiftIDEUtils.a",
+                           "libSwiftIfConfig.a", "libSwiftLexicalLookup.a", "libSwiftOperators.a", "libSwiftParser.a",
+                           "libSwiftParserDiagnostics.a", "libSwiftRefactor.a", "libSwiftSyntax.a", "libSwiftSyntaxBuilder.a",
+                           "libSwiftSyntaxMacroExpansion.a", "libSwiftSyntaxMacros.a", "libSwiftSyntaxMacrosGenericTestSupport.a",
+                           "libSwiftSyntaxMacrosTestSupport.a", "libSwiftWarningControl.a",
+                           "lib_SwiftCompilerPluginMessageHandling.a", "lib_SwiftLibraryPluginProvider.a"],
+        buildTimeout: 5 * 60)
+
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftCPackage, swiftHelloApp, swiftBinaryTargetApp,
                                       swiftMacroApp]
     static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, simdjson, foodTruck, foodTruckMac, netNewsWireMac, netNewsWireIOS,
-                                      codeEdit, sequelAce, swiftDependencies]
+                                      codeEdit, sequelAce, swiftDependencies, swiftSyntax]
     static let all: [Project] = fixtures + external
 }
