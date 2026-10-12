@@ -63,4 +63,20 @@ final class PushedFilesTests: XCTestCase {
         XCTAssertEqual(try PushedFiles.contents(of: body, by: [header("a", Data("he".utf8)), header("b", Data("llo".utf8))]),
                        [Data("he".utf8), Data("llo".utf8)])
     }
+
+    /// Each file is read where it lies in the body, not copied out of it: a batch is up
+    /// to its whole length again otherwise (B-155).
+    func test_eachFileIsTheBodysOwnBytes() throws {
+        // Longer than `Data` keeps inline, so the body has storage of its own to share.
+        let first  = Data(repeating: 1, count: 100)
+        let second = Data(repeating: 2, count: 200)
+        let body   = PushedFiles.body(joining: [first, second])
+
+        let contents = try PushedFiles.contents(of: body, by: [header("a", first), header("b", second)])
+
+        let bodyStart   = body.withUnsafeBytes { $0.baseAddress }
+        let secondStart = contents[1].withUnsafeBytes { $0.baseAddress }
+        XCTAssertEqual(secondStart, bodyStart.map { $0 + first.count })
+        XCTAssertEqual(contents, [first, second])
+    }
 }

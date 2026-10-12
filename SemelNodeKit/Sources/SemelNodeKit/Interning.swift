@@ -48,6 +48,23 @@ extension [UInt8] {
     }
 }
 
+extension Data {
+    /// `[UInt8].intern()` over these bytes where they are, with no copy into an array of
+    /// their own: what a pushed file's slice of its request's body is stored by.
+    public func intern() throws -> DataObjectHash {
+        let hash = internedHash
+        if !hash.isEmpty {
+            try DataObjectStore.shared.store(hash: hash, content: self)
+        }
+        return hash
+    }
+
+    /// `[UInt8].internedHash` of these bytes.
+    public var internedHash: DataObjectHash {
+        isEmpty ? "" : Sha256.hash(self)
+    }
+}
+
 extension String {
     public func intern() throws -> DataObjectHash {
         try [UInt8](Data(utf8)).intern()

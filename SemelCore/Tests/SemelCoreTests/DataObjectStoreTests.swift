@@ -38,6 +38,20 @@ final class DataObjectStoreTests: SemelCoreTestCase {
         XCTAssertEqual(try store.read(hash: hash), content)
     }
 
+    /// Bytes interned where they lie — a pushed file's slice of its request's body — are
+    /// the object the same bytes in an array of their own intern to (B-155).
+    func test_bytesInternedWhereTheyLieAreTheObjectAnArrayInternsTo() throws {
+        let content = [UInt8]("int main(void) { return 0; } /* longer than a digest */".utf8)
+        let body    = Data([UInt8]("header".utf8) + content)
+
+        let hash = try body[6...].intern()
+
+        XCTAssertEqual(hash, content.internedHash)
+        XCTAssertEqual(try store.read(hash: hash), content)
+        XCTAssertEqual(try Data([1, 2]).intern(), try [UInt8]([1, 2]).intern())
+        XCTAssertEqual(try Data().intern(), "")
+    }
+
     func test_aMissingObjectReadsAsNil() throws {
         XCTAssertNil(try store.read(hash: String(repeating: "a", count: 64)))
     }
