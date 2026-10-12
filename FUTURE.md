@@ -49,7 +49,7 @@
 
 - Get it working with large c or c++ project
 
-- A tool to convert a makefile or cmake file to a Formula file, or even a Node that does it: B-156 below. Technically this is trying to convert imperative code to functional, but a "pure" makefile can in fact be functional, and the declarative core of a CMakeLists.txt is what `semel-cmake` reads.
+- A tool to convert a makefile or cmake file to a Formula file, or even a Node that does it: B-157 below. Technically this is trying to convert imperative code to functional, but a "pure" makefile can in fact be functional, and the declarative core of a CMakeLists.txt is what `semel-cmake` reads.
 
 - Make github repo public
 
@@ -872,7 +872,7 @@ and `XCFrameworkSliceSelectorTests`. What remains:
 
 ### CMake and makefile conversion
 
-**B-156** `doing` — **`semel-cmake`: a CMakeLists.txt tree as a formula, by translation.**
+**B-157** `doing` — **`semel-cmake`: a CMakeLists.txt tree as a formula, by translation.**
 Two ways to read a CMake project were weighed. Running `cmake` and reading its file API, or
 `make -n`, gives the effective compile and link steps and dodges both languages, but what
 it gives is a flattened command list with every machine-probed value baked in, and the

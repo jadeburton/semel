@@ -35,7 +35,7 @@ enum Projects {
         buildTimeout: fixtureTimeout)
 
     /// No formula committed: `semel-cmake` writes it from the fixture's CMakeLists.txt and
-    /// the subdirectory's, in the harness's copy, before the build (B-156). The library's
+    /// the subdirectory's, in the harness's copy, before the build (B-157). The library's
     /// private define and its public include folder are what the sources check.
     static let cmakeHello = Project(
         name: "cmake-hello",

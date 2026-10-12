@@ -2,7 +2,7 @@
 //  CMakeConversionTests.swift
 //  SemelCLITests
 //
-//  B-156. `semel-cmake` over a folder on disk: the files it writes, the files it keeps,
+//  B-157. `semel-cmake` over a folder on disk: the files it writes, the files it keeps,
 //  and — here because this is the one target that sees the engine, which parses, and the
 //  translator, which emits — that the formula it writes resolves to the products the
 //  CMakeLists.txt declares, through the clang prelude, as a build would read it.

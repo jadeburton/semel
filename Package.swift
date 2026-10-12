@@ -182,7 +182,7 @@ let package = Package(
             exclude: ["Library"],
             sources: ["main.swift"]
         ),
-        // The CMake translation tool (B-156): reads a CMakeLists.txt tree and writes the
+        // The CMake translation tool (B-157): reads a CMakeLists.txt tree and writes the
         // formula and the project's config beside it, once, then the clang machine file. The
         // three stages — parse, evaluate, emit — live in the SemelCMake package and touch
         // no disk; this library is where the files are read and written.

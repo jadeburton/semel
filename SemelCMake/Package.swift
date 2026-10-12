@@ -3,7 +3,7 @@ import PackageDescription
 
 // CMake projects as formulas: a parser for the CMake language, an evaluator for its
 // declarative subset into a model of the project, and an emitter from that model to the
-// formula and config a hand-written C project would carry (B-156).
+// formula and config a hand-written C project would carry (B-157).
 //
 // Depends on SemelNodeKit and *not* on the engine, like the toolchain packages. Nothing
 // here touches a file system or a machine: files come in through a reader, the facts a

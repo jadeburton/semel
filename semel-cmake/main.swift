@@ -4,7 +4,7 @@
 //
 //  semel-cmake [<folder>] [--platform macos|ios-simulator]
 //
-//  Translates a CMake project into a formula (B-156): reads the folder's CMakeLists.txt
+//  Translates a CMake project into a formula (B-157): reads the folder's CMakeLists.txt
 //  and the files it reaches, and writes `semel.fmla` and `semel.config` beside it from
 //  the declarative subset of what they say — targets, sources, include folders, defines,
 //  options and links — refusing the procedural rest by name and line, which the formula's
