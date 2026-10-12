@@ -44,7 +44,7 @@ struct SocketWatchConnector: WatchConnector {
 }
 
 func fail(_ message: String, status: Int32) -> Never {
-    FileHandle.standardError.write(Data("semel-watch: \(message)\n".utf8))
+    FileHandle.standardError.write(Data((ErrorMark.marked("semel-watch: \(message)") + "\n").utf8))
     exit(status)
 }
 

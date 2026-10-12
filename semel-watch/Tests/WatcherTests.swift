@@ -189,7 +189,7 @@ final class WatcherTests: XCTestCase {
 
         try watcher.run()
 
-        XCTAssertTrue(lines.contains("export: src: no such folder in the output file system"), lines.joined(separator: "\n"))
+        XCTAssertTrue(lines.contains("❌ export: src: no such folder in the output file system"), lines.joined(separator: "\n"))
     }
 
     /// B-142. A settle that leaves errors exports what has a value into the destination —
@@ -299,9 +299,9 @@ final class WatcherTests: XCTestCase {
 
         XCTAssertEqual(watcher.batchesIssued, 2)
         XCTAssertEqual(watcher.batchesRefused, 1)
-        XCTAssertTrue(lines.contains { $0.hasPrefix("app/Dependencies/Pkg is locked, and the batch changes it") },
+        XCTAssertTrue(lines.contains { $0.contains("app/Dependencies/Pkg is locked, and the batch changes it") },
                       lines.joined(separator: "\n"))
-        XCTAssertTrue(lines.contains("semel-watch: the batch was not committed; nothing was built or exported from it."))
+        XCTAssertTrue(lines.contains("❌ semel-watch: the batch was not committed; nothing was built or exported from it."))
         XCTAssertEqual(try heldText("app/Dependencies/Pkg/Pkg.swift"), "public struct Pkg {}\n")
         XCTAssertEqual(try heldText("app/src/main.swift"), "print(2)\n")
     }

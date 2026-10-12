@@ -90,7 +90,7 @@ final class ProgramDrivenCommandTests: XCTestCase {
         let result = interpreter.handleCommand(verb: "push", arguments: ["src/a.c", "missing.c", "lib/b.c", "src/a.c"])
 
         XCTAssertEqual(result, .failed)
-        XCTAssertEqual(lines, ["push: missing.c: no such file or directory", "Push file: src/a.c", "Push file: lib/b.c"])
+        XCTAssertEqual(lines, ["❌ push: missing.c: no such file or directory", "Push file: src/a.c", "Push file: lib/b.c"])
         XCTAssertTrue(try interpreter.inputHolds("src/a.c"))
         XCTAssertTrue(try interpreter.inputHolds("lib/b.c"))
     }

@@ -651,13 +651,15 @@ final class ErrorRenderingTests: XCTestCase {
         XCTAssertEqual(ErrorReportRenderer.lines(for: .batchRejected(
             folder: "Packages/Dependencies/GRDB.swift", lock: "Packages/Dependencies/GRDB.swift.semel-lock",
             expected: .contentRoot("aaa"), found: "bbb",
-            paths: ["Packages/Dependencies/GRDB.swift/a.swift", "Packages/Dependencies/GRDB.swift/b.swift"])), [
+            paths: ["Packages/Dependencies/GRDB.swift/a.swift", "Packages/Dependencies/GRDB.swift/b.swift"],
+            pathsNotListed: 0)), [
             "Packages/Dependencies/GRDB.swift is locked, and the batch changes it without a lock it matches: "
                 + "nothing of the batch is committed",
             "  lock: Packages/Dependencies/GRDB.swift.semel-lock",
             "  expected: sha256:aaa",
             "  found: sha256:bbb",
             "  paths: Packages/Dependencies/GRDB.swift/a.swift, Packages/Dependencies/GRDB.swift/b.swift",
+            "  input: as it was before the batch; nothing the batch pushed or removed is there",
             "  re-lock with: semel-swift prepare",
         ])
         let expectations: [(LockExpectation, String)] = [
@@ -667,9 +669,25 @@ final class ErrorRenderingTests: XCTestCase {
         ]
         for (expected, line) in expectations {
             let lines = ErrorReportRenderer.lines(for: .batchRejected(folder: "f", lock: "f.semel-lock", expected: expected,
-                                                                      found: nil, paths: []))
+                                                                      found: nil, paths: [], pathsNotListed: 0))
             XCTAssertEqual(lines.dropFirst().prefix(3), ["  lock: f.semel-lock", line, "  found: no folder"])
         }
+    }
+
+    /// A rejection names the first paths it carries and counts the rest: those it carries
+    /// and does not name, and those the server left out so that the refusal fits one reply
+    /// (B-161).
+    func test_batchRejectedCountsThePathsItDoesNotName() {
+        let listed = (0..<50).map { "Dependencies/Pkg/f\($0).swift" }
+        let lines  = ErrorReportRenderer.lines(for: .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
+                                                                   expected: .contentRoot("aaa"), found: "bbb",
+                                                                   paths: listed, pathsNotListed: 19_952))
+        XCTAssertTrue(lines.contains("  paths: \(listed.prefix(5).joined(separator: ", ")) and 19997 more"), "\(lines)")
+
+        let few = ErrorReportRenderer.lines(for: .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
+                                                                expected: .contentRoot("aaa"), found: "bbb",
+                                                                paths: ["Dependencies/Pkg/a.swift"], pathsNotListed: 3))
+        XCTAssertTrue(few.contains("  paths: Dependencies/Pkg/a.swift and 3 more"), "\(few)")
     }
 
     func test_binaryTargetNotBuilt() {

@@ -88,7 +88,7 @@ final class LockedFolderServerTests: RequestHandlerTestCase {
         _ = try daemon(client, .pushFile(path: source, mode: 0o644), body: Data("public struct Pkg { let edited = 1 }\n".utf8))
         _ = try daemon(client, .pushFile(path: "App/main.swift", mode: 0o644), body: Data("print(1)\n".utf8))
 
-        guard case .error(.batchRejected(let folder, let lockPath, let expected, let found, let paths)) =
+        guard case .error(.batchRejected(let folder, let lockPath, let expected, let found, let paths, let pathsNotListed)) =
                 try daemon(client, .endBatch) else {
             return XCTFail("the commit was not refused")
         }
@@ -97,9 +97,31 @@ final class LockedFolderServerTests: RequestHandlerTestCase {
         XCTAssertEqual(expected, .contentRoot(try FolderContentRoot.root(ofFolderAt: disk.appendingPathComponent(package))))
         XCTAssertNotNil(found)
         XCTAssertEqual(paths, [source])
+        XCTAssertEqual(pathsNotListed, 0)
         XCTAssertEqual(held(source), "public struct Pkg {}\n", "the locked file is as it was")
         XCTAssertNil(held("App/main.swift"), "and so is every other path of the batch")
         client.close()
+    }
+
+    /// A refusal of more paths than the rejection names carries the first fifty, in path
+    /// order, and counts the rest, over a socket as a client receives it (B-161).
+    func test_aRefusalOfManyPathsCarriesFiftyAndCountsTheRest() throws {
+        let client = try SocketConnection.connect(to: socketPath)
+        defer { client.close() }
+        XCTAssertEqual(try daemon(client, .beginBatch), .daemon(.ok))
+        let pushed = (0..<1_000).map { "\(package)/Sources/Pkg/Many/File\(String(format: "%04d", $0)).swift" }
+        for path in pushed {
+            _ = try daemon(client, .pushFile(path: path, mode: 0o644), body: Data("let edited = 1\n".utf8))
+        }
+
+        guard case .error(.batchRejected(_, _, _, _, let paths, let pathsNotListed)) = try daemon(client, .endBatch) else {
+            return XCTFail("the commit was not refused")
+        }
+        // The files and the one folder they made: the batch's rows below the locked folder.
+        let changed = pushed.count + 1
+        XCTAssertEqual(paths.count, ErrorResponse.batchRejectedPathsListed)
+        XCTAssertEqual(paths, paths.sorted())
+        XCTAssertEqual(paths.count + pathsNotListed, changed, "\(paths)")
     }
 
     func test_aRefusedCommitLeavesNoBatchOpenAndTheNextOneIsItsOwn() throws {
@@ -118,7 +140,7 @@ final class LockedFolderServerTests: RequestHandlerTestCase {
     // MARK: - Batches of one, nested batches
 
     func test_aPushOutsideABatchIsCheckedAsABatchOfOne() throws {
-        guard case .batchRejected(let folder, _, _, _, let paths)? =
+        guard case .batchRejected(let folder, _, _, _, let paths, _)? =
                 daemonError(.pushFile(path: source, mode: 0o644), body: Data("edited\n".utf8)) else {
             return XCTFail("the push was not refused")
         }

@@ -83,7 +83,9 @@ public enum ProtocolVersion {
     /// `entry` the objects it holds with their sizes, and the engine's requests and replies
     /// for its shared cache: `cacheServer`, `cacheIdentity`, `sharedCache`, and `cache`'s
     /// summary of the shared cache (B-153).
-    public static let current = 30
+    /// Version 31 bounds `batchRejected`: it names at most fifty of the batch's paths and
+    /// counts the rest in `pathsNotListed`, so the rejection always fits a frame (B-161).
+    public static let current = 31
 }
 
 public struct Hello: Codable, Equatable, Sendable {

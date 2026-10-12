@@ -57,7 +57,7 @@ public final class CommandInterpreter: CommandContext {
     }
     func outputError(_ errorMessage: String) {
         errorsLock.withLock { errorsReportedStorage += 1 }
-        indicator.interrupting { output(errorMessage) }
+        indicator.interrupting { output(ErrorMark.marked(errorMessage)) }
     }
 
     func settleWaitBegan() { indicator.begin(showing: settleInProgress) }

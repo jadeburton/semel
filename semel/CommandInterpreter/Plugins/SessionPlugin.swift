@@ -72,12 +72,14 @@ final class SessionPlugin: CommandPlugin {
         context.openBatchDepth += 1
     }
 
-    /// Ends the batch, and when that was the outermost one, waits for what it released:
-    /// the engine schedules on the end, so the commit is the natural place to see it
-    /// settle, and a `wait` typed with the batch still open would never return.
+    /// Ends the batch, and when that was the outermost one, says it committed and waits for
+    /// what it released: the engine schedules on the end, so the commit is the natural place
+    /// to see it settle, and a `wait` typed with the batch still open would never return.
     ///
-    /// A batch the lock barrier refused is gone on the server, taken back whole, and so it
-    /// is gone here: the depth goes to zero and the refusal is the command's error.
+    /// An outermost commit that fails, for whatever reason, leaves no batch open here: the
+    /// server closes the session's batch before it answers, and a batch the lock barrier
+    /// refused is taken back whole. A depth kept above zero would make the next `commit`
+    /// close nothing and the next `wait` refuse to run. The failure is the command's error.
     private func handleCommit(context: any CommandContext) throws {
         guard context.openBatchDepth > 0 else {
             context.outputError("commit: no batch is open")
@@ -85,16 +87,22 @@ final class SessionPlugin: CommandPlugin {
         }
         do {
             _ = try context.request(.endBatch)
-        } catch let failure as ServerError {
-            if case .batchRejected = failure.response {
+        } catch {
+            var refused = false
+            if let failure = error as? ServerError, case .batchRejected = failure.response {
+                refused = true
+            }
+            if refused || context.openBatchDepth == 1 {
                 context.openBatchDepth = 0
             }
-            throw failure
+            throw error
         }
         context.openBatchDepth -= 1
         guard context.openBatchDepth == 0 else {
             return
         }
+        // What the batch's pushes said was pending is now in `input:`.
+        context.outputMessage("Committed.")
         try EnginePlugin.waitForSettle(context: context)
     }
 

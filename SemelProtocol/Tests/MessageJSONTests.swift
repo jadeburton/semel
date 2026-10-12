@@ -49,9 +49,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsThirty() {
-        XCTAssertEqual(ProtocolVersion.current, 30)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 30,
+    func test_currentProtocolVersionIsThirtyOne() {
+        XCTAssertEqual(ProtocolVersion.current, 31)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 31,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -447,12 +447,12 @@ final class MessageJSONTests: XCTestCase {
             .unrecoverable(message: "object store is read-only"),
             .cacheStoreFailed(description: "the volume is full"),
             .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
-                           expected: .contentRoot("4d5d"), found: "9e1f", paths: ["Dependencies/Pkg/a.swift"]),
+                           expected: .contentRoot("4d5d"), found: "9e1f", paths: ["Dependencies/Pkg/a.swift"], pathsNotListed: 12),
             .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
-                           expected: .unreadable(problem: .emptyValue(key: "content", line: 2)), found: nil, paths: []),
+                           expected: .unreadable(problem: .emptyValue(key: "content", line: 2)), found: nil, paths: [], pathsNotListed: 0),
             .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
                            expected: .otherFold(fold: "semel-folder-content-root 3", contentRoot: "4d5d"),
-                           found: "9e1f", paths: []),
+                           found: "9e1f", paths: [], pathsNotListed: 0),
             .checkpointNotFound(name: "nope", known: ["latest"]),
         ]
         for error in errors {
