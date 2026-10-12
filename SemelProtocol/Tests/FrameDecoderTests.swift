@@ -174,6 +174,108 @@ final class FrameDecoderTests: XCTestCase {
         XCTAssertEqual(try decoder.next()?.json.count, Int(Frame.maximumJSONLength))
     }
 
+    // MARK: - The room a large frame needed (B-155)
+
+    /// A frame of 4 MB leaves no room behind once it is taken: a push sends a vendored
+    /// binary as one frame, and its session goes on for minutes after.
+    func test_aLargeFramesRoomIsNotKeptOnceTaken() throws {
+        let large = Frame(kind: .request, correlationID: 9, json: Data("{}".utf8),
+                          body: Data(repeating: 7, count: 4 << 20))
+        var decoder = FrameDecoder()
+        decoder.append(try FrameEncoder.encode(large))
+
+        XCTAssertEqual(try decoder.next(), large)
+        XCTAssertEqual(decoder.bufferCapacity, 0)
+    }
+
+    /// The part of the next frame that came with a large one is kept, in room of its own
+    /// size, and the frame completes when the rest arrives.
+    func test_whatFollowsALargeFrameIsKeptInRoomOfItsOwnSize() throws {
+        let large = Frame(kind: .request, correlationID: 9, json: Data("{}".utf8),
+                          body: Data(repeating: 7, count: 4 << 20))
+        let following = try FrameEncoder.encode(sample)
+        var decoder = FrameDecoder()
+        decoder.append(try FrameEncoder.encode(large) + following.prefix(10))
+
+        XCTAssertEqual(try decoder.next(), large)
+        XCTAssertNil(try decoder.next())
+        XCTAssertLessThan(decoder.bufferCapacity, 1 << 20)
+
+        decoder.append(following.dropFirst(10))
+        XCTAssertEqual(try decoder.next(), sample)
+    }
+
+    // MARK: - A large body, received into a mapping of its own
+
+    /// A body of `length` bytes that differ from one place to the next, so a byte copied
+    /// to the wrong offset is seen.
+    private func largeFrame(length: Int = FrameDecoder.mappedBodyLength + 12_345) -> Frame {
+        Frame(kind: .request, correlationID: 11, json: Data(#"{"pushFiles":{}}"#.utf8),
+              body: Data((0..<length).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ $0 >> 8) }))
+    }
+
+    /// Delivered in pieces of an odd size, across the header, the JSON and the body, the
+    /// frame comes back whole and only once its last byte is in.
+    func test_aLargeBodyDeliveredInPiecesComesBackWhole() throws {
+        let large   = largeFrame()
+        let encoded = try FrameEncoder.encode(large)
+        var decoder = FrameDecoder()
+        var offset  = 0
+        while offset < encoded.count {
+            XCTAssertNil(try decoder.next())
+            let end = min(offset + 4_099, encoded.count)
+            decoder.append(encoded[offset..<end])
+            offset = end
+        }
+
+        XCTAssertEqual(try decoder.next(), large)
+        XCTAssertNil(try decoder.next())
+    }
+
+    /// The rest of a large body and the frame after it in one delivery: the body takes
+    /// what it lacks and the next frame what follows.
+    func test_aLargeBodysLastBytesAndTheNextFrameInOneDelivery() throws {
+        let large   = largeFrame()
+        let encoded = try FrameEncoder.encode(large)
+        var decoder = FrameDecoder()
+        decoder.append(encoded.prefix(1_000))
+        XCTAssertNil(try decoder.next())
+
+        decoder.append(encoded.dropFirst(1_000) + (try FrameEncoder.encode(sample)))
+
+        XCTAssertEqual(try decoder.next(), large)
+        XCTAssertEqual(try decoder.next(), sample)
+        XCTAssertNil(try decoder.next())
+    }
+
+    /// A body exactly at the length that is mapped, and one a byte short of it, which goes
+    /// through the buffer: both come back as sent.
+    func test_bodiesEitherSideOfTheMappedLengthComeBackAsSent() throws {
+        for length in [FrameDecoder.mappedBodyLength - 1, FrameDecoder.mappedBodyLength] {
+            let frame = largeFrame(length: length)
+            var decoder = FrameDecoder()
+            decoder.append(try FrameEncoder.encode(frame))
+
+            XCTAssertEqual(try decoder.next(), frame, "a body of \(length) bytes")
+        }
+    }
+
+    /// A decoder dropped while a large body is still arriving gives its mapping back, and
+    /// a frame handed over keeps its body after the decoder has gone.
+    func test_aLargeBodyOutlivesItsDecoderAndAnUnfinishedOneDoesNot() throws {
+        let large = largeFrame()
+        var taken: Frame?
+        do {
+            var decoder = FrameDecoder()
+            decoder.append(try FrameEncoder.encode(large))
+            taken = try decoder.next()
+            decoder.append(try FrameEncoder.encode(large).prefix(Frame.headerLength + 100))
+            XCTAssertNil(try decoder.next())
+        }
+
+        XCTAssertEqual(taken, large)
+    }
+
     // MARK: - Helpers
 
     private func bigEndianBytes<Integer: FixedWidthInteger>(of value: Integer) -> Data {

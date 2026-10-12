@@ -80,6 +80,8 @@ public enum FrameError: Error, Equatable, CustomStringConvertible, Sendable {
     case jsonTooLarge(declared: UInt32, limit: UInt32)
     case bodyTooLarge(declared: UInt64, limit: UInt64)
     case reservedBitsSet(flags: UInt8, reserved: UInt8)
+    /// A body within the limit that the system would not map memory for, with `errno`.
+    case bodyNotMapped(length: Int, errorNumber: Int32)
 
     public var description: String {
         switch self {
@@ -94,6 +96,8 @@ public enum FrameError: Error, Equatable, CustomStringConvertible, Sendable {
         case .reservedBitsSet(let flags, let reserved):
             return "frame sets flags 0x\(String(flags, radix: 16)) and reserved 0x\(String(reserved, radix: 16)); "
                  + "this version defines flag bit 0 and nothing else"
+        case .bodyNotMapped(let length, let errorNumber):
+            return "a frame's body of \(length) bytes could not be mapped: \(String(cString: strerror(errorNumber)))"
         }
     }
 }
