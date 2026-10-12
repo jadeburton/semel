@@ -458,7 +458,8 @@ enum HandlerFailure: Error {
                                   lock:         rejection.lock.string,
                                   expected:     LockExpectation(rejection.expected),
                                   found:        rejection.found,
-                                  changedPaths: rejection.paths.map(\.string))
+                                  changedPaths: rejection.paths.map(\.string),
+                                  listing:      rejection.listing)
         }
     }
 }

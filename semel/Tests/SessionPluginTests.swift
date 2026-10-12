@@ -111,7 +111,8 @@ final class SessionPluginTests: XCTestCase {
         try run("commit")
         connection.responses.append((.error(.batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
                                                            expected: .contentRoot("aaa"), found: "bbb",
-                                                           paths: ["Dependencies/Pkg/a.swift"], pathsNotListed: 0)), nil))
+                                                           paths: ["Dependencies/Pkg/a.swift"], pathsNotListed: 0,
+                                                           listing: .lockTreeNotHeld)), nil))
 
         XCTAssertThrowsError(try run("commit"))
         XCTAssertEqual(context.openBatchDepth, 0)

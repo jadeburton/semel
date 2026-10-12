@@ -236,9 +236,10 @@ public enum ErrorCondition: Codable, Hashable, Sendable, Error, ErrorConditionCo
     /// (B-146): the folder and its lock, relative to `input:`; what the lock records; the
     /// root the batch would leave, nil where it removes the folder; and the paths of the
     /// batch inside the folder, as many as the rejection carries, with the count of those it
-    /// left out in `pathsNotListed`.
+    /// left out in `pathsNotListed`; and what the folder the batch would leave holds by
+    /// name against the tree the lock records (B-164).
     case batchRejected(folder: String, lock: String, expected: LockExpectation, found: String?, paths: [String],
-                       pathsNotListed: Int)
+                       pathsNotListed: Int, listing: LockListing)
     /// A binary target a product reaches whose artifact is not an `.xcframework` that is
     /// there (B-77, B-133).
     case binaryTargetNotBuilt(target: UnbuiltBinaryTarget)
@@ -310,7 +311,7 @@ public enum ErrorCondition: Codable, Hashable, Sendable, Error, ErrorConditionCo
         case .lockMismatch(let folder, _, _, _, _),
              .lockFoldChanged(let folder, _, _, _),
              .lockUnreadable(let folder, _, _),
-             .batchRejected(let folder, _, _, _, _, _):
+             .batchRejected(let folder, _, _, _, _, _, _):
             return .relock(package: Path(folder).lastComponent ?? folder)
         case .unlinkedKind(let kind):
             return .register(kind: kind)
@@ -444,6 +445,38 @@ public enum LockExpectation: Codable, Hashable, Sendable {
     case otherFold(fold: String, contentRoot: String)
     /// The lock's text is not a lock.
     case unreadable(problem: LockProblem)
+}
+
+/// What a locked folder the barrier refused holds by name, against the tree its lock
+/// records (B-164). Two roots say that a folder differs from its lock and not where; a push
+/// that matched every file but one dot-less `LICENSE` left two hashes and no way to see the
+/// one name missing.
+public enum LockListing: Codable, Hashable, Sendable {
+    /// The names on one side only, relative to `input:`, a folder with a trailing `/` and
+    /// nothing below it listed: `notPushed` are in the lock's tree and not in the folder
+    /// the batch would leave, `notInTheLock` the other way round. Each list is a sample, and
+    /// its `NotListed` counts the names a bounded reply leaves out. A file whose bytes
+    /// differ is on neither: the batch's `paths` name it.
+    case compared(notPushed: [String], notPushedNotListed: Int, notInTheLock: [String], notInTheLockNotListed: Int)
+    /// The engine holds no copy of the tree the lock records: the lock's root is a hash
+    /// `prepare` took of the disk, and the documents under it are in the engine's store
+    /// only once it has folded that tree itself, so a folder never pushed as its lock
+    /// describes it cannot be compared name by name.
+    case lockTreeNotHeld
+    /// The lock records no root this Semel's fold can read: it is not a lock, or it was
+    /// folded under another format. `expected` says which.
+    case notComparable
+
+    /// The same listing carrying at most `limit` names on each list, the rest counted.
+    public func bounded(to limit: Int) -> LockListing {
+        guard case .compared(let notPushed, let notPushedNotListed, let notInTheLock, let notInTheLockNotListed) = self else {
+            return self
+        }
+        return .compared(notPushed:             Array(notPushed.prefix(limit)),
+                         notPushedNotListed:    notPushedNotListed + max(notPushed.count - limit, 0),
+                         notInTheLock:          Array(notInTheLock.prefix(limit)),
+                         notInTheLockNotListed: notInTheLockNotListed + max(notInTheLock.count - limit, 0))
+    }
 }
 
 /// A binary target that is not built, and why.

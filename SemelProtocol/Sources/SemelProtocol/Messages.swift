@@ -199,9 +199,11 @@ public enum ErrorResponse: Codable, Equatable, Sendable {
     /// batch's at or below the folder whose content it changed, and the lock's own when the
     /// batch changed that, all relative to `input:`, at most `batchRejectedPathsListed` of
     /// them, and `pathsNotListed` counts the rest; `found` is the folder's pushed content
-    /// root the batch would have left, nil when it left no folder there.
+    /// root the batch would have left, nil when it left no folder there. `listing` says
+    /// what that folder holds by name against the lock's tree, each of its lists bounded
+    /// as `paths` is (B-164).
     case batchRejected(folder: String, lock: String, expected: LockExpectation, found: String?, paths: [String],
-                       pathsNotListed: Int)
+                       pathsNotListed: Int, listing: LockListing)
     /// `restore` named a checkpoint that was never recorded; `known` are the ones that were.
     case checkpointNotFound(name: String, known: [String])
 }
@@ -217,15 +219,16 @@ extension ErrorResponse {
     public static let batchRejectedPathsListed = 50
 
     /// A `batchRejected` naming the first `batchRejectedPathsListed` of `changedPaths`, in
-    /// their order, and counting the rest.
+    /// their order, and counting the rest; and as many of each of `listing`'s lists.
     public static func rejectedBatch(folder: String, lock: String, expected: LockExpectation, found: String?,
-                                     changedPaths: [String]) -> ErrorResponse {
+                                     changedPaths: [String], listing: LockListing) -> ErrorResponse {
         let listed = Array(changedPaths.prefix(batchRejectedPathsListed))
         return .batchRejected(folder:         folder,
                               lock:           lock,
                               expected:       expected,
                               found:          found,
                               paths:          listed,
-                              pathsNotListed: changedPaths.count - listed.count)
+                              pathsNotListed: changedPaths.count - listed.count,
+                              listing:        listing.bounded(to: batchRejectedPathsListed))
     }
 }

@@ -104,6 +104,81 @@ restore itself stood. The fix is B-161's shape: a bounded sample of the paths an
 integer count of the rest, as fields of the typed reply, with a protocol bump. (B-162 is
 taken by another agent's PR not yet open; this entry skips it.)
 
+**B-164** `done` — **`push **/*.*` was refused by Charts' lock, and the refusal gave two
+hashes and no way to see that one file was missing.** Reported 2026-10-12 on main with
+Charts 5.1.0 vendored by `semel-swift prepare` (lock `Dependencies/Charts.semel-lock`,
+content root `sha256:82e51b57…`, exactly what a fresh `prepare` writes):
+
+```
+push **/*.*
+push: 20730 files and 314 folders sent, and none of it committed
+Dependencies/Charts is locked, and the batch changes it without a lock it matches: nothing of the batch is committed
+  lock: Dependencies/Charts.semel-lock
+  expected: sha256:82e51b57…  found: sha256:783cd4bc…
+  paths: Dependencies/Charts, Dependencies/Charts.semel-lock, Dependencies/Charts/Assets, … and 654 more
+  input: as it was before the batch; nothing the batch pushed or removed is there
+```
+
+No `Not on disk, kept:` line, so the engine held nothing stale. The cause: `**/*.*` matches
+only names holding a dot, and Charts has `LICENSE` at its root, the only dot-less regular
+file in the 5.1.0 tree. The lock covers it, the push never sent it, and the folder the
+batch left folded to another root. The barrier was right to refuse; the push was wrong to
+send part of a locked folder, and the refusal could not say which part was missing.
+
+Fixed 2026-10-12, in two parts.
+
+1. **The refusal names what the folder lacks and what it holds beyond the lock.**
+   `batchRejected` gains `listing`, a `LockListing` (SemelNodeKit, shared with
+   `ErrorCondition.batchRejected`; protocol 32): `compared(notPushed:notPushedNotListed:
+   notInTheLock:notInTheLockNotListed:)`, each list bounded at fifty as B-161's paths are
+   and the rest counted; `lockTreeNotHeld`; or `notComparable` for a lock that does not
+   parse or was folded under another format. The barrier computes it inside the commit's
+   savepoint, before the replay, by walking the lock's root and the folder's pushed root
+   together through their documents (`FolderContentRoot.namesDiffering`, on
+   `lines(ofDocument:)`), into a subfolder only where the two roots differ; a name on one
+   side only is said once, a folder with a trailing `/`. The client prints `not pushed:`
+   and `not in the lock:` after `found:`, five names and `and N more`; B-161's lines,
+   wording and mark are unchanged. The lock's documents are in the engine's store only
+   once the engine has folded that tree itself — its root is a hash `prepare` took of the
+   disk — so a copy the engine has never accepted as its lock describes it, the owner's
+   first push among them, cannot be compared name by name, and the refusal says `not
+   compared: the engine holds no copy of the tree the lock records, …`. Once a copy has
+   landed, a later batch that leaves it short — an `rm`, a partial push, another copy of
+   the same release elsewhere in the tree pushed in part — is named file by file.
+2. **A push that reaches a locked folder pushes it whole.** In `push`, a matched entry
+   below a folder `F` with `F.semel-lock` beside it on disk stands for `F` whole, read from
+   the disk as `push F` sends it, and the push says so first: `Pushing
+   Dependencies/Charts whole: it is locked` (several folders on one line, named as a push
+   names paths). It applies to patterns and to lists of files; a folder the push already
+   sends whole is left alone, the nearest locked folder above an entry is the one widened
+   (the one the barrier checks it against), and nothing outside the locked folder is
+   added. A pattern that matches only the lock itself widens too when the server does not
+   hold that lock as the disk has it: a lock pushed anew names its folder, and after a
+   re-vendor the lock alone would only be refused. A lock the server holds byte for byte
+   does not widen, which is what keeps `semel-watch` — whose launch mirror pushes a tree's
+   locks while leaving the locked folders alone — as it was. The widening only adds; B-162's
+   removal for a new lock follows from the folder's expansion as before.
+
+Tests: `LockedFolderWholePushTests` (root, six: `**/*.*` over two locked copies holding a
+`LICENSE`; a pattern reaching one; a file list; a lock alone; a lock the server holds;
+folders already whole); `LockedFolderEndToEndTests.test_aGlobPushOfAPreparedTreePushesTheLockedCopyWholeWithItsLicense`
+(real `prepare` of a repository with a `LICENSE`, then `push **/*.*` through `semel` and
+`semelserv`); `LockedFolderServerTests` (a partial push of a second copy of a held release
+names `LICENSE` as not pushed and the client prints it; an `rm`; files and a folder not in
+the lock; a tree never held is `lockTreeNotHeld`); `FrameMessageTests` and
+`MessageJSONTests` (the fields bounded within a frame, round trips);
+`ErrorRenderingTests` (five and the count on each line, the not-compared line);
+`FolderContentRootNamesDifferingTests` (SemelNodeKit). The widening tests and the server's
+listing tests fail with their fix taken out.
+
+Checked by hand with release binaries, a package depending on Charts 5.1.0 and a fresh
+`prepare` (lock `sha256:82e51b57…`): on main at 4116caa `push **/*.*` was refused with
+`found: sha256:783cd4bc…`, the owner's two hashes; with the fix it printed `Pushing
+Dependencies/Charts whole: it is locked` and `Pushed 580 files and 1 folder`, and `ls`
+showed `LICENSE`. An `rm Dependencies/Charts/LICENSE` after it was refused with `found:
+sha256:783cd4bc…` and `not pushed: Dependencies/Charts/LICENSE`: the one file the owner's
+push left out.
+
 ## Performance
 
 Measured 2026-09-27 on the IceCubes packages tree (`C1/icecubes/Packages`, thirteen

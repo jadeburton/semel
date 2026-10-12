@@ -85,7 +85,10 @@ public enum ProtocolVersion {
     /// summary of the shared cache (B-153).
     /// Version 31 bounds `batchRejected`: it names at most fifty of the batch's paths and
     /// counts the rest in `pathsNotListed`, so the rejection always fits a frame (B-161).
-    public static let current = 31
+    /// Version 32 gives `batchRejected` its `listing`: the names the locked folder lacks
+    /// against its lock's tree and those it holds that the tree does not, each bounded as
+    /// the paths are (B-164).
+    public static let current = 32
 }
 
 public struct Hello: Codable, Equatable, Sendable {

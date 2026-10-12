@@ -300,10 +300,11 @@ struct ConditionLines {
                                    Detail(label: "this Semel folds as", value: currentFold)])
         case .lockUnreadable(_, let lockPath, let problem):
             return Drawn(path: path(lockPath), headline: " is not a lock: \(sentence(problem))")
-        case .batchRejected(let folder, let lock, let expected, let found, let paths, let pathsNotListed):
+        case .batchRejected(let folder, let lock, let expected, let found, let paths, let pathsNotListed, let listing):
             var details = [Detail(label: "lock", value: path(lock)),
                            Detail(label: "expected", value: described(expected)),
                            Detail(label: "found", value: found.map { DependencyLock.contentScheme + $0 } ?? "no folder")]
+            details.append(contentsOf: described(listing))
             if !paths.isEmpty {
                 details.append(Detail(label: "paths", value: capped(paths.map(path), plus: pathsNotListed)))
             }
@@ -423,6 +424,27 @@ struct ConditionLines {
     private func described(_ lock: LockFacts) -> String {
         let recorded = [lock.version.map { "version \($0)" }, lock.origin.map { "from \($0)" }].compactMap { $0 }
         return recorded.isEmpty ? path(lock.lockPath) : "\(path(lock.lockPath)) (\(recorded.joined(separator: ", ")))"
+    }
+
+    /// What a refused locked folder holds by name against its lock's tree: a line for each
+    /// side that has names, or a line saying why none can be named.
+    private func described(_ listing: LockListing) -> [Detail] {
+        switch listing {
+        case .compared(let notPushed, let notPushedNotListed, let notInTheLock, let notInTheLockNotListed):
+            var details: [Detail] = []
+            if !notPushed.isEmpty {
+                details.append(Detail(label: "not pushed", value: capped(notPushed.map(path), plus: notPushedNotListed)))
+            }
+            if !notInTheLock.isEmpty {
+                details.append(Detail(label: "not in the lock", value: capped(notInTheLock.map(path), plus: notInTheLockNotListed)))
+            }
+            return details
+        case .lockTreeNotHeld:
+            return [Detail(label: "not compared", value: "the engine holds no copy of the tree the lock records, "
+                                                       + "so the names that differ are not listed")]
+        case .notComparable:
+            return []
+        }
     }
 
     private func described(_ expected: LockExpectation) -> String {

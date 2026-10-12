@@ -251,6 +251,116 @@ extension FolderContentRoot {
     }
 }
 
+// MARK: - Two roots of one folder, by name
+
+extension FolderContentRoot {
+
+    /// The names two roots of one folder hold differently: the paths below `expected` that
+    /// `found` lacks, and the paths below `found` that `expected` lacks, relative to the
+    /// folder, in the documents' order. A lock refusing a batch says from this which files
+    /// the push left out and which it brought that the copy never held (B-164), where its
+    /// two hashes alone say only that something differs.
+    ///
+    /// Walked through both trees' documents together, a subfolder only where its two roots
+    /// differ, so the cost follows the difference and not the tree. A name on one side only
+    /// is said once, a folder with a trailing `/` and nothing below it listed: a subtree the
+    /// push never sent is one entry, not its every file. A name of one kind on one side and
+    /// another on the other is on both lists, and a file whose bytes or mode differ is on
+    /// neither, since its name is on both sides.
+    ///
+    /// `found` is nil for a folder that is not there, which lacks every name. Nil is
+    /// returned when the store holds no document for one of the folders the walk reaches:
+    /// a lock's root is a hash `prepare` wrote from the disk, and its documents are in the
+    /// store only once the engine has folded that tree itself.
+    public static func namesDiffering(expected: DataObjectHash, found: DataObjectHash?) throws -> NamesDiffering? {
+        var difference = NamesDiffering(onlyExpected: [], onlyFound: [])
+        guard try collectNamesDiffering(expected: expected, found: found, at: "", into: &difference) else {
+            return nil
+        }
+        return difference
+    }
+
+    /// False when a document the walk needs is not in the store.
+    private static func collectNamesDiffering(expected: DataObjectHash, found: DataObjectHash?, at prefix: String,
+                                              into difference: inout NamesDiffering) throws -> Bool {
+        guard expected != found else {
+            return true
+        }
+        guard let expectedLines = try storedLines(of: expected) else {
+            return false
+        }
+        var foundLines: [Line] = []
+        if let found {
+            guard let lines = try storedLines(of: found) else {
+                return false
+            }
+            foundLines = lines
+        }
+
+        // A child is its name and its kind; both documents are in the fold's order, so the
+        // two walked together, in that order, give the paths in the order of the tree.
+        struct Key: Hashable {
+            let name: String
+            let kind: FolderChildKind
+        }
+        let expectedByKey = Dictionary(expectedLines.map { (Key(name: $0.name, kind: $0.kind), $0) },
+                                       uniquingKeysWith: { first, _ in first })
+        let foundByKey    = Dictionary(foundLines.map { (Key(name: $0.name, kind: $0.kind), $0) },
+                                       uniquingKeysWith: { first, _ in first })
+        let names = Set((expectedLines + foundLines).map { Key(name: $0.name, kind: $0.kind) })
+        let children = names.sorted { left, right in
+            guard left.name == right.name else {
+                return left.name.utf8.lexicographicallyPrecedes(right.name.utf8)
+            }
+            return left.kind.sortRank < right.kind.sortRank
+        }
+
+        for key in children {
+            let entry = prefix + key.name + (key.kind == .folder ? "/" : "")
+            switch (expectedByKey[key], foundByKey[key]) {
+            case (.some, nil):
+                difference.onlyExpected.append(entry)
+            case (nil, .some):
+                difference.onlyFound.append(entry)
+            case (.some(let expectedLine), .some(let foundLine)):
+                guard key.kind == .folder, case .hash(let expectedRoot) = expectedLine.content,
+                      case .hash(let foundRoot) = foundLine.content else {
+                    continue
+                }
+                guard try collectNamesDiffering(expected: expectedRoot, found: foundRoot, at: entry, into: &difference) else {
+                    return false
+                }
+            case (nil, nil):
+                continue
+            }
+        }
+        return true
+    }
+
+    /// The lines of the document `root` names, nil when the store does not hold it, or
+    /// holds something that is not a document of this fold.
+    private static func storedLines(of root: DataObjectHash) throws -> [Line]? {
+        guard let bytes = try DataObjectStore.shared.read(hash: root) else {
+            return nil
+        }
+        return lines(ofDocument: String(decoding: bytes, as: UTF8.self))
+    }
+}
+
+/// What `FolderContentRoot.namesDiffering` finds: paths relative to the folder, a folder's
+/// with a trailing `/`.
+public struct NamesDiffering: Equatable, Sendable {
+    /// Below the expected root and not below the found one.
+    public var onlyExpected: [String]
+    /// Below the found root and not below the expected one.
+    public var onlyFound:    [String]
+
+    public init(onlyExpected: [String], onlyFound: [String]) {
+        self.onlyExpected = onlyExpected
+        self.onlyFound    = onlyFound
+    }
+}
+
 /// An entry of the graph's tree that a pushed root does not fold, and why.
 public struct LeftOutEntry: Codable, Hashable, Sendable {
     public enum Reason: String, Codable, Hashable, Sendable {
