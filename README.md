@@ -34,7 +34,7 @@ cd semel
 swift build -c release
 ```
 
-The build places seven executables under `.build/release`: `semelserv`, the engine; `semel`, the CLI; `semel-swift`, a tool to prepare a Swift project/package for Semel, including placing SPM dependendencies; `semel-clang`, which adds a Semel configuration file to the C/C++ source directory; `semel-cmake`, which translates a `CMakeLists.txt` tree into a formula and a config, once, for the user to edit from there; `semel-watch`, which pushes a tree into the engine as you save; and `semel-monitor`, which shows at the top right of the screen what each settle did.
+The build places eight executables under `.build/release`: `semelserv`, the engine; `semel`, the CLI; `semel-swift`, a tool to prepare a Swift project/package for Semel, including placing SPM dependendencies; `semel-clang`, which adds a Semel configuration file to the C/C++ source directory; `semel-cmake`, which translates a `CMakeLists.txt` tree into a formula and a config, once, for the user to edit from there; `semel-watch`, which pushes a tree into the engine as you save; `semel-monitor`, which shows at the top right of the screen what each settle did; and `semel-cache`, a cache server several engines can share.
 
 ## Usage
 
@@ -169,15 +169,61 @@ product or broke one it shows a card at the top right of the screen — `3 produ
 cache` — and a settle that moved nothing shows nothing. A result card goes after eight
 seconds, or stays while the pointer is over it; an error card leads with the first error's
 line as the report prints it and stays until clicked or until a later settle gives its
-products a value. Five at most are on screen, the older folded into the bottom card. The
-menu bar item says whether an engine is running — the monitor never starts one, and
-reconnects by itself when one comes back — and holds *Pause notifications*. `--only
-<folder>` keeps the products under that folder of `output:`; `--print` writes each card as
-lines on standard output instead, for a script.
+products a value. Five at most are on screen, the older folded into the bottom card. While
+a settle runs, one card updates in place — `Building · 12 running · 48 ahead`, the running
+nodes by type and name in turn, a bar of how many of the scheduled nodes have started and
+the running totals — and becomes the settle's card when it ends, or goes if the settle
+moved nothing. The menu bar item, Semel's own glyph of three nodes and two wires, says
+whether an engine is running — hollow with none, filled when connected, swept round with
+the pending count beside it while a settle runs, red while an error card is held; the
+monitor never starts an engine, and reconnects by itself when one comes back — and holds
+*Pause notifications*, *Products…* and *Show window*.
+
+*Show window*, or a click on the running card, opens the live window: the nodes running
+now with their type, name and how long each has run, the bar and the settle's counts, and
+under them the last settle's products, marked as the products window marks them, and its
+errors. It is drawn from the events the engine already sends and asks it for nothing.
+
+A click on a card, or *Products…*, opens the products window: `output:` as `ls` lists it,
+its folders on the left and the selected folder's products on the right, the ones the
+settle touched marked `appeared`, `changed` or `no value`, each with its size, and the
+errors in the report's own lines under *Errors*. It reads `output:` again after every
+settle while it is open. Select products or a folder and *Export…* asks for a destination
+in a save panel and writes them exactly as `export <folder> --into <dir>` does; *Copy
+paths* copies their `output:` paths. That is the whole of the monitor's relation to the
+disk: it knows nothing of where anyone else exported and offers no *Reveal in Finder*.
+`--only <folder>` keeps the cards to the products under that folder of `output:`;
+`--print` writes each card as lines on standard output instead, for a script — a running
+settle as `running: <headline>`, at most once a second and only when the running nodes
+changed — and reads `click`, `products` and `show` on standard input as the clicks a
+person would make, writing the window it would open after `window:` or `live:`.
 
 ```sh
 .build/release/semel-monitor --only App
 ```
+
+### A shared cache
+
+`semel-cache` keeps cache entries and the objects they reference under a home folder of
+its own and answers them over TCP, so that machines building the same sources share their
+builds. It is a separate program that links the cache, the transport and the protocol, and
+never the engine. The engine does not use it yet (B-153 phase 3); today it can be run,
+filled and inspected:
+
+```sh
+.build/release/semel-cache serve  --home /srv/semel-cache --listen 0.0.0.0:7070 --limit 50G --writers all
+.build/release/semel-cache status --home /srv/semel-cache
+.build/release/semel-cache purge  --home /srv/semel-cache <key>      # or --all
+```
+
+The arguments of `serve` are written to `semel.cache.config` in the home and read from it
+at every start, so `serve --home <folder>` alone starts the server as it last ran. Every
+client reads; one that asks to write may only under `--writers all` (the default is
+`none`). Past `--limit` the server evicts as the engine's own cache does — what the last
+requests used is kept, then the cheapest build per byte goes first. `status` prints the
+entries and bytes against the limit, and the hits and misses since the server started;
+`purge` removes a poisoned entry by its key, or everything, through the running server when
+there is one.
 
 ### Formulae
 
@@ -338,7 +384,16 @@ semel-watch/     semel-watch — watches a tree with FSEvents and, after two qui
 semel-monitor/   semel-monitor — subscribes to the engine's events and shows each settle
                  as a card at the top right of the screen; the AppKit shell in App/
   Sources/SemelMonitor/  SemelMonitor: the planner (events in, cards out), the card's
-                         words, the clock, the subscription that reopens itself
+                         words, the clock, the subscription that reopens itself, the
+                         products window's model and presenter, the live window's
+                         model, the status glyph
+semel-cache/     semel-cache — the shared cache: entries and objects under a home folder,
+                 answered over TCP; links SemelCache, SemelTransport, SemelProtocol and
+                 SemelNodeKit and never the engine
+  Sources/SemelCacheServer/  SemelCacheServer: the store (an index in memory over the
+                             cache's tables and the object store, written behind the
+                             answers in batches), the handlers, semel.cache.config, and the
+                             serve, status and purge commands
 machine-file/    SemelMachineFile: the one writer of semel.machine.config, for both tools
 ```
 
@@ -348,7 +403,8 @@ The packages they link:
 SemelCore/       The engine
   BuildEngine          Async process loop, batch scheduling, deferred deletion; +Reset, +Versioning
   Cache                The key material a node's inputs make, and the lookup and write around a run
-  SQLiteCacheStore     SemelCache's CacheStore over the cache's tables in the graph's database
+  SQLiteCacheStore     What only the engine asks of the cache's tables: what the input file
+                       system holds, which key a node's outputs came from
   GraphSpec            A node's demand for an upstream subgraph, as text; GraphSpecApplier matches it against the graph
   FormulaParser        Reads .fmla text into a graph spec
   ErrorReport          Which failures the graph holds, as documents, at settle and on request
@@ -368,8 +424,11 @@ SemelCache/      What a build cache is, for the engine and a cache server alike 
                  links the engine
   ProcessCacheEntry    A cached build as stored: output values, demanded specs, key material
   CacheKeyMaterial     What a key is taken of, its canonical text and the one hash of it
-  CacheStore           Get and put by key, sizes, the running total; the engine's SQLite implements it
-  CacheEviction        B-148's order — cost per byte, the last settle's kept — and the trim
+  CacheKey             The key as a value of its own wherever it leaves a process
+  CacheStore           Get and put by key, sizes, the running total
+  SQLiteCacheStore     The one implementation of the cache's tables, in the graph's database
+                       and in a cache server's index (CacheIndexDatabase)
+  CacheEviction        B-148's order — cost per byte, the last use's kept — and the trim
 SemelNodeKit/    Node-authoring API — no dependency on the engine
   Node                 Protocol for all build steps; wraps a NodeRecord
   NodeDescriptor       The ports a node type declares
@@ -384,8 +443,9 @@ SemelNodeKit/    Node-authoring API — no dependency on the engine
                        the remedy, as values a client renders; ErrorCondition, every engine
                        condition a report shows
   SemelPaths           Where the home, database, object store and socket live
-SemelProtocol/   The wire protocol between semel and semelserv: typed requests and
-                 responses, frames, and the connection a client holds. A frame's JSON is
+SemelProtocol/   The wire protocol between Semel's processes: typed requests and responses
+                 for the daemon role (semel and semelserv) and the cache role (an engine
+                 and semel-cache), frames, and the connection a client holds. A frame's JSON is
                  capped at 1 MiB, so the replies that grow with the graph — `list`,
                  `remove`, `errors` — stream: several frames for one request, every one
                  but the last carrying flag bit 0, "more follows"

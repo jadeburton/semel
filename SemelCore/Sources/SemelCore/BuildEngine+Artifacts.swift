@@ -68,7 +68,7 @@ extension BuildEngine {
     }
 
     /// Empties both candidate sets and answers what was in them.
-    private func takeArtifactCandidates() -> (touched: [String: ObjectID], collected: [String: ObjectID]) {
+    private func takeArtifactCandidates() -> (touched: [String: ObjectID], collected: [String: CollectedArtifact]) {
         artifactCandidateLock.withLock {
             defer {
                 touchedArtifacts = [:]
@@ -81,7 +81,7 @@ extension BuildEngine {
     /// Puts candidates a failed report consumed back, without displacing anything the
     /// write path recorded while that report was running: a later entry for the same path
     /// names the node as it is.
-    private func returnArtifactCandidates(touched: [String: ObjectID], collected: [String: ObjectID]) {
+    private func returnArtifactCandidates(touched: [String: ObjectID], collected: [String: CollectedArtifact]) {
         artifactCandidateLock.withLock {
             touchedArtifacts.merge(touched) { current, _ in current }
             collectedArtifacts.merge(collected) { current, _ in current }
@@ -90,7 +90,7 @@ extension BuildEngine {
 
     /// The steady path: one lookup by primary key per artifact the write path woke.
     private func compareCandidates(touched: [String: ObjectID],
-                                   collected: [String: ObjectID]) throws -> ArtifactChanges {
+                                   collected: [String: CollectedArtifact]) throws -> ArtifactChanges {
         var changes = ArtifactChanges()
 
         // Paths a node still stands at. A path collected and rebuilt inside one settle is
@@ -109,20 +109,21 @@ extension BuildEngine {
             guard let hash = try publishedHash(ofArtifact: nodeRecord) else {
                 continue
             }
-            try note(path: path, publishing: hash, into: &changes)
+            try note(nodeRecord, at: path, publishing: hash, into: &changes)
         }
 
-        for (path, nodeID) in collected.sorted(by: { $0.key < $1.key })
+        for (path, collectedArtifact) in collected.sorted(by: { $0.key < $1.key })
         where !stillInTheGraph.contains(path) {
             // The collection is recorded before the delete, and a delete can fail: the row
             // goes only once the node is really gone, or a live product would be announced
             // as disappeared and nothing would ever correct it.
-            guard try database.node.find(nodeID: nodeID) == nil,
+            guard try database.node.find(nodeID: collectedArtifact.nodeID) == nil,
                   try database.artifactSnapshot.select(path: path) != nil else {
                 continue
             }
             try database.artifactSnapshot.delete(path: path)
             changes.disappeared.append(path)
+            changes.treeFolders[path] = collectedArtifact.treeFolder
         }
 
         return changes
@@ -146,7 +147,7 @@ extension BuildEngine {
             guard let hash = try publishedHash(ofArtifact: nodeRecord) else {
                 continue
             }
-            try note(path: path, publishing: hash, into: &changes)
+            try note(nodeRecord, at: path, publishing: hash, into: &changes)
         }
 
         for snapshot in try database.artifactSnapshot.selectAll()
@@ -162,7 +163,10 @@ extension BuildEngine {
     /// one when they differ. The comparison is the whole mechanism: every woken artifact
     /// is a candidate, and only this tells the ones that moved from the ones that were
     /// merely rebuilt.
-    private func note(path: String, publishing hash: DataObjectHash,
+    ///
+    /// The tree an artifact is an entry of is read only for one that moved, so the steady
+    /// path pays for it per change rather than per artifact woken.
+    private func note(_ nodeRecord: NodeRecord, at path: String, publishing hash: DataObjectHash,
                       into changes: inout ArtifactChanges) throws {
         let reported = try database.artifactSnapshot.select(path: path)?.contentHash
 
@@ -174,6 +178,7 @@ extension BuildEngine {
         } else {
             changes.changed.append(path)
         }
+        changes.treeFolders[path] = try ProductReach.treeFolder(ofArtifact: nodeRecord, database: database)
         try database.artifactSnapshot.upsert(path: path, contentHash: hash)
     }
 
@@ -204,6 +209,6 @@ private extension ArtifactChanges {
     /// builds of the same tree (B-04).
     func sorted() -> ArtifactChanges {
         ArtifactChanges(appeared: appeared.sorted(), changed: changed.sorted(),
-                        disappeared: disappeared.sorted())
+                        disappeared: disappeared.sorted(), treeFolders: treeFolders)
     }
 }

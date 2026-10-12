@@ -986,9 +986,12 @@ final class FilePlugin: CommandPlugin {
     /// nil when there was nothing to export, which it reports. With
     /// `skippingWithoutValue`, a product that has no value is passed over rather than
     /// reported: what a build with errors exports into a folder the reader named, whose
-    /// report already says which products have none.
+    /// report already says which products have none. With `selection`, only the products
+    /// it names — paths from the root, a folder standing for every product below it — are
+    /// written, each where the whole export would write it: the monitor's export of what a
+    /// person selected (B-150).
     static func exportFiles(folderToken: String, destination: String, skippingWithoutValue: Bool,
-                            context: any CommandContext) throws -> Int? {
+                            selecting selection: Set<String>? = nil, context: any CommandContext) throws -> Int? {
         // The folder is a path in the output file system, from its root — the same folder
         // `build` took, which named the input tree the products mirror.
         // `.` is the root itself, which is always there and which a listing cannot name:
@@ -1013,7 +1016,14 @@ final class FilePlugin: CommandPlugin {
         // A product with a value is listed as there, or as one nothing reads: products are
         // read by nothing in the graph.
         let files = matches.filter { entry in
-            entry.kind == .file && (!skippingWithoutValue || entry.status == .none || entry.status == .unreferenced)
+            guard entry.kind == .file,
+                  !skippingWithoutValue || entry.status == .none || entry.status == .unreferenced else {
+                return false
+            }
+            guard let selection else {
+                return true
+            }
+            return Self.isSelected(entry.path, by: selection)
         }
         guard !files.isEmpty else {
             if !skippingWithoutValue {
@@ -1036,6 +1046,20 @@ final class FilePlugin: CommandPlugin {
             }
         }
         return exported
+    }
+
+    /// Whether `path` is one of `selection`, or lies below a folder that is.
+    private static func isSelected(_ path: String, by selection: Set<String>) -> Bool {
+        var folder = Path(path)
+        while true {
+            if selection.contains(folder.string) {
+                return true
+            }
+            guard let parent = folder.deletingLastComponent, !parent.isEmpty else {
+                return false
+            }
+            folder = parent
+        }
     }
 
     /// Writes one exported file or link below `destinationPath`, at the place it holds

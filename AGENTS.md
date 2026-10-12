@@ -8,15 +8,15 @@ about how to change it.
 ```sh
 scripts/build.sh                                    # builds everything the root package links, from the repo root
 scripts/build.sh test --package-path SemelNodeKit   # the node-authoring API (~151)
-scripts/build.sh test --package-path SemelProtocol  # the wire protocol (frame codec + messages) (~52)
-scripts/build.sh test --package-path SemelCache     # the cache's entry, key, accounting and eviction order (~10)
+scripts/build.sh test --package-path SemelProtocol  # the wire protocol (frame codec + messages) (~99)
+scripts/build.sh test --package-path SemelCache     # the cache's entry, key, accounting, eviction order and SQLite store (~15)
 scripts/build.sh test --package-path SemelSwift     # the Swift toolchain nodes (~163)
 scripts/build.sh test --package-path SemelClang     # the C/C++ toolchain nodes (~61)
 scripts/build.sh test --package-path SemelApple     # the Apple platform nodes: asset and string catalogs, Info.plist (~64)
 scripts/build.sh test --package-path SemelCMake     # the CMake translator: its parser, evaluator and emitter (~40)
 scripts/build.sh test --package-path SemelExamples  # the tutorial's reference node (~4)
 scripts/build.sh test --package-path SemelCore      # the engine tests (~497)
-scripts/build.sh test                               # the CLI, transport, server and end-to-end fixture tests (~272)
+scripts/build.sh test                               # the CLI, transport, servers, shared cache and end-to-end fixture tests (~900)
 SEMEL_E2E_EXTERNAL=1 scripts/build.sh test --filter SemelEndToEndTests   # plus the pinned external projects (minutes; needs the network)
 ```
 
@@ -30,11 +30,12 @@ build and test step so that there is one command to keep true, not because a CI 
 it. What the flag buys is below.
 
 The root package links `SemelProtocol` through `SemelCLI` and `SemelServer`, and
-`SemelCache` through `SemelCore`, so the root build covers both; their own lines above are
-still the only thing that runs their tests.
+`SemelCache` through `SemelCore`, `SemelCLI` and `SemelCacheServer`, so the root build
+covers both; their own lines above are still the only thing that runs their tests.
 
 A root test run covers **only** the root package's test targets: `SemelCLITests`,
-`SemelTransportTests`, `SemelServerTests`, `SemelWatchTests`, `SemelMonitorTests` and `SemelEndToEndTests`. The engine and the
+`SemelTransportTests`, `SemelServerTests`, `SemelWatchTests`, `SemelMonitorTests`,
+`SemelCacheServerTests` and `SemelEndToEndTests`. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
 all ten.
 
@@ -84,6 +85,11 @@ libraries, never in either program: what an entry is, how a key is hashed and th
 eviction order are `SemelCache`'s, and the wire both speak, framing, correlation, streamed
 replies, pipelining and the listener, is `SemelTransport`'s. If a server wants something
 from `SemelCore` or `SemelServer`, it belongs in one of those libraries instead.
+`CacheServerDependencyRuleTests` reads the manifests and fails when `semel-cache` or its
+library names anything else. The server reads nothing inside an entry: the entry is the
+engine's encoding, carried and stored as bytes, and what the server files it by — the key,
+the cost, the objects it references — travels beside it as typed fields. A change to
+`ProcessCacheEntry` is therefore the engine's alone and never the server's.
 
 Nothing registers a toolchain automatically. `semel-server/main.swift` is the composition
 root: it registers the toolchains, starts the engine and listens on
@@ -318,7 +324,10 @@ cache's eviction when it is over its limit (B-148): what the last settle used is
 what it did not, and among the rest a build's recorded cost — a duration measured under
 whatever load the machine had — orders what goes first. Use is counted in settles, never
 read off a clock, and nothing else in the engine may order by it. Either policy decides
-which builds a later settle has to run again, never what any settle computes.
+which builds a later settle has to run again, never what any settle computes. `semel-cache`
+is held to the same: the recorded cost is the one duration it reads, to order eviction,
+and what the last use touched is counted in requests (`CacheServerStore.requestsPerUse`),
+never read off a clock.
 
 **A setting that must not affect a build never enters `input:` and never enters a key.**
 The engine's own settings — the cache's limit (`cache.limit`), and the remote cache's
@@ -332,7 +341,11 @@ reaches, and a setting that only says where the cache is would spoil the entries
 meant to share. `semel.config` is the wrong place for the same reason, and so is the
 graph's database, which is the graph's state and not the home's. A setting goes in the
 engine's file when changing it must change no build's output; a fact a build depends on is
-a machine fact, and is declared twice, as the invariant on inputs from outside says.
+a machine fact, and is declared twice, as the invariant on inputs from outside says. A
+cache server's settings — where it listens, its limit, who may write — are under the same
+invariant, in `semel.cache.config` in its own home, written by `semel-cache serve`'s
+arguments and read at its start: they decide what the cache keeps and whom it serves, never
+what an entry holds or the key it is under.
 
 **Static topology is node identity.** A node's `graphSpec` is written once at creation and
 never recomputed. That is correct: static wiring and args are immutable, so different

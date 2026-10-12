@@ -455,7 +455,15 @@ public final class BuildEngine {
     /// Artifacts whose node the collector was about to delete since the last report, and
     /// the node it was deleting. Captured as an event because nothing survives to be
     /// compared; the id is what lets the report check that the delete actually happened.
-    var collectedArtifacts: [String: ObjectID] = [:]
+    var collectedArtifacts: [String: CollectedArtifact] = [:]
+
+    /// What the collector says about an artifact it is deleting: the node, and the folder
+    /// of the tree product it was an entry of, read while the wire that says so was still
+    /// there.
+    struct CollectedArtifact: Equatable {
+        let nodeID: ObjectID
+        let treeFolder: String?
+    }
 
     /// Whether the whole table has been reconciled against the graph since this engine
     /// was constructed. A restart loses the candidate sets, so the first report of a
@@ -471,8 +479,10 @@ public final class BuildEngine {
     }
 
     /// Records that the collector is deleting an artifact's node.
-    func noteArtifactCollected(path: String, nodeID: ObjectID) {
-        artifactCandidateLock.withLock { collectedArtifacts[path] = nodeID }
+    func noteArtifactCollected(path: String, nodeID: ObjectID, treeFolder: String?) {
+        artifactCandidateLock.withLock {
+            collectedArtifacts[path] = CollectedArtifact(nodeID: nodeID, treeFolder: treeFolder)
+        }
     }
 
     /// Finds every config file feeding a `ConfigFilter` and prints its unclaimed keys, but
@@ -1303,6 +1313,11 @@ extension BuildEngine {
             return false
         }
 
+        // Before the input wires go: the wire from a `TreeFile` is what says which tree an
+        // artifact was an entry of.
+        let treeFolder = nodeRecord.kind == OutputFile.kind
+            ? try ProductReach.treeFolder(ofArtifact: nodeRecord, database: database)
+            : nil
         for inputWire in try database.wire.select(goingToNodeID: nodeID) {
             try inputWire.deleteWire(database: database)
         }
@@ -1316,7 +1331,7 @@ extension BuildEngine {
         // after it there is no record to read the path from; the report checks that the
         // node did go before it says so.
         if nodeRecord.kind == OutputFile.kind, let path = nodeRecord.properties["path"] {
-            noteArtifactCollected(path: path, nodeID: nodeID)
+            noteArtifactCollected(path: path, nodeID: nodeID, treeFolder: treeFolder)
         }
         try node.delete()
         return true

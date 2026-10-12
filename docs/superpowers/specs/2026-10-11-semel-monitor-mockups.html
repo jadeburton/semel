@@ -43,11 +43,13 @@
              backdrop-filter: blur(20px); color: var(--bar-text); font-size: 13px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; }
   .menubar .left span { margin-right: 14px; } .menubar .left b { font-weight: 700; }
   .menubar .right span { margin-left: 14px; }
-  .glyph { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px; margin-right: 5px; border: 1.5px solid currentColor; box-sizing: border-box; }
-  .glyph.connected { background: currentColor; }
-  .glyph.none { background: transparent; }
-  .glyph.settling { background: conic-gradient(currentColor 0 65%, transparent 65% 100%); border-color: transparent; }
-  .glyph.errors { background: var(--error); border-color: var(--error); }
+  /* Semel's glyph (phase 2): three nodes and two wires, drawn by the app in code as StatusGlyph's circles and lines. */
+  .glyph { display: inline-block; width: 14px; height: 14px; vertical-align: -2px; margin-right: 5px; background: currentColor;
+           -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'><g stroke='black' stroke-width='1.5' stroke-linecap='round'><line x1='7.18' y1='5.84' x2='10.82' y2='7.66'/><line x1='7.18' y1='12.16' x2='10.82' y2='10.34'/></g><circle cx='4.5' cy='4.5' r='3'/><circle cx='4.5' cy='13.5' r='3'/><circle cx='13.5' cy='9' r='3'/></svg>") center / contain no-repeat;
+           mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'><g stroke='black' stroke-width='1.5' stroke-linecap='round'><line x1='7.18' y1='5.84' x2='10.82' y2='7.66'/><line x1='7.18' y1='12.16' x2='10.82' y2='10.34'/></g><circle cx='4.5' cy='4.5' r='3'/><circle cx='4.5' cy='13.5' r='3'/><circle cx='13.5' cy='9' r='3'/></svg>") center / contain no-repeat; }
+  .glyph.none { -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'><g stroke='black' stroke-width='1.5' stroke-linecap='round'><line x1='7.18' y1='5.84' x2='10.82' y2='7.66'/><line x1='7.18' y1='12.16' x2='10.82' y2='10.34'/></g><g fill='none' stroke='black' stroke-width='1.5'><circle cx='4.5' cy='4.5' r='2.25'/><circle cx='4.5' cy='13.5' r='2.25'/><circle cx='13.5' cy='9' r='2.25'/></g></svg>"); mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'><g stroke='black' stroke-width='1.5' stroke-linecap='round'><line x1='7.18' y1='5.84' x2='10.82' y2='7.66'/><line x1='7.18' y1='12.16' x2='10.82' y2='10.34'/></g><g fill='none' stroke='black' stroke-width='1.5'><circle cx='4.5' cy='4.5' r='2.25'/><circle cx='4.5' cy='13.5' r='2.25'/><circle cx='13.5' cy='9' r='2.25'/></g></svg>"); }
+  .glyph.settling { background: conic-gradient(currentColor 0 65%, rgba(127,127,127,0.45) 65% 100%); }
+  .glyph.errors { background: var(--error); }
   .stack { position: absolute; right: 14px; top: 38px; width: 340px; display: flex; flex-direction: column; gap: 10px; }
   .card { background: var(--card); backdrop-filter: blur(20px); border: 1px solid var(--card-border); border-radius: 14px;
           box-shadow: var(--shadow); padding: 12px 14px 11px; color: var(--card-text); }
@@ -132,7 +134,7 @@
 </div>
 
 <h2>Phase 1 · the status item</h2>
-<p class="note">Two states in phase 1: no engine, connected. The menu holds the last settle's line, Pause, Quit. The settling and error states of the glyph arrive with phase 3.</p>
+<p class="note">Two states in phase 1, drawn as SF Symbol circles: no engine, connected. The menu holds the last settle's line, Pause, Quit. Phase 2 brings Semel's own glyph, below, the errors state while an error card is held, and <i>Products…</i>; the settling state arrives with phase 3.</p>
 <div class="screen" style="height: 220px;">
   <div class="menubar">
     <div class="left"><b></b><span>Finder</span></div>
@@ -148,7 +150,7 @@
     <div class="item">Quit semel-monitor</div>
   </div>
 </div>
-<p class="note">Glyphs: <i class="glyph none"></i> no engine &nbsp; <i class="glyph connected"></i> connected &nbsp; <i class="glyph settling"></i> settling (phase 3) &nbsp; <i class="glyph errors"></i> errors held (phase 3).</p>
+<p class="note">Glyphs: <i class="glyph none"></i> no engine &nbsp; <i class="glyph connected"></i> connected &nbsp; <i class="glyph errors"></i> errors held (phase 2) &nbsp; <i class="glyph settling"></i> settling (phase 3).</p>
 
 <h2>Phase 1 · <code>--print</code></h2>
 <p class="note">The same model with no panels, one card as lines; what the end-to-end test reads and a script can tail.</p>
@@ -162,16 +164,17 @@ card: 2 products without a value
 dismissed: 3 products changed, 1 appeared</pre>
 
 <h2>Phase 2 · the products window</h2>
-<p class="note">A client of the private file system: <code>output:</code> listed by folder, the settle's products marked, errors in the report's lines, export of a selection to a destination chosen in a save panel. No external locations.</p>
+<p class="note">A client of the private file system: <code>output:</code> listed by folder, the settle's products marked, errors in the report's lines, export of a selection to a destination chosen in a save panel. No external locations. As built, the column lists every folder as <code>ls</code> does, starting at the root, and the export button names what it will write.</p>
 <div class="screen" style="height: 440px;">
-  <div class="menubar"><div class="left"><b></b><span>semel-monitor</span><span>File</span><span>Edit</span></div><div class="right"><span><i class="glyph connected"></i>semel</span></div></div>
+  <div class="menubar"><div class="left"><b></b><span>semel-monitor</span><span>File</span><span>Edit</span></div><div class="right"><span><i class="glyph errors"></i>semel</span></div></div>
   <div class="window">
     <div class="title"><div class="lights"><i></i><i></i><i></i></div>Products · output:</div>
     <div class="body">
       <div class="side">
-        <div class="item sel">Packages</div>
+        <div class="item">output:</div>
         <div class="item">App</div>
         <div class="item">Frameworks</div>
+        <div class="item sel">Packages</div>
         <div class="item dim" style="margin-top:10px;color:var(--card-dim)">Errors (1)</div>
       </div>
       <div class="main">
@@ -215,5 +218,18 @@ dismissed: 3 products changed, 1 appeared</pre>
   </div>
 </div>
 <p class="note">The full graph view, nodes and wires with their states, needs requests that do not exist yet and is designed separately once phase 3 has shown what people look at.</p>
+<p class="note">As built: the menu bar writes the pending count alone beside the glyph, <code>48</code>. Below the running nodes the window lists the last settle's products — every folder's rows at once, a folder column, the product and its mark, a tree product as its folder — and then its errors in the report's lines; the products window's column of folders is not repeated, since a settle's products are few. The events carry no sizes, so the window shows none.</p>
+<pre class="print">running: Building · 3 running · 0 ahead
+card: 3 products appeared
+  config.txt, hello, hello.dylib
+  24 computed · 0 from cache
+live: semel · idle
+  scheduled 24 · computed 24 · from cache 0 · errors 0
+  started 24 of 24
+  nothing running
+  last settle: 3 products appeared
+  c: config.txt · appeared
+  c: hello · appeared
+  c: hello.dylib · appeared</pre>
 </body>
 </html>

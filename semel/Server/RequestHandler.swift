@@ -104,6 +104,8 @@ public final class RequestHandler {
                 return (.hello(answer(hello)), nil)
             case .daemon(let daemonRequest):
                 return handleDaemon(daemonRequest, body: body, session: session, replyStream: replyStream)
+            case .cache:
+                return (.error(.roleNotOffered(role: .cache)), nil)
             }
         }
     }
@@ -219,7 +221,7 @@ public final class RequestHandler {
                 guard let cacheKey else {
                     return (.daemon(.debug), Data(try engine.graphDescription().utf8))
                 }
-                return (.daemon(.debug), Data(engine.cacheEntryDescription(key: cacheKey).utf8))
+                return (.daemon(.debug), Data(engine.cacheEntryDescription(key: cacheKey.hash).utf8))
             case .subscribe:
                 session.isSubscribed = true
                 return (.daemon(.ok), nil)
@@ -398,7 +400,8 @@ public final class RequestHandler {
         engine.artifactReporter = { [weak self] changes in
             self?.eventSink?.deliver(.daemon(.artifacts(appeared:    changes.appeared,
                                                         changed:     changes.changed,
-                                                        disappeared: changes.disappeared)))
+                                                        disappeared: changes.disappeared,
+                                                        treeFolders: changes.treeFolders)))
         }
         // Between the two, as often as the pass changes state (B-95).
         engine.progressReporter = { [weak self] report in

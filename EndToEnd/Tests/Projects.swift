@@ -577,11 +577,12 @@ enum Projects {
             "Sequel Ace.app/Contents/Frameworks/QueryKit.framework/Versions/A/QueryKit",
             "Sequel Ace.app/Contents/Frameworks/ShortcutRecorder.framework/Versions/A/ShortcutRecorder",
         ],
-        // A cold build here took 610 s with four jobs on a machine busy with other work;
-        // `prepare` 32-43 s over a warm SwiftPM cache. Each has this budget, which leaves
-        // room for a cold cache's 957 MB of fetching and for the nightly's runner, which is
-        // also a workstation.
-        buildTimeout: 25 * 60,
+        // A cold build here took 610 s with four jobs on a machine busy with other work,
+        // and the nightly's first run of this entry took 2,503 s for its two builds and the
+        // `prepare` on a loaded runner; `prepare` is 32-43 s over a warm SwiftPM cache.
+        // Each step has this budget, which leaves room for a cold cache's 957 MB of
+        // fetching and for the nightly's runner, which is also a workstation.
+        buildTimeout: 35 * 60,
         twoMounts: false,
         perturbed: false,
         onlyUnder: "Sequel Ace.app",

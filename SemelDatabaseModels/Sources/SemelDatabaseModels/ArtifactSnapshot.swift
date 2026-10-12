@@ -21,9 +21,10 @@ public struct ArtifactSnapshot: Codable, FetchableRecord, PersistableRecord, Equ
     }
 
     public var path: String
-    public var contentHash: DataObjectHash
+    /// The object store's name for the bytes, a `DataObjectHash` as the node kit calls it.
+    public var contentHash: String
 
-    public init(path: String, contentHash: DataObjectHash) {
+    public init(path: String, contentHash: String) {
         self.path        = path
         self.contentHash = contentHash
     }
@@ -62,7 +63,7 @@ public struct ArtifactSnapshotDataAccess: DataAccessType {
         }
     }
 
-    public func upsert(path: String, contentHash: DataObjectHash) throws {
+    public func upsert(path: String, contentHash: String) throws {
         try write { db in
             try ArtifactSnapshot(path: path, contentHash: contentHash).save(db)
         }

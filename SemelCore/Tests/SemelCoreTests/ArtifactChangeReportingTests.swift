@@ -194,6 +194,34 @@ final class ArtifactChangeReportingTests: SemelCoreTestCase {
         XCTAssertTrue(captured.isEmpty)
     }
 
+    // MARK: - Trees (B-150)
+
+    /// An entry of a tree product carries the tree's folder, read from its `TreeFile`, when
+    /// it appears and when it is collected, so a client names the tree by its folder; a
+    /// product named on its own carries none.
+    func test_anEntryOfATreeProductCarriesItsTreesFolder() throws {
+        let entrySpec = GraphSpecNode(TreeFile.self, properties: [TreeFile.nameProperty: "Contents/Info.plist"],
+                                      inputs: [TreeFile.treeInputPort: ["tree": .staticFile(at: "input:/stand-in/tree")]])
+        let (entry, _) = try entrySpec.findOrCreateMatchingNode()
+        let (treeProduct, _) = try product(at: "output:/App/App.app/Contents/Info.plist",
+                                           reading: entrySpec.port(TreeFile.outputPort)).findOrCreateMatchingNode()
+        try entry.writeToOutputPort(TreeFile.outputPort, value: .value(try "plist".intern()))
+        try publishProduct("lib.a", contents: "archive")
+
+        engine.reportArtifactChanges()
+        XCTAssertEqual(try onlyReport(),
+                       ArtifactChanges(appeared: ["output:/App/App.app/Contents/Info.plist", "output:/src/lib.a"],
+                                       treeFolders: ["output:/App/App.app/Contents/Info.plist": "output:/App/App.app"]))
+        captured = []
+
+        try engine.database.node.updatePendingDeletion(nodeID: try treeProduct.requireID(), pendingDeletion: true)
+        try engine.processPendingDeletions()
+        engine.reportArtifactChanges()
+        XCTAssertEqual(try onlyReport(),
+                       ArtifactChanges(disappeared: ["output:/App/App.app/Contents/Info.plist"],
+                                       treeFolders: ["output:/App/App.app/Contents/Info.plist": "output:/App/App.app"]))
+    }
+
     // MARK: - The table
 
     /// The snapshot is what the next settle is compared against, so it has to hold the
@@ -283,7 +311,7 @@ final class ArtifactChangeReportingTests: SemelCoreTestCase {
 
         // What `processPendingDeletions` records on its way to a delete, without the
         // delete: the node is still there.
-        engine.noteArtifactCollected(path: "output:/src/lib.a", nodeID: try published.product.requireID())
+        engine.noteArtifactCollected(path: "output:/src/lib.a", nodeID: try published.product.requireID(), treeFolder: nil)
         engine.reportArtifactChanges()
 
         XCTAssertTrue(captured.isEmpty, "the node is still there, got \(captured)")

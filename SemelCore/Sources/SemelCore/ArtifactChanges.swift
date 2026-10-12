@@ -25,10 +25,20 @@ public struct ArtifactChanges: Equatable, Sendable {
     /// the node is gone by the time the report runs, so there is nothing left to compare.
     public var disappeared: [String]
 
-    public init(appeared: [String] = [], changed: [String] = [], disappeared: [String] = []) {
+    /// The folder of the tree product (B-63) each path above is an entry of, by path; a
+    /// product named on its own has none. A client names a tree by its folder, as the
+    /// error report does, and this is what lets it without taking paths apart. A path
+    /// that disappeared carries its folder only when the collection that took it saw the
+    /// tree: the reconciliation at a launch finds a row whose node is gone, and nothing
+    /// left in the graph says which tree it was part of.
+    public var treeFolders: [String: String]
+
+    public init(appeared: [String] = [], changed: [String] = [], disappeared: [String] = [],
+                treeFolders: [String: String] = [:]) {
         self.appeared    = appeared
         self.changed     = changed
         self.disappeared = disappeared
+        self.treeFolders = treeFolders
     }
 
     public var isEmpty: Bool {

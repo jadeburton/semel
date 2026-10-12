@@ -246,7 +246,7 @@ final class SettleTimeErrorCountingTests: XCTestCase {
 
         XCTAssertEqual(received.kinds, ["settled", "artifacts"], "the diff comes under the summary")
 
-        guard case .daemon(.artifacts(let appeared, let changed, let disappeared))? = received.all.last else {
+        guard case .daemon(.artifacts(let appeared, let changed, let disappeared, _))? = received.all.last else {
             return XCTFail("expected the artifact diff last, got \(received.all)")
         }
         XCTAssertEqual(appeared, ["output:/src/lib.a"])

@@ -71,6 +71,7 @@ included:
   - semel-cmake
   - semel-watch
   - semel-monitor
+  - semel-cache
   - EndToEnd/Tests
 
 excluded:

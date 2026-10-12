@@ -244,6 +244,9 @@ public final class CommandInterpreter: CommandContext {
         switch helloResponse {
         case .rejected(let reason):
             throw ConnectError.rejected(reason)
+        case .cacheAccepted:
+            // A cache's answer: whatever is at the socket is not the engine's server.
+            throw ConnectError.unexpectedReply
         case .accepted(let serverVersion, let databasePath):
             guard subscribing else {
                 return (serverVersion, databasePath)
@@ -281,7 +284,7 @@ public final class CommandInterpreter: CommandContext {
                 return
             }
             outputMessage(line)
-        case .daemon(.artifacts(let appeared, let changed, let disappeared)):
+        case .daemon(.artifacts(let appeared, let changed, let disappeared, _)):
             guard !holdArtifacts(appeared: appeared, changed: changed, disappeared: disappeared) else {
                 return
             }

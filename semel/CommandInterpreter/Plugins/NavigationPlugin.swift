@@ -28,13 +28,11 @@ final class NavigationPlugin: CommandPlugin {
 
     // MARK: - Listing
 
-    /// One `list` request, unwrapped.
+    /// One `list` request, its streamed parts gathered: what the monitor's products window
+    /// lists through too (`CommandInterpreter.outputFolders`).
     private func list(_ pattern: Path, in fileSystem: FileSystemForCommand,
                       context: any CommandContext) throws -> [ListEntry] {
-        guard case .list(let entries) = try context.request(.list(fileSystem: fileSystem.kind, pattern: pattern.string)).0 else {
-            return []
-        }
-        return entries
+        try context.listEntries(pattern, in: fileSystem.kind)
     }
 
     // MARK: - cd
@@ -107,12 +105,7 @@ final class NavigationPlugin: CommandPlugin {
             return
         }
 
-        let sorted = results.sorted {
-            if $0.kind != $1.kind { return $0.kind == .folder }
-            return $0.path.lowercased() < $1.path.lowercased()
-        }
-
-        for entry in sorted {
+        for entry in ListingOrder.sorted(results) {
             let name = context.relativeName(Path(entry.path), to: displayBase)
 
             var statusNote = ""

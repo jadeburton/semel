@@ -79,8 +79,9 @@ jobs:
 
       # The root package's tests include SemelEndToEndTests, which builds the C, C++
       # and Swift fixtures under EndToEnd/Fixtures through semelserv, semel and
-      # semel-swift, twice each. External projects are not run here; see end-to-end.yml.
-      - name: Test the CLI, the server and the end-to-end fixtures
+      # semel-swift, twice each, and SemelCacheServerTests, which runs semel-cache over TCP on
+      # localhost. External projects are not run here; see end-to-end.yml.
+      - name: Test the CLI, the servers, the shared cache and the end-to-end fixtures
         run: scripts/build.sh test
 
       # A test process that dies of a signal leaves its stack in a crash report, which a
@@ -88,7 +89,7 @@ jobs:
       # unexplained crash has a report to read; nothing is uploaded from a green run.
       - name: Keep crash reports on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: crash-reports-${{ github.run_id }}
           path: |

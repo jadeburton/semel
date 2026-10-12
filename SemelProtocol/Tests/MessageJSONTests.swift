@@ -8,6 +8,7 @@
 //
 
 @testable import SemelProtocol
+import SemelCache
 import SemelNodeKit
 import XCTest
 
@@ -18,7 +19,7 @@ final class MessageJSONTests: XCTestCase {
     func test_encodesHelloAsRoleAndVersion() throws {
         let hello = Hello(protocolVersion: 1, role: .daemon)
 
-        XCTAssertEqual(try json(hello), #"{"protocolVersion":1,"role":"daemon"}"#)
+        XCTAssertEqual(try json(hello), #"{"protocolVersion":1,"role":"daemon","wantsWrite":false}"#)
     }
 
     func test_encodesAcceptedHelloResponse() throws {
@@ -48,9 +49,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsTwentySeven() {
-        XCTAssertEqual(ProtocolVersion.current, 27)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 27,
+    func test_currentProtocolVersionIsTwentyNine() {
+        XCTAssertEqual(ProtocolVersion.current, 29)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 29,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -77,16 +78,31 @@ final class MessageJSONTests: XCTestCase {
     }
 
     func test_encodesArtifactsEvent() throws {
-        let event = Event.daemon(.artifacts(appeared: ["output:/app"], changed: [], disappeared: ["output:/old"]))
+        let event = Event.daemon(.artifacts(appeared: ["output:/app"], changed: [], disappeared: ["output:/old"],
+                                            treeFolders: [:]))
 
         XCTAssertEqual(try json(event),
-                       #"{"daemon":{"artifacts":{"appeared":["output:\/app"],"changed":[],"disappeared":["output:\/old"]}}}"#)
+                       #"{"daemon":{"artifacts":{"appeared":["output:\/app"],"changed":[],"disappeared":["output:\/old"],"#
+                     + #""treeFolders":{}}}}"#)
+    }
+
+    /// A tree's entry carries its folder by path, as an error's stopped product does (B-150).
+    func test_anArtifactsEventCarriesTheFolderOfATreesEntries() throws {
+        let event = Event.daemon(.artifacts(appeared: ["output:/App.app/Info.plist", "output:/lib.a"], changed: [],
+                                            disappeared: [],
+                                            treeFolders: ["output:/App.app/Info.plist": "output:/App.app"]))
+
+        XCTAssertEqual(try json(event),
+                       #"{"daemon":{"artifacts":{"appeared":["output:\/App.app\/Info.plist","output:\/lib.a"],"#
+                     + #""changed":[],"disappeared":[],"treeFolders":{"output:\/App.app\/Info.plist":"output:\/App.app"}}}}"#)
+        XCTAssertEqual(try roundTrip(event), event)
     }
 
     func test_roundTripsArtifactsEvent() throws {
         let event = Event.daemon(.artifacts(appeared: ["output:/app"],
                                             changed: ["output:/lib.a"],
-                                            disappeared: ["output:/old"]))
+                                            disappeared: ["output:/old"],
+                                            treeFolders: ["output:/app": "output:/"]))
 
         XCTAssertEqual(try roundTrip(event), event)
     }
@@ -131,7 +147,7 @@ final class MessageJSONTests: XCTestCase {
     func test_encodesHelloRequestBesideTheRoles() throws {
         let request = Request.hello(Hello(protocolVersion: 1, role: .daemon))
 
-        XCTAssertEqual(try json(request), #"{"hello":{"protocolVersion":1,"role":"daemon"}}"#)
+        XCTAssertEqual(try json(request), #"{"hello":{"protocolVersion":1,"role":"daemon","wantsWrite":false}}"#)
     }
 
     func test_roundTripsEveryDaemonRequest() throws {
@@ -163,7 +179,7 @@ final class MessageJSONTests: XCTestCase {
             .nudge,
             .wait,
             .debug(cacheKey: nil),
-            .debug(cacheKey: "285a5050ac7e8501af9c3bab064c1cf5432b67646d915ae3477fe816dced6419"),
+            .debug(cacheKey: CacheKey(hash: "285a5050ac7e8501af9c3bab064c1cf5432b67646d915ae3477fe816dced6419")),
             .explain(fileSystem: .output, path: "hello/hello"),
             .subscribe,
             .checkpoint(name: nil),
@@ -322,7 +338,7 @@ final class MessageJSONTests: XCTestCase {
 
     /// The entries `cache` lists travel in the body as records.
     func test_encodesCacheEntryRecords() throws {
-        let records = [CacheEntryRecord(key: "4d5d", nodeType: "SwiftCompiler", bytes: ByteCount(bytes: 1_024), cost: 900,
+        let records = [CacheEntryRecord(key: CacheKey(hash: "4d5d"), nodeType: "SwiftCompiler", bytes: ByteCount(bytes: 1_024), cost: 900,
                                         usedByLastSettle: true, heldByNode: false)]
         XCTAssertEqual(try MessageCoder.decode([CacheEntryRecord].self, from: try MessageCoder.encode(records)), records)
     }
@@ -409,6 +425,7 @@ final class MessageJSONTests: XCTestCase {
             .malformedRequest(description: "unknown case"),
             .replyTooLarge(request: "debug", bytes: 3_000_000, limit: 1_048_576),
             .unrecoverable(message: "object store is read-only"),
+            .cacheStoreFailed(description: "the volume is full"),
             .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
                            expected: .contentRoot("4d5d"), found: "9e1f", paths: ["Dependencies/Pkg/a.swift"]),
             .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
@@ -476,26 +493,26 @@ final class MessageJSONTests: XCTestCase {
         }
     }
 
-    /// A role this build does not have a `CodingKeys` case for (`cache` is a `Role`, but not
-    /// yet a message-set root) must still be named in the error, not silently dropped from
-    /// `found`.
+    /// A role this build does not have a `CodingKeys` case for (`runner` is a `Role`, but
+    /// not yet a message-set root) must still be named in the error, not silently dropped
+    /// from `found`.
     func test_decodingAnUnknownRoleKeyNamesIt() {
-        let data = Data(#"{"cache":{}}"#.utf8)
+        let data = Data(#"{"runner":{}}"#.utf8)
 
         XCTAssertThrowsError(try MessageCoder.decode(Request.self, from: data)) { error in
             let message = Self.decodingMessage(of: error)
-            XCTAssertTrue(message.contains(#"["cache"]"#), message)
+            XCTAssertTrue(message.contains(#"["runner"]"#), message)
         }
     }
 
     /// A known role beside an unknown one must not decode silently as the known role; both
     /// keys belong in the error, sorted so the message is stable.
     func test_decodingAKnownRoleBesideAnUnknownOneNamesBoth() {
-        let data = Data(#"{"daemon":{"nudge":{}},"cache":{}}"#.utf8)
+        let data = Data(#"{"daemon":{"nudge":{}},"runner":{}}"#.utf8)
 
         XCTAssertThrowsError(try MessageCoder.decode(Request.self, from: data)) { error in
             let message = Self.decodingMessage(of: error)
-            XCTAssertTrue(message.contains(#"["cache", "daemon"]"#), message)
+            XCTAssertTrue(message.contains(#"["daemon", "runner"]"#), message)
         }
     }
 

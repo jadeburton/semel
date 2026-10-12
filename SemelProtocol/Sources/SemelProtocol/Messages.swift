@@ -4,8 +4,9 @@
 // The three things that cross the wire, each an enum *of roles*. Which role a message
 // belongs to is then a type-level fact: adding a role is a new file rather than an edit to
 // every switch, and a server that does not offer a role rejects the whole group with one
-// error case. Only `daemon` has messages; `cache` (B-30 role 1) and `runner` (role 2)
-// arrive as new cases here and new files beside DaemonMessages.swift.
+// error case. `daemon` and `cache` have messages (DaemonMessages.swift,
+// CacheRoleMessages.swift); `runner` (B-30 role 2) arrives as a new case here and a new
+// file beside them.
 //
 // The roots hand-write their Codable conformance. Their payloads are single values with no
 // natural field name, and synthesis would key an unlabeled value as `_0`; labeling it
@@ -22,11 +23,13 @@ import SemelNodeKit
 public enum Request: Equatable, Sendable {
     case hello(Hello)
     case daemon(DaemonRequest)
+    case cache(CacheRequest)
 }
 
 public enum Response: Equatable, Sendable {
     case hello(HelloResponse)
     case daemon(DaemonResponse)
+    case cache(CacheResponse)
     case error(ErrorResponse)
 }
 
@@ -41,6 +44,7 @@ extension Request: Codable {
     private enum CodingKeys: String, CodingKey {
         case hello
         case daemon
+        case cache
     }
 
     public init(from decoder: Decoder) throws {
@@ -50,6 +54,7 @@ extension Request: Codable {
         switch key {
         case .hello:  self = .hello(try container.decode(Hello.self, forKey: .hello))
         case .daemon: self = .daemon(try container.decode(DaemonRequest.self, forKey: .daemon))
+        case .cache:  self = .cache(try container.decode(CacheRequest.self, forKey: .cache))
         }
     }
 
@@ -59,6 +64,7 @@ extension Request: Codable {
         switch self {
         case .hello(let hello):    try container.encode(hello,   forKey: .hello)
         case .daemon(let request): try container.encode(request, forKey: .daemon)
+        case .cache(let request):  try container.encode(request, forKey: .cache)
         }
     }
 }
@@ -68,6 +74,7 @@ extension Response: Codable {
     private enum CodingKeys: String, CodingKey {
         case hello
         case daemon
+        case cache
         case error
     }
 
@@ -78,6 +85,7 @@ extension Response: Codable {
         switch key {
         case .hello:  self = .hello(try container.decode(HelloResponse.self, forKey: .hello))
         case .daemon: self = .daemon(try container.decode(DaemonResponse.self, forKey: .daemon))
+        case .cache:  self = .cache(try container.decode(CacheResponse.self, forKey: .cache))
         case .error:  self = .error(try container.decode(ErrorResponse.self, forKey: .error))
         }
     }
@@ -88,6 +96,7 @@ extension Response: Codable {
         switch self {
         case .hello(let hello):     try container.encode(hello,    forKey: .hello)
         case .daemon(let response): try container.encode(response, forKey: .daemon)
+        case .cache(let response):  try container.encode(response, forKey: .cache)
         case .error(let error):     try container.encode(error,    forKey: .error)
         }
     }
@@ -177,6 +186,9 @@ public enum ErrorResponse: Codable, Equatable, Sendable {
     /// The machine, not the request, is broken. The server answers the in-flight request
     /// with this, then exits; every client sees its connection close.
     case unrecoverable(message: String)
+    /// A cache server could not read or write its store — a full or read-only volume. It
+    /// goes on answering what it can; the client takes this as a miss, or a write lost.
+    case cacheStoreFailed(description: String)
 
     // MARK: Locked folders and checkpoints (B-146)
 

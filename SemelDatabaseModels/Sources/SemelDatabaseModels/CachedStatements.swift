@@ -30,7 +30,7 @@ import SQLite3
 /// that failed, so a failure here costs a prepare on the next call and nothing else.
 ///
 /// Public because one set of queries lives outside this package: the cache's, in
-/// `SemelCore`'s `SQLiteCacheStore`, which speaks the cache's types and so cannot live
+/// `SemelCache`'s `SQLiteCacheStore`, which speaks the cache's types and so cannot live
 /// below the node kit.
 extension Database {
 

@@ -22,6 +22,12 @@ import CryptoKit
 
 // MARK: - DataObjectStore
 
+/// The name an object is filed under in the store: `Sha256.hash` of its bytes. Declared
+/// beside the store rather than with the database rows that record one, so that every
+/// package that names an object — a node, the cache, a cache server — names it by this type
+/// without linking the database models to do it.
+public typealias DataObjectHash = String
+
 /// The canonical on-disk store for all DataObject content.
 ///
 /// Content is immutable once written: a given hash always maps to the same

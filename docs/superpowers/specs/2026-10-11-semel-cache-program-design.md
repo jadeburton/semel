@@ -149,3 +149,66 @@ Fewer than the word suggests, and none of them inside the graph.
   `--writers none`; a list of identities comes when a deployment needs one, as a change
   to the server's configuration and not to the protocol.
 - The engine-side namespace is `cache.*`.
+
+## As built (phase 2, 2026-10-12)
+
+Where the server differs from the text above, and what this document left open that phase
+2 had to decide.
+
+- **The server never parses an entry** (an owner decision during phase 2). `putEntry`
+  carries the key, the recorded cost, the hashes of every object the entry references and
+  the body's length as typed fields, and the entry as opaque bytes in the frame body — the
+  engine's encoding, stored as it came; `getEntry` answers `entry(cost:)` with those bytes
+  in the body, and the engine decodes them. The server reads nothing inside an entry: its
+  accounting, eviction and `hasObjects` run on the fields, and the one check on an entry's
+  bytes is its length. So the table's `putEntry(key:entry:cost:)` is
+  `putEntry(key:cost:objects:length:)` with the entry in the body, and the server links
+  `SemelCache` for `CacheKey`, the accounting and the eviction order, never for
+  `ProcessCacheEntry`'s decoding. The entry's format is the engine's business; the server is
+  a byte store with an index, which is also what makes it fast. The body also lifts the
+  JSON section's 1 MiB cap off an entry, which a product builder's spec table can pass.
+- **Answering quickly, with durability traded for it and never consistency** (an owner
+  requirement). The index is in memory — every key, object hash and size — kept in step
+  with the disk, so a miss and `hasObjects` never touch it; the in-memory index is a
+  `CacheStore`, so `SemelCache`'s one trim runs over it without a query. The disk is the
+  cache's tables in SQLite (`CacheIndexDatabase`: WAL, `synchronous=NORMAL`, never `OFF`,
+  which can corrupt after a power failure; a large page cache and `mmap_size`; SQLite's
+  checkpoint on commit off) and the node kit's object store. Writes are queued and one
+  writer thread commits them in batches, each one transaction; a `putEntry` is answered
+  once its batch is in the write-ahead log, and a connection's next request is prepared
+  meanwhile, so one client's entries share batches. A `putObject` is answered once its bytes
+  are hashed and in memory, and its file is written behind the answer. The log is
+  checkpointed when the writer is idle. A crash can lose the last batches and objects and
+  leaves the store consistent: on opening, an entry whose objects did not survive is dropped
+  and an object no entry holds is removed. Measured on an Apple M4 over TCP on localhost
+  with a warm index (release server, debug client, medians of two runs): `getEntry` hit
+  161–236 µs and miss 130–178 µs, `hasObjects` for 100 hashes 232–307 µs, `getObject` of
+  1 MB 1.1–1.3 ms, `putObject` of 1 MB 1.4–1.8 ms; one client putting 1,000 entries with
+  10,000 objects of 4 KB, pipelined, in 1.5–2.1 s (5,300–7,500 requests/s), against a
+  ceiling of 6,800–9,300 pipelined misses a second on one connection.
+- **The store's queries moved below the engine, the schema did not.** `SQLiteCacheStore` is
+  `SemelCache`'s, over `CacheDatabase` (the engine's `DatabaseLayer` conforms); the cache's
+  tables are still created by `CacheEntry.createTable` in the database models, which the
+  graph's database and a server's index both call — one schema, two databases. What joins
+  the graph stays in `SemelCore`.
+- **Uses counted in requests.** Every 10,000 entry requests (`getEntry`, `putEntry`) close a
+  use; what the last one or two windows touched is kept over everything else, then the
+  cheapest build per byte goes first. A put that takes the store over its limit trims it to
+  nine tenths of the limit, so a store at its limit does not trim on every put. The server
+  knows no entry's node type, so its entries' `nodeType` is empty.
+- **`status` and `purge` go through the running server.** The index in memory is the one
+  place a running store changes, so with the home's lock held both connect to the address
+  `semel.cache.config` names; with it free they open the home themselves. A purge asks for
+  write access and nothing more — a writer could overwrite any entry anyway — so a server
+  run with `--writers none` is purged by stopping it and purging its home. Hits and misses
+  are a running server's, since it started; a stopped home reports entries and bytes.
+- **Hello.** `wantsWrite` reads as false when absent, so an older peer is told its version
+  differs rather than that its hello was malformed. A cache's acceptance is a case of its
+  own, `cacheAccepted(access:)` with `readWrite` or `readOnly`, beside the daemon's
+  `accepted(serverVersion:databasePath:)`. No request is answered before an accepted hello.
+- **Hashes are checked before they name a path**: lowercase hex, two digits to a byte, at
+  most a SHA-256's worth (an object no longer than a digest is filed under its own bytes),
+  so nothing a client sends names a file outside the store.
+- **Open.** An object put for an entry that never comes stays until the store next opens or
+  `purge --all`. An object over the frame body's 512 MiB cannot be shared. `Hello` carries
+  no identity yet; it comes with phase 3's `cache.identity`.

@@ -1,9 +1,10 @@
 // Card.swift
 // SemelMonitor
 //
-// One notification: what one settle did, as the events said it. A card holds the typed
-// values it was made from — paths, records, counts — and `CardText` draws its lines, so
-// the panel, `--print` and a test read the same words from one place.
+// One notification: what one settle did, as the events said it, or where a settle still
+// going stands. A card holds the typed values it was made from — paths, records, counts —
+// and `CardText` draws its lines, so the panel, `--print` and a test read the same words
+// from one place.
 
 import SemelProtocol
 
@@ -22,22 +23,31 @@ public struct SettleCounts: Equatable, Sendable {
 public struct Card: Equatable, Sendable {
 
     /// A result is something to know and goes by itself; an error is something to act on
-    /// and stays until it is clicked or a later settle gives its products a value.
+    /// and stays until it is clicked or a later settle gives its products a value. A running
+    /// card is a settle still going, and becomes the settle's result or errors in its place.
     public enum Kind: Equatable, Sendable {
+        case running
         case result
         case errors
     }
 
     public enum Content: Equatable, Sendable {
+        /// A settle in progress, as its latest `progress` record says. `rotation` is the
+        /// index of the first running node the card names: the clock moves it on, so that a
+        /// settle running more nodes than a card has room for names each of them in turn.
+        case running(record: ProgressRecord, rotation: Int)
         /// What the settle's `artifacts` said, each list in the event's path order, and the
         /// `settled` before it — nil for a settle that scheduled nothing and still moved a
-        /// product, a removal's.
-        case result(changed: [String], appeared: [String], disappeared: [String], counts: SettleCounts?)
+        /// product, a removal's. `treeFolders` is the event's: the folder of the tree
+        /// product each path is an entry of.
+        case result(changed: [String], appeared: [String], disappeared: [String], counts: SettleCounts?,
+                    treeFolders: [String: String])
         /// The new failures the settle's `errors` event carried, as the report reads them.
         case errors(records: [ErrorRecord])
     }
 
-    /// Unique within one planner, in the order cards were made.
+    /// Unique within one planner, in the order cards were made. A running card's result
+    /// keeps its id, which is what keeps it in its place.
     public let id: Int
     public let content: Content
     /// How many older cards were folded into this one because more than the stack holds
@@ -52,18 +62,23 @@ public struct Card: Equatable, Sendable {
 
     public var kind: Kind {
         switch content {
-        case .result: return .result
-        case .errors: return .errors
+        case .running: return .running
+        case .result:  return .result
+        case .errors:  return .errors
         }
     }
 
     /// The products the card names, in the order it names them: for a result, what
     /// changed, then what appeared, then what disappeared; for errors, the products
-    /// without a value in path order, a tree product once by its folder.
+    /// without a value in path order. A tree product is named once, by its folder. A
+    /// running card names nodes, not products.
     public var products: [StoppedProduct] {
         switch content {
-        case .result(let changed, let appeared, let disappeared, _):
-            return (changed + appeared + disappeared).map { StoppedProduct(path: $0) }
+        case .running:
+            return []
+        case .result:
+            let moved = movedProducts
+            return moved.changed + moved.appeared + moved.disappeared
         case .errors(let records):
             var seen: Set<String> = []
             return records
@@ -73,6 +88,32 @@ public struct Card: Equatable, Sendable {
                 .filter { seen.insert($0.path).inserted }
         }
     }
+
+    /// A result's three lists as products, each tree once by its folder and in the first
+    /// list one of its entries is in: a tree with one entry changed and another appeared is
+    /// a tree that changed, which is what a person rebuilding it would call it. Empty for
+    /// any other card.
+    public var movedProducts: MovedProducts {
+        guard case .result(let changed, let appeared, let disappeared, _, let treeFolders) = content else {
+            return MovedProducts(changed: [], appeared: [], disappeared: [])
+        }
+        var seen: Set<String> = []
+        func named(_ paths: [String]) -> [StoppedProduct] {
+            paths
+                .map { path in treeFolders[path].map { StoppedProduct(path: $0, treeFolder: $0) } ?? StoppedProduct(path: path) }
+                .filter { seen.insert($0.path).inserted }
+        }
+        let changedProducts  = named(changed)
+        let appearedProducts = named(appeared)
+        return MovedProducts(changed: changedProducts, appeared: appearedProducts, disappeared: named(disappeared))
+    }
+}
+
+/// A result card's products by what the settle did to them.
+public struct MovedProducts: Equatable, Sendable {
+    public let changed:     [StoppedProduct]
+    public let appeared:    [StoppedProduct]
+    public let disappeared: [StoppedProduct]
 }
 
 /// What became of the cards on screen after the planner was told something: what a panel
@@ -87,4 +128,10 @@ public enum CardChange: Equatable, Sendable {
     case folded(Card)
     /// A card on screen whose `earlier` count moved.
     case updated(Card)
+    /// The running card on screen, redrawn: a `progress` moved it, or the clock turned the
+    /// names it shows.
+    case progressed(Card)
+    /// The running card on screen became its settle's result or errors card, in its place
+    /// in the stack and under its id.
+    case resolved(Card)
 }

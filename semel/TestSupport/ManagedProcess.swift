@@ -19,7 +19,18 @@ public final class ManagedProcess {
     /// The launch, as a shell would show it, for a failure message.
     public let commandLine: String
 
-    public init(executable: URL, arguments: [String], environment: [String: String], currentDirectory: URL? = nil) {
+    /// Standard input, when the process was started taking input; otherwise it inherits
+    /// the test runner's.
+    private let input: Pipe?
+
+    /// `takesInput` gives the process a pipe for standard input that `write` feeds: a
+    /// program that reads lines as a person's actions, as `semel-monitor --print` does.
+    public init(executable: URL, arguments: [String], environment: [String: String], currentDirectory: URL? = nil,
+                takesInput: Bool = false) {
+        input = takesInput ? Pipe() : nil
+        if let input {
+            process.standardInput = input
+        }
         process.executableURL = executable
         process.arguments = arguments
         process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, override in override }
@@ -49,6 +60,12 @@ public final class ManagedProcess {
     }
 
     public var isRunning: Bool { process.isRunning }
+
+    /// Writes `line` and a newline to standard input; nothing for a process started without
+    /// taking input.
+    public func write(line: String) {
+        input?.fileHandleForWriting.write(Data("\(line)\n".utf8))
+    }
 
     public var terminationStatus: Int32 { process.terminationStatus }
 

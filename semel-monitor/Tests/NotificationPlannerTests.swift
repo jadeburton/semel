@@ -242,6 +242,195 @@ final class NotificationPlannerTests: XCTestCase {
         XCTAssertEqual(NotificationPlanner.prefix(ofFolder: "output:/App"), "output:/App/")
     }
 
+    // MARK: - The running card (phase 3)
+
+    func test_aSettleRunningNodesIsOneRunningCardUpdatedInPlace() throws {
+        let planner = planner()
+        let running = try XCTUnwrap(planner.receive(Events.progress(pending: 5, running: ["a", "b"])).first?.shownCard)
+        XCTAssertEqual(running.kind, .running)
+        XCTAssertEqual(CardText.lines(for: running), [
+            "Building · 2 running · 5 ahead",
+            "ClangCompiler src/a.c · ClangCompiler src/b.c",
+            "0 computed · 0 from cache · 5 pending",
+        ])
+        XCTAssertNil(planner.lastCard, "a running card is not a settle's card")
+
+        let changes = planner.receive(Events.progress(computed: 2, pending: 3, running: ["c"]))
+        guard case .progressed(let updated)? = changes.first, changes.count == 1 else {
+            return XCTFail("expected the running card updated in place, got \(changes)")
+        }
+        XCTAssertEqual(updated.id, running.id)
+        XCTAssertEqual(CardText.lines(for: updated), [
+            "Building · 1 running · 3 ahead",
+            "ClangCompiler src/c.c",
+            "2 computed · 0 from cache · 3 pending",
+        ])
+        XCTAssertEqual(planner.cards, [updated])
+        XCTAssertEqual(planner.settleInProgress, Events.record(computed: 2, pending: 3, running: ["c"]))
+    }
+
+    func test_theRunningCardBecomesTheResultInItsPlace() throws {
+        let planner = planner()
+        let older   = try XCTUnwrap(planner.settle(Events.settled(), Events.artifacts(changed: ["output:/c/one"]))
+                                        .first?.shownCard)
+        let running = try XCTUnwrap(planner.receive(Events.progress(running: ["a"])).first?.shownCard)
+        XCTAssertEqual(planner.cards.map(\.id), [running.id, older.id])
+
+        XCTAssertEqual(planner.receive(Events.settled(computed: 3, fromCache: 9)), [], "the card waits for the products")
+        let changes = planner.receive(Events.artifacts(changed: ["output:/c/two"]))
+        guard case .resolved(let result)? = changes.first, changes.count == 1 else {
+            return XCTFail("expected the running card resolved, got \(changes)")
+        }
+        XCTAssertEqual(result.id, running.id, "in its place, under its id")
+        XCTAssertEqual(CardText.lines(for: result), ["1 product changed", "two", "3 computed · 9 from cache"])
+        XCTAssertEqual(planner.cards.map(\.id), [running.id, older.id])
+        XCTAssertEqual(planner.lastCard, result)
+        XCTAssertNil(planner.settleInProgress)
+
+        clock.advance(by: NotificationPlanner.resultLifetime)
+        XCTAssertEqual(planner.advance(), [.dismissed(older), .dismissed(result)], "and goes as a result goes")
+    }
+
+    func test_theRunningCardBecomesTheErrorCardInItsPlace() throws {
+        let planner = planner()
+        let running = try XCTUnwrap(planner.receive(Events.progress(running: ["a"])).first?.shownCard)
+        let changes = planner.settle(.errors(records: [Events.compileError(products: Events.products("output:/c/hello"))]),
+                                     Events.settled(errors: 1))
+        guard case .resolved(let errors)? = changes.first, changes.count == 1 else {
+            return XCTFail("expected the running card resolved, got \(changes)")
+        }
+        XCTAssertEqual(errors.id, running.id)
+        XCTAssertEqual(errors.kind, .errors)
+        XCTAssertTrue(planner.holdsErrorCard)
+        XCTAssertEqual(planner.receive(Events.artifacts(appeared: ["output:/c/other"])), [],
+                       "the settle made its card at settled")
+    }
+
+    func test_aSettleThatStartsNothingShowsNoRunningCard() {
+        let planner = planner()
+        XCTAssertEqual(planner.receive(Events.progress()), [], "a record listing nothing running")
+        XCTAssertEqual(planner.settle(Events.settled(), Events.artifacts(changed: ["output:/c/hello"])).map(Self.kind),
+                       ["shown"])
+        XCTAssertEqual(planner.cards.map(\.kind), [.result])
+    }
+
+    func test_aRunningCardWhoseSettleMovedNothingGoesOnTheClock() throws {
+        let planner = planner()
+        let running = try XCTUnwrap(planner.receive(Events.progress(running: ["a"])).first?.shownCard)
+        XCTAssertNil(planner.nextDeadline, "nothing to wait on while the settle runs")
+        XCTAssertEqual(planner.receive(Events.settled()), [])
+        XCTAssertEqual(planner.nextDeadline, NotificationPlanner.artifactsWait)
+
+        clock.advance(by: NotificationPlanner.artifactsWait)
+        XCTAssertEqual(planner.advance(), [.dismissed(running)])
+        XCTAssertTrue(planner.cards.isEmpty)
+        XCTAssertNil(planner.lastCard)
+    }
+
+    func test_theNextSettleRetiresARunningCardStillWaitingForProducts() throws {
+        let planner = planner()
+        let first = try XCTUnwrap(planner.receive(Events.progress(running: ["a"])).first?.shownCard)
+        planner.receive(Events.settled())
+        let changes = planner.receive(Events.progress(running: ["b"]))
+        XCTAssertEqual(changes.map(Self.kind), ["dismissed", "shown"])
+        XCTAssertEqual(changes.first, .dismissed(first))
+        XCTAssertEqual(planner.cards.map(CardText.namesLine(of:)), ["ClangCompiler src/b.c"])
+    }
+
+    func test_theRunningCardTurnsThroughMoreNodesThanItNames() throws {
+        let planner = planner()
+        let running = try XCTUnwrap(planner.receive(Events.progress(running: ["a", "b", "c"])).first?.shownCard)
+        XCTAssertEqual(CardText.namesLine(of: running), "ClangCompiler src/a.c · ClangCompiler src/b.c")
+        XCTAssertEqual(planner.nextDeadline, NotificationPlanner.namesTurn)
+
+        clock.advance(by: NotificationPlanner.namesTurn)
+        guard case .progressed(let turned)? = planner.advance().first else {
+            return XCTFail("expected the names turned")
+        }
+        XCTAssertEqual(CardText.namesLine(of: turned), "ClangCompiler src/c.c · ClangCompiler src/a.c")
+        XCTAssertEqual(CardText.headline(of: turned), CardText.headline(of: running), "the turn moves only the names")
+
+        planner.receive(Events.progress(running: ["a"]))
+        XCTAssertNil(planner.nextDeadline, "nothing to turn through when every running node is named")
+    }
+
+    func test_aRunningCardClickedAwayStaysAwayForTheRestOfItsSettle() throws {
+        let planner = planner()
+        let running = try XCTUnwrap(planner.receive(Events.progress(running: ["a"])).first?.shownCard)
+        XCTAssertEqual(planner.dismiss(cardID: running.id), [.dismissed(running)])
+        XCTAssertEqual(planner.receive(Events.progress(running: ["b"])), [])
+        XCTAssertNotNil(planner.settleInProgress, "the settle still runs")
+
+        let result = try XCTUnwrap(planner.settle(Events.settled(), Events.artifacts(changed: ["output:/c/hello"]))
+                                       .first?.shownCard)
+        XCTAssertEqual(result.kind, .result, "its result is a card of its own")
+        XCTAssertEqual(planner.receive(Events.progress(running: ["c"])).compactMap(\.shownCard).map(\.kind), [.running],
+                       "and the next settle has its running card")
+    }
+
+    func test_aPauseShowsNoRunningCard() {
+        let planner = planner()
+        planner.pause()
+        XCTAssertEqual(planner.receive(Events.progress(running: ["a"])), [])
+        XCTAssertNotNil(planner.settleInProgress, "a pause silences the card, not the state")
+    }
+
+    func test_aDroppedConnectionTakesTheRunningCardWithIt() throws {
+        let planner = planner()
+        let running = try XCTUnwrap(planner.receive(Events.progress(running: ["a"])).first?.shownCard)
+        XCTAssertEqual(planner.engineLost(), [.dismissed(running)])
+        XCTAssertNil(planner.settleInProgress)
+    }
+
+    // MARK: - --print's running lines
+
+    func test_printWritesTheRunningCardOncePerChangeOfItsNodesAndAtMostOnceASecond() throws {
+        let planner = planner()
+        let printer = CardPrinter(clock: clock)
+        XCTAssertEqual(printer.lines(for: planner.receive(Events.progress(running: ["a"]))),
+                       ["running: Building · 1 running · 5 ahead"])
+
+        clock.advance(by: .milliseconds(500))
+        XCTAssertEqual(printer.lines(for: planner.receive(Events.progress(pending: 4, running: ["a", "b", "c"]))), [],
+                       "within the second")
+        clock.advance(by: .seconds(1))
+        XCTAssertEqual(printer.lines(for: planner.receive(Events.progress(pending: 3, running: ["a", "b", "c"]))),
+                       ["running: Building · 3 running · 3 ahead"], "a second on, and the set moved since the last line")
+        clock.advance(by: .seconds(2))
+        XCTAssertEqual(printer.lines(for: planner.receive(Events.progress(pending: 2, running: ["a", "b", "c"]))), [],
+                       "the same running set is no line, however long after")
+        XCTAssertEqual(printer.lines(for: planner.advance()), [], "nor is a turn of the names")
+
+        clock.advance(by: .seconds(1))
+        XCTAssertEqual(printer.lines(for: planner.receive(Events.progress(pending: 0, running: ["c"]))),
+                       ["running: Building · 1 running · 0 ahead"])
+        XCTAssertEqual(printer.lines(for: planner.settle(Events.settled(computed: 4), Events.artifacts(changed: ["output:/c/hello"]))),
+                       ["card: 1 product changed", "  hello", "  4 computed · 0 from cache"])
+    }
+
+    // MARK: - Trees (B-150 item 4)
+
+    func test_aTreeProductThatMovedIsNamedByItsFolderAndCountedOnce() throws {
+        let planner = planner()
+        let entries = ["output:/App/App.app/Contents/Info.plist", "output:/App/App.app/Contents/MacOS/App"]
+        let folders = Dictionary(uniqueKeysWithValues: entries.map { ($0, "output:/App/App.app") })
+        let changes = planner.settle(Events.settled(), Events.artifacts(appeared: [entries[1]], changed: [entries[0], "output:/App/lib.a"],
+                                                                        treeFolders: folders))
+        let card = try XCTUnwrap(changes.first?.shownCard)
+        XCTAssertEqual(CardText.headline(of: card), "2 products changed", "a tree with one entry changed is a tree that changed")
+        XCTAssertEqual(CardText.namesLine(of: card), "App.app, lib.a")
+    }
+
+    func test_aTreesEntriesGivenAValueReplaceTheErrorCardNamingItsFolder() throws {
+        let planner = planner()
+        let entry = StoppedProduct(path: "output:/App/App.app/Contents/Info.plist", treeFolder: "output:/App/App.app")
+        let errors = try XCTUnwrap(planner.settle(.errors(records: [Events.compileError(products: [entry])]),
+                                                  Events.settled(errors: 1)).first?.shownCard)
+        let changes = planner.settle(Events.progress(), Events.settled(errors: 1),
+                                     Events.artifacts(changed: [entry.path], treeFolders: [entry.path: "output:/App/App.app"]))
+        XCTAssertEqual(changes.first, .dismissed(errors))
+    }
+
     // MARK: - The connection
 
     func test_aDroppedConnectionForgetsTheSettleItWasReading() {
@@ -256,10 +445,12 @@ final class NotificationPlannerTests: XCTestCase {
 
     private static func kind(_ change: CardChange) -> String {
         switch change {
-        case .shown:     return "shown"
-        case .dismissed: return "dismissed"
-        case .folded:    return "folded"
-        case .updated:   return "updated"
+        case .shown:      return "shown"
+        case .dismissed:  return "dismissed"
+        case .folded:     return "folded"
+        case .updated:    return "updated"
+        case .progressed: return "progressed"
+        case .resolved:   return "resolved"
         }
     }
 }

@@ -1,6 +1,7 @@
 # A Mac app that shows what the build did: notifications first, the graph later
 
-Status: design; phase 1 built — see "As built (phase 1)" at the end. Follows the 2026-10-11
+Status: built, all three phases and B-150 item 4 — see "As built (phase 1)", "As built
+(phase 2)" and "As built (phase 3)" at the end. Follows the 2026-10-11
 request for a Mac app that shows notifications when build products appear, change or
 disappear, to grow later into a real-time view of the nodes at work. Mockups of the cards,
 the status item, the products window and the live window:
@@ -135,7 +136,10 @@ Decided 2026-10-11: delivered in clear phases, each a working app on its own.
    settle in progress shows nothing until it ends. Clicking a card dismisses it.
 2. **The products window and export.** *Products…* and the click on a card open the
    window listing `output:`, marking the settle's products, showing the errors' lines,
-   and exporting a selection through the prompt's export code.
+   and exporting a selection through the prompt's export code. Phase 1's click that
+   dismisses a card becomes a click that opens the window for that settle and dismisses
+   it. With it, the owner's two follow-ups of 2026-10-11: the status item's own glyph,
+   and its errors state while an error card is held.
 3. **The running card and the live window.** The running card updated from `progress`,
    then *Show window* with the running nodes, the queue and the counts, over the same
    events. The full graph view is designed separately when this phase has shown what
@@ -231,3 +235,141 @@ choice, this is what was done.
 - **The Xcode workspace is unchanged.** `semel-monitor/` is a folder of the root package,
   which the workspace already holds as `group:.`, as it holds `semel-watch/`; the lint
   configuration's `included:` list names it.
+
+## As built (phase 2)
+
+Built as phase 2 states, with the two status-item follow-ups; where the design left a
+choice, this is what was done.
+
+- **The listing is the prompt's.** `CommandInterpreter.outputFolders()` in `SemelCLI` makes
+  one `list` request for `output:/**/*`, gathered part by part as the reply streams
+  (B-137), and groups it by folder; each folder's entries are put in order by
+  `ListingOrder`, the ordering `ls` itself now calls, and `ls` gathers its own listing
+  through the same streamed helper (`CommandContext.listEntries`). The errors are the
+  `errors` request's records (`errorRecords()`), drawn by `ErrorReportRenderer.lines`,
+  made public for it. The window reads both through a `CommandInterpreter` on a connection
+  of its own beside the subscription (`EngineProducts`), opened when first needed and
+  again after it drops.
+- **By folder, every folder.** The left column is every folder of `output:`, the root
+  first as `output:` and the rest by path, then *Errors (N)*; the right is the selected
+  folder's entries exactly as `ls -o <folder>` lists them, subfolders (with a trailing
+  `/`) before products. A double-click on a subfolder selects it. A tree product's entries
+  are listed under their own folders, as `ls` lists them. The mockup's column starts at
+  `Packages`; the built one starts at the root, which `ls -o` lists too.
+- **The marks.** `appeared` and `changed` are the settle's, from the card the window was
+  opened for — a click's, or the newest card for *Products…* — and after each later settle
+  from the newest card; `disappeared` products are not in `output:` and so not listed.
+  `no value` is not the settle's but the listing's: a product whose status is `failed`
+  has no value now, whichever settle broke it. A product's size is the listing's, written
+  in decimal units the same in every locale (`ByteSize`), `—` for one with no bytes.
+- **Where it opens.** A result card's window opens on the folder of the first product the
+  card names; an error card's on *Errors*; *Products…* on the folder of the newest card's
+  first product, or the first folder holding a product.
+- **Export.** *Export…* exports the selected rows, or with nothing selected the whole
+  folder, its title saying which (`Export 2 products…`, `Export 1 folder…`, `Export c…`).
+  The save panel's chosen path is `export`'s `--into`. The seam is one optional parameter
+  on `FilePlugin.exportFiles`, the selection — paths, a folder standing for everything
+  below it — and `CommandInterpreter.export(folder:selecting:into:)` calls it; each
+  selected product is written where the whole export would write it, below the folder.
+  What `export` prints on the way, a product with no content among them, is the line under
+  the buttons. *Copy paths* copies the selected rows' `output:` paths, the folder's with
+  nothing selected, and on *Errors* the products without a value.
+- **It refreshes on each settle** while it is open: a `settled` or an `artifacts` asks
+  for a reading, one at a time, those that come during one collapsing into one more after
+  it; the selection stays while its rows are there.
+- **`--print`** writes, when a window would open, `window: <the card's headline>` (or
+  `window: products`), the left column with the selected section in brackets, and the
+  rows as `name · mark · size` — or the error report's lines — each indented two spaces;
+  `window: …` then `No engine` when there is none to read. A click is a line on standard
+  input: `click` clicks the card on top, `products` is the menu item. Nothing else in
+  `--print` changed; a click's card is still written as `dismissed:` before the window.
+- **The glyph.** Three nodes and two wires, two inputs wired into the node they build,
+  drawn in code from `StatusGlyph`'s circles and lines: hollow with no engine, filled when
+  connected, both as template images the menu bar tints; filled in the system's red while
+  an error card is held, on screen or swallowed by a pause and not yet replaced
+  (`NotificationPlanner.holdsErrorCard`), as a plain image, since a template would lose
+  the red. No engine wins over a held error: the card still says the error, and the
+  engine that would replace it is gone. The settling state stays for phase 3.
+- **The menu** is the state line, *Pause notifications*, *Products…*, *Show window*
+  (greyed until phase 3) and *Quit*, as the mockup draws it. The app installs a main menu
+  it never shows, so that the window's copy, select-all and close keys work in an
+  accessory.
+- **B-150 item 4 stays open.** Naming a tree in a result card by its folder needs the
+  `artifacts` event to carry each path's tree folder, which is a protocol version and a
+  change to the server's diff; the window does not need it.
+
+## As built (phase 3)
+
+Built as phase 3 states, with B-150 item 4; where the design left a choice, this is what
+was done.
+
+- **When the running card appears.** At the first `progress` whose record lists a node
+  running; every later `progress` redraws it in place (`CardChange.progressed`). A settle
+  whose records list nothing running shows no card — the engine sends no `progress` from a
+  pass that started nothing, so this is a settle answered without a node starting. A
+  record between two passes of one settle, `0 running`, redraws the card rather than
+  ending it: only the settle's own events end it. No card is made under a pause, and a
+  running card clicked away stays away for the rest of its settle; its result still makes
+  a card of its own.
+- **What it shows.** The headline `Building · 12 running · 48 ahead`; two running nodes, by
+  their type and the name the record carries, a node with no name by its type alone;
+  every two seconds on the app's clock the two names turn to the next two, wrapping, while
+  more run than are named; a bar of pending against scheduled — the share of the
+  scheduled nodes that are no longer waiting to start, `(scheduled − pending) /
+  scheduled`; and `31 computed · 9 from cache · 48 pending` in small type. Its mark is the
+  accent colour, where a result's is green and an error's red.
+- **How it ends.** The settle's card takes its place and its id (`CardChange.resolved`):
+  an error card at `settled`, a result card at `artifacts`, each made as phase 1 makes
+  them. A settle that moved nothing and broke nothing sends `settled` and no `artifacts`,
+  and nothing else marks its end, so the card waits one second on the app's clock after
+  `settled` (`NotificationPlanner.artifactsWait`) and goes; the next settle's first event
+  retires it sooner. An `artifacts` later than that second makes a new card, as before
+  phase 3. A lost connection takes the card with it. The running card is never the
+  status item's `last settle`.
+- **`--print`.** `running: <headline>` when the card appears, then when the running set has
+  changed since the last such line and a second has passed since it (`CardPrinter`) — the
+  rarer of the two; a turn of the names writes nothing. The card it becomes is written as
+  any card is, `card: …`, and one that goes as `dismissed: Building · …`. Two lines can
+  read the same: the set changed and the counts did not.
+- **The settling glyph.** The glyph drawn dimmed whole (`StatusGlyph.unreachedOpacity`),
+  then again at full strength inside a sector swept clockwise from twelve o'clock as far
+  as the settle's started share — the mockup's conic fill — with the pending count as the
+  status item's title beside it. Still a template image. Precedence: no engine, then a
+  held error card, then settling, then connected. The planner's `settleInProgress` says a
+  settle runs from its first `progress` to its `settled`, whether or not a card shows it,
+  so a pause silences the card and not the glyph.
+- **The live window.** *Show window*, or a click on the running card, opens it; the
+  running card goes as any clicked card does. `LiveWindowModel` is fed every event whether
+  or not the window is open, since a node's elapsed time is measured on the app's clock
+  from the `progress` that first listed it — matched by type and name, the first
+  unmatched of each, so two nodes of one description keep their own starts. It shows
+  `scheduled · computed · from cache · pending · running` while a settle runs and the last
+  `settled`'s four counts after it; the bar full once a settle has ended. Below, the last
+  settle's products and errors through `ProductsWindowModel`, from a snapshot built from
+  the settle's `artifacts` and `errors` events (`ProductsSnapshot.ofSettle`): each folder
+  of `output:` the settle touched holds its products, appeared and changed, and those its
+  errors left without a value, marked `no value`; a tree product is one row, its folder.
+  What disappeared is not listed, as the products window does not list it, and there are
+  no sizes, which the events do not carry. The window lists every folder's rows at once —
+  a folder column, the product, its mark — rather than the products window's column of
+  folders, since a settle's products are few; the errors follow in the report's lines.
+  The products part changes only when a settle ends, so a settle in progress shows the
+  last one's. While a settle runs, the open window redraws twice a second for the elapsed
+  times. It sends no request: the products window's reading of `output:` is that
+  window's.
+- **`show`** on `--print`'s standard input writes the live window once, `live: semel ·
+  idle` (or `settling`, `no engine`), then indented: the counts, `started N of M`, each
+  running node as `type · name · 2.1 s` or `nothing running`, `last settle: <headline>`,
+  and each product as `folder: name · mark`, then any errors' lines.
+- **B-150 item 4.** `DaemonEvent.artifacts` carries `treeFolders: [String: String]`, the
+  folder of the tree product each path is an entry of; protocol version 29. The engine's
+  diff reads it from the entry's `TreeFile`, through the code the error report reads it
+  with (`ProductReach.treeFolder(ofArtifact:database:)`): for a product that moved, when
+  it is noted, and for one being collected, before its input wires are deleted, carried on
+  the collection's candidate. A row the first report of a launch finds without a node
+  has no folder, since nothing left in the graph says which tree it was in; it is named by
+  its own path. A result card names and counts a tree once, by its folder, in the first
+  list one of its entries is in (`Card.movedProducts`) — a tree with an entry changed and
+  another appeared is a tree that changed; `--only` keeps a tree by its folder; and the
+  products window marks the tree's folder row with what the settle did to it, beside its
+  entries' own marks in the folder below.

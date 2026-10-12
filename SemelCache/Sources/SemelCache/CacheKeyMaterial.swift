@@ -57,13 +57,11 @@ public struct CacheKeyEntry: Codable {
         }
     }
 
-    /// The hash decodes as a `String`, which is what `DataObjectHash` is: the alias lives
-    /// in the database models, which this package does not link.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         port = try container.decode(String.self, forKey: .port)
         wire = try container.decode(String.self, forKey: .wire)
-        if let hash = try container.decodeIfPresent(String.self, forKey: .value) {
+        if let hash = try container.decodeIfPresent(DataObjectHash.self, forKey: .value) {
             value = .value(hash)
         } else {
             value = .noValue(reason: try container.decode(NoValueReason.self, forKey: .noValue))

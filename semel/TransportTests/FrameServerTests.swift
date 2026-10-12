@@ -236,6 +236,8 @@ private final class EchoService: ConnectionService {
             }
         case .daemon:
             return PreparedAnswer(blocks: false) { _ in (.daemon(.ok), body) }
+        case .cache:
+            return PreparedAnswer(blocks: false) { _ in (.error(.roleNotOffered(role: .cache)), nil) }
         }
     }
 

@@ -19,8 +19,10 @@ let package = Package(
         .executable(name: "semelserv", targets: ["semel-server"]),
         .executable(name: "semel-watch", targets: ["semel-watch"]),
         .executable(name: "semel-monitor", targets: ["semel-monitor"]),
+        .executable(name: "semel-cache", targets: ["semel-cache"]),
     ],
     dependencies: [
+        .package(path: "SemelCache"),
         .package(path: "SemelCore"),
         .package(path: "SemelNodeKit"),
         .package(path: "SemelProtocol"),
@@ -38,6 +40,7 @@ let package = Package(
         .target(
             name: "SemelCLI",
             dependencies: [
+                .product(name: "SemelCache", package: "SemelCache"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
                 "SemelTransport",
@@ -268,15 +271,56 @@ let package = Package(
             exclude: ["Sources", "Tests"],
             sources: ["main.swift", "App"]
         ),
+        // The model without a screen, and the products window's listing and export over an
+        // in-process server, against what `ls` and `export` do on the same graph.
         .testTarget(
             name: "SemelMonitorTests",
             dependencies: [
                 "SemelMonitor",
                 "SemelCLI",
+                "SemelServer",
+                "SemelTransport",
+                .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
             ],
             path: "semel-monitor/Tests"
+        ),
+        // The shared cache (B-153): its store — an index in memory over the cache's tables
+        // and the node kit's object store — its handlers, its settings and its commands. It
+        // links the shared libraries and never the engine (AGENTS.md); a test holds it to
+        // that from this file.
+        .target(
+            name: "SemelCacheServer",
+            dependencies: [
+                "SemelTransport",
+                .product(name: "SemelCache", package: "SemelCache"),
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+            ],
+            path: "semel-cache/Sources/SemelCacheServer"
+        ),
+        .executableTarget(
+            name: "semel-cache",
+            dependencies: [
+                "SemelCacheServer",
+            ],
+            path: "semel-cache",
+            exclude: ["Sources", "Tests"],
+            sources: ["main.swift"]
+        ),
+        .testTarget(
+            name: "SemelCacheServerTests",
+            dependencies: [
+                "SemelCacheServer",
+                "SemelTestSupport",
+                "SemelTransport",
+                "semel-cache",
+                .product(name: "SemelCache", package: "SemelCache"),
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+            ],
+            path: "semel-cache/Tests"
         ),
         .testTarget(
             name: "SemelServerTests",
@@ -286,6 +330,7 @@ let package = Package(
                 "SemelTransport",
                 "SemelTestSupport",
                 "semel-server",
+                .product(name: "SemelCache", package: "SemelCache"),
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
@@ -306,6 +351,7 @@ let package = Package(
                 "SemelCMakeTool",
                 "SemelMachineFile",
                 "SemelTransport",
+                .product(name: "SemelCache", package: "SemelCache"),
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),

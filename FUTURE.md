@@ -1289,12 +1289,78 @@ program. Delivered in four phases, each leaving the repository working.
    database models' alias and the package links the node kit only; and the SQLite store is
    in `SemelCore` for now, where the design puts it — phase 2's server needs the same
    queries without the graph's tables, and moving them below the engine is its first step.
-2. **The server.** `semel-cache` with `CacheRequest`/`CacheResponse` beside the daemon's
-   messages, a store under its own home (the node kit's object store, and the cache's
-   tables through `CacheStore`), `Hello` with `wantsWrite` and `--writers all|none`, B-148's
-   limit and order with uses counted in requests, `purge <key>` and `purge --all`, and
-   `semel-cache status`. Tested over an in-memory store, then over TCP on localhost with
-   two clients at once.
+2. ~~**The server.**~~ Done 2026-10-12.
+   - **Two moves first.** `DataObjectHash` moved from the database models to the node kit
+     beside the object store, so `SemelCache` names an object by type; the database models,
+     below the node kit, spell their hash columns `String`. `CacheKey`, in `SemelCache`, is
+     the key wherever it leaves a process — `debug <key>`, the `cache` listing, every cache
+     request — encoded as the bare hex, so no byte moved; a key a person types is checked
+     where it is typed. `SQLiteCacheStore` moved from `SemelCore` to `SemelCache`, reaching
+     its database through `CacheDatabase` (the engine's `DatabaseLayer` conforms), with
+     every query also written against a connection so a batch is one transaction; what joins
+     the graph (`refreshInputHolding`, `recordKey`) stayed in `SemelCore` beside it.
+     `SemelCache` now links GRDB and the database models, which the node kit linked already,
+     and `SemelProtocol` links `SemelCache` for `CacheKey`.
+   - **The protocol** (version 28). `Request.cache` and `Response.cache`: `getEntry(key:)`
+     answering `entry(cost:)` with the bytes in the body, or `miss` — also when an object it
+     references is gone; `putEntry(key:cost:objects:length:)` with the entry in the body;
+     `hasObjects(hashes:)` answering `missingObjects`; `getObject(hash:)` answering `object`
+     with the bytes in the body, or `miss`; `putObject(hash:)` with the bytes in the body,
+     hashed on receipt and refused as `hashMismatch(declared:actual:)`; and `status`,
+     `purge(key:)` and `purgeAll` for the program's own commands. Refusals are typed
+     (`CacheRefusal`): `helloRequired`, `readOnly`, `hashMismatch`, `lengthMismatch`,
+     `objectsMissing`, `notAnObjectHash`. `Hello` carries `wantsWrite`, read as false when
+     absent so an older peer is still told its version differs, and a cache answers
+     `cacheAccepted(access: .readWrite | .readOnly)` or rejects; `ErrorResponse` gains
+     `cacheStoreFailed`. `semelserv` refuses the cache role.
+   - **The server never reads an entry.** The entry is the engine's encoding, carried and
+     stored as opaque bytes; the key, the recorded cost and the hashes of every object the
+     entry references (through its documents too) come as typed fields, and are all B-148's
+     accounting, eviction and `hasObjects` need. The one check on an entry's bytes is that
+     the body is the length the request says. The entry format is the engine's business and
+     the server is a byte store with an index — which is also what lets it answer from
+     memory.
+   - **`semel-cache`**, a new executable of the root package over a library,
+     `SemelCacheServer`, linking `SemelCache`, `SemelTransport`, `SemelProtocol` and
+     `SemelNodeKit` only (`CacheServerDependencyRuleTests` reads the manifests). `serve
+     --home --listen --limit --writers all|none` writes its arguments to `semel.cache.config`
+     in the home and reads the file at every start (default limit 10G, default writers
+     none); the home's lock (`flock` on `semel.cache.lock`) keeps a second server out.
+     `status --home` and `purge --home <key>|--all` go through the running server, at the
+     address the file names, when the lock is held, and open the home themselves when it is
+     not.
+   - **Fast, and durability traded for it — never consistency.** Every key, object hash
+     and size is held in memory and kept in step with the disk, so a miss and `hasObjects`
+     never touch it and B-148's sizes and order are worked out without a query (the index is
+     a `CacheStore`, so `SemelCache`'s one trim runs over it). The disk is the cache's
+     tables in `index.sqlite` (`CacheIndexDatabase`: WAL, `synchronous=NORMAL` — never `OFF`
+     — a 64 MB page cache, 1 GB `mmap_size`, no checkpoint on commit) and the node kit's
+     object store. One writer thread commits what is queued in batches, each one
+     transaction: a `putEntry` is answered once its batch is in the write-ahead log, and the
+     next request is prepared while it commits, so a client's entries share batches. A
+     `putObject` is answered once its bytes are hashed and in memory; four writers put the
+     files behind the answers. The log is checkpointed when the writer finds nothing
+     waiting, and after a thousand batches without such a moment. A crash loses the last
+     batches and the last objects and leaves the database consistent; on opening, an entry
+     whose objects did not survive is dropped and an object no entry holds is removed.
+   - **Eviction**: B-148's order with uses counted in entry requests — every 10,000
+     `getEntry` and `putEntry` close a use, so what the last one or two windows touched is
+     kept over the rest, then the cheapest build per byte goes first. A put that takes the
+     store over its limit trims it to nine tenths of the limit, so a store at its limit does
+     not trim on every put; an evicted entry's objects that no other entry holds are removed.
+   - **Measured** on an Apple M4 (10 cores, macOS 26.6), over TCP on localhost with a warm
+     index, a release `semel-cache` and the debug test client (`SEMEL_CACHE_BENCHMARK=1`,
+     `CacheServerLatencyTests`; medians, two runs): `getEntry` hit 161–236 µs, miss 130–178
+     µs; `hasObjects` for 100 hashes 232–307 µs; `getObject` 1 MB 1.1–1.3 ms; `putObject` 1 MB
+     1.4–1.8 ms. One client putting 1,000 entries with 10,000 objects of 4 KB, pipelined:
+     1.5–2.1 s, 5,300–7,500 requests/s. Pipelined misses run at 6,800–9,300 requests/s,
+     which is the transport's ceiling for one connection: the miss path itself is a
+     dictionary lookup.
+   - **Left open, marked.** An object put for an entry that never comes is removed only
+     when the store next opens, or by `purge --all`. An object over the frame body's 512 MiB
+     is not shared. `Hello` carries no identity yet; `--writers` is a switch, and a list
+     of identities is a configuration change when a deployment needs one. A `--writers
+     none` server cannot be purged through the protocol; stop it and purge the home.
 3. **The engine as a client.** `cache.server` and `cache.identity` in `semel.engine.config`,
    set at the prompt; the remote path behind `loadCachedOutputs` and
    `saveCacheForAllInputsAndOutputs`, a population queue off the processing path, the fetch
@@ -1518,12 +1584,15 @@ node, its ports and its carriers; colour at a terminal unless `NO_COLOR`. `Error
 `BuildCommandTests`, `SettleTimeErrorCountingTests`, `WatcherTests` and
 `ErrorReportEndToEndTests` (the C fixture with an `#error`, line for line) pin it.
 
-**B-150** `open` — **A Mac app that shows what the build did.**
+**B-150** `done` — **A Mac app that shows what the build did.**
 Designed 2026-10-11 (`docs/superpowers/specs/2026-10-11-semel-monitor-design.md`, with
-mockups beside it and an "As built (phase 1)" addendum), decided to be delivered in three
-phases, each a working app. `semel-monitor`, a fifth client of `semelserv`, subscribes to
-the engine's events and changes nothing: it pushes nothing, builds nothing and starts no
-server. One settle that moved a product or broke one is one card at the top right of the
+mockups beside it and "As built" addenda for phases 1, 2 and 3), decided to be delivered in
+three phases, each a working app; all three are done, and item 4 with the third, on
+2026-10-12. The view of the graph itself — nodes, wires and their states — is not part of
+this item: it needs requests that do not exist yet, and is to be designed and filed on its
+own once the live window has shown what people look at.
+`semel-monitor`, a fifth client of `semelserv`, subscribes to the engine's events and
+changes nothing: it pushes nothing, builds nothing and starts no server. One settle that moved a product or broke one is one card at the top right of the
 screen, in the engine's vocabulary — appeared, changed, disappeared, without a value — with
 products named as the error report names them (B-145). The engine stays a time-free zone;
 the eight seconds a result card stays are the app's.
@@ -1547,25 +1616,60 @@ the eight seconds a result card stays are the app's.
    (`card: …`, indented lines, `dismissed: …`), which `MonitorEndToEndTests` reads against
    a real `semelserv` over the C fixture, stopped and started again under it. Focus is not
    read: no public API answers an unbundled process, so *Pause* is the switch.
-2. **The products window and export.** *Products…* and a click on a card open a window
-   listing `output:` by folder, marking the settle's products, showing the errors' lines,
-   and exporting a selection to a destination chosen in a save panel through the prompt's
-   export code. No *Reveal in Finder* and no knowledge of where anyone else exported.
-   With it, two follow-ups the owner approved on 2026-10-11:
-   a. **A Semel glyph of its own** for the status item in place of the SF Symbol circles:
-      a monochrome shape drawn in code as a template image, so it tints as the system's
-      items do — a small graph of three nodes and two wires is the suggestion.
-   b. **The errors state on the status item** while an error card is held. Phase 1
-      already knows it from the planner's cards, without `progress`.
-3. **The running card and the live window.** A card updated in place from `progress`
-   while a settle runs — `Building · 12 running · 48 ahead`, the running nodes named — and
-   *Show window* with the running nodes, the queue and the counts. A view of the graph
-   itself needs requests that do not exist yet and is designed when this phase has shown
-   what people look at.
-4. **A tree product's entries name their folder.** The `artifacts` event names each entry
-   of a tree product by its own path, so a result card counts and names an `.app`'s
-   entries one by one where an error card names the bundle; the event would carry each
-   path's tree folder as `StoppedProduct` does (B-142) for a card to name it once.
+2. ~~**The products window and export.**~~ Done 2026-10-12. *Products…* and a click on a
+   card (which dismisses it) open a window listing `output:` as `ls` lists it — its
+   folders on the left with *Errors (N)* under them, the selected folder's subfolders and
+   products on the right — with the products the settle moved marked `appeared` or
+   `changed`, the ones the listing says failed marked `no value`, each product's size, and
+   the error report's own lines under *Errors*, selectable. The listing is one streamed
+   `list` of `output:` (`CommandInterpreter.outputFolders`) ordered by the code `ls` orders
+   with, and the errors are the `errors` request's records; it is read off the main queue
+   and again after every settle while the window is open (`ProductsPresenter`). *Export…*
+   writes the selection, or the whole folder, into a destination chosen in a save panel
+   through `FilePlugin.exportFiles`, the code `export <folder> --into <dir>` runs, which
+   takes the selection as its one new parameter; *Copy paths* copies the `output:` paths.
+   No *Reveal in Finder* and no knowledge of where anyone else exported. The window's
+   model (`ProductsWindowModel`) is a value tested without AppKit, and
+   `ProductsExportTests` pins the listing against `ls -o` folder by folder and the export
+   against `export`'s bytes and modes over an in-process server. `--print` reads `click`
+   and `products` on standard input and writes the window it would open after `window:`,
+   which `MonitorEndToEndTests` reads over the C fixture. With it, the two follow-ups the
+   owner approved on 2026-10-11:
+   a. ~~**A Semel glyph of its own**~~ for the status item in place of the SF Symbol
+      circles: three nodes and two wires, two inputs wired into what they build, drawn in
+      code (`StatusGlyph`'s circles and lines, stroked by the app) as a template image.
+   b. ~~**The errors state on the status item**~~ while an error card is held, on screen
+      or swallowed by a pause: the glyph filled in the system's red. No engine is hollow,
+      connected is filled; no engine wins over a held error.
+3. ~~**The running card and the live window.**~~ Done 2026-10-12. While a settle runs, one
+   card updates in place from `progress`: `Building · 12 running · 48 ahead`, two running
+   nodes by type and name turning through the rest every two seconds, a bar of pending
+   against scheduled and `31 computed · 9 from cache · 48 pending`; it becomes the
+   settle's result or error card in its place (`CardChange.resolved`), and goes when its
+   settle ends with nothing moved — a second after `settled` with no `artifacts`, or at the
+   next settle. A settle whose records list nothing running shows none, and neither does
+   one under a pause or whose card was clicked away. The status item shows the settling
+   state — the glyph swept round from twelve o'clock as far as the settle has gone, the
+   rest dimmed, the pending count beside it — with a held error and no engine taking
+   precedence. *Show window*, or a click on the running card, opens the live window: the
+   running nodes with their type, name and elapsed time on the app's clock from the record
+   that first listed them, the bar, the counts, and the last settle's products and errors
+   through `ProductsWindowModel`, built from the events (`ProductsSnapshot.ofSettle`) with
+   no request to the server. `--print` writes `running: <headline>` at most once a second
+   and only when the running set changed (`CardPrinter`), and `show` on standard input
+   writes the live window after `live:`. `NotificationPlannerTests`,
+   `LiveWindowModelTests`, `StatusGlyphTests`, `CardTextTests` and `MonitorEndToEndTests`
+   (the C fixture's compiles, which run long enough) pin it.
+4. ~~**A tree product's entries name their folder.**~~ Done 2026-10-12, with phase 3. The
+   `artifacts` event carries `treeFolders`, the folder of the tree product each path is an
+   entry of (protocol version 29), read by the engine's diff from the entry's `TreeFile`
+   through the code the error report uses (`ProductReach.treeFolder(ofArtifact:)`) — for
+   a product that moved when it is noted, and for one collected before its input wires go.
+   A result card counts and names a tree once, by its folder, in the first list one of its
+   entries is in; `--only` keeps a tree by its folder; the products window and the live
+   window mark the tree's folder row. What disappeared at a launch's reconciliation, whose
+   node was gone before this launch, has no folder: nothing left in the graph says which
+   tree it was part of, and is named by its own path.
 
 ### Formula language
 

@@ -22,7 +22,7 @@ extension RequestHandler {
         report.entries
             .sorted { ($1.bytes, $0.hash) < ($0.bytes, $1.hash) }
             .map { size in
-                CacheEntryRecord(key: size.hash, nodeType: size.nodeType, bytes: ByteCount(bytes: size.bytes), cost: size.cost,
+                CacheEntryRecord(key: CacheKey(hash: size.hash), nodeType: size.nodeType, bytes: ByteCount(bytes: size.bytes), cost: size.cost,
                                  usedByLastSettle: size.lastUse >= report.lastUsingSettle, heldByNode: size.heldByNode)
             }
     }

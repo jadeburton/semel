@@ -13,6 +13,7 @@
 
 import Foundation
 import SemelDatabaseModels
+import SemelNodeKit
 
 /// The last settle that did work, finished: which nodes it scheduled, what each produced,
 /// and the wires whose writes woke them.
