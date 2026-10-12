@@ -545,7 +545,8 @@ final class ErrorRenderingTests: XCTestCase {
         let nouns: [(AwaitedInput, String)] = [(.targetFolderCandidates, "folders a target's sources may be in"),
                                                (.binaryArtifactFolders, "folders of binary targets' artifacts"),
                                                (.platformSettings, "settings that decide the platform"),
-                                               (.locks, "locks of vendored packages")]
+                                               (.locks, "locks of vendored packages"),
+                                               (.versionSpecificManifests, "version-specific package manifests")]
         for (kind, noun) in nouns {
             XCTAssertEqual(block(.inputsWithoutValue(kind: kind, paths: ["x"])).first, "\(noun) without a value: x")
         }

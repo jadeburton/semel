@@ -395,6 +395,9 @@ public enum AwaitedInput: String, Codable, Hashable, Sendable {
     case locks
     case headerFolders
     case includeFiles
+    /// The `Package@swift-<version>.swift` files beside a package's `Package.swift`, which
+    /// its reader lays beside it (B-80).
+    case versionSpecificManifests
 }
 
 /// Where a vendored package comes from.

@@ -721,6 +721,30 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         _ = try makeTool().process(input: ProcessInput(inputValues: appInput))
         XCTAssertFalse(executor.lastArguments.contains("-package-name"), "\(executor.lastArguments)")
     }
+
+    /// A package target built for the Mac finds the platform's XCTest and Testing, as
+    /// `swift build` gives every target it compiles there: swift-syntax's
+    /// `SwiftSyntaxMacrosTestSupport` is a library importing XCTest (B-80). An app's target
+    /// is not given them, nor is a package target for another platform.
+    func test_aPackageTargetForTheMacFindsThePlatformsTestingModules() throws {
+        func searchPaths(_ extra: [String]) throws -> [String] {
+            var input = try makeInput(folder: try manifest("input:/ext/Sources", [file("Main.swift")]),
+                                      extraConfiguration: extra).inputValues
+            input[SwiftCompiler.inputSourceFiles] = ["input:/ext/Sources/Main.swift": .value(try "// main".intern())]
+            _ = try makeTool().process(input: ProcessInput(inputValues: input))
+            let arguments = executor.lastArguments
+            return arguments.indices.filter { ["-F", "-I"].contains(arguments[$0]) && $0 + 1 < arguments.count }
+                .map { "\(arguments[$0]) \(arguments[$0 + 1])" }
+                .filter { $0.contains(".platform/") }
+        }
+
+        let package = try searchPaths(["packageName=swift-syntax"])
+        XCTAssertEqual(package.count, 2, "\(package)")
+        XCTAssertTrue(package.contains { $0.hasPrefix("-F ") && $0.hasSuffix("MacOSX.platform/Developer/Library/Frameworks") }, "\(package)")
+        XCTAssertTrue(package.contains { $0.hasPrefix("-I ") && $0.hasSuffix("MacOSX.platform/Developer/usr/lib") }, "\(package)")
+        XCTAssertEqual(try searchPaths([]), [], "an app's target")
+        XCTAssertEqual(try searchPaths(["packageName=swift-syntax", "sdk=iphonesimulator"]), [], "a target for another platform")
+    }
 }
 
 // MARK: - Optimisation level

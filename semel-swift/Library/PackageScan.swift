@@ -214,12 +214,45 @@ public enum PackageScan {
         return "\(found ?? DefaultTargetFolders.predefinedFolders[0])/\(target)"
     }
 
-    /// The packages nothing else in the set depends on by path: what a formula has to
-    /// name, since everything else is reached through them. Sorted by folder path.
+    /// The packages a formula has to name, since everything else is reached through them.
+    /// Sorted by folder path.
+    ///
+    /// A package nested in another package's folder is never one: SwiftPM builds a
+    /// package without the packages below it, which are its tools, examples and fixtures —
+    /// swift-syntax keeps `SwiftParserCLI`, `Examples` and `CodeGeneration` so — and a
+    /// formula naming one would build what the package's own products never reach, with
+    /// dependencies of its own to vendor. Of the rest, a package is a root unless another of
+    /// them reaches it by path, through any chain of path dependencies, nested packages
+    /// included. A dependency is followed downward and upward alike: `SwiftParserCLI`
+    /// depends on `..`, which does not make its ancestor anyone's dependency, since nothing
+    /// that is built reaches `SwiftParserCLI`; and a sibling that reaches a nested package
+    /// reaches whatever that package names above it.
     public static func roots(of summaries: [PackageSummary]) -> [PackageSummary] {
-        let dependedOn = Set(summaries.flatMap(\.pathDependencies).map(\.path))
-        return summaries
-            .filter { !dependedOn.contains($0.folder.path) }
+        let summaryByFolder = Dictionary(summaries.map { ($0.folder.path, $0) }, uniquingKeysWith: { first, _ in first })
+        let outermost = summaries.filter { summary in
+            !summaries.contains { isFolder($0.folder, anAncestorOf: summary.folder) }
+        }
+        var reachedFromAnother: Set<String> = []
+        for candidate in outermost {
+            var reached: Set<String> = []
+            var pending = candidate.pathDependencies.map(\.path)
+            while let next = pending.popLast() {
+                guard reached.insert(next).inserted else {
+                    continue
+                }
+                pending += summaryByFolder[next]?.pathDependencies.map(\.path) ?? []
+            }
+            reached.remove(candidate.folder.path)
+            reachedFromAnother.formUnion(reached)
+        }
+        return outermost
+            .filter { !reachedFromAnother.contains($0.folder.path) }
             .sorted { $0.folder.path < $1.folder.path }
+    }
+
+    /// Whether `ancestor` holds `folder` somewhere below it; a folder is not its own.
+    static func isFolder(_ ancestor: URL, anAncestorOf folder: URL) -> Bool {
+        let ancestorPath = ancestor.path.hasSuffix("/") ? ancestor.path : ancestor.path + "/"
+        return folder.path.hasPrefix(ancestorPath) && folder.path != ancestor.path
     }
 }

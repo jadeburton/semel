@@ -146,7 +146,9 @@ struct SwiftFormulaConverter: Node {
     /// 25: an Objective-C target's preprocessor is given the module maps SwiftPM writes for
     /// the C targets it reaches, and both stages the Objective-C interface of each Swift
     /// target it reaches, which a product now compiles and links (B-77 item 4).
-    public static let implementationVersion = 25
+    /// 26: the reader it demands for a package is wired to the package's folder as well as
+    /// its `Package.swift`, and lays the version-specific manifests the folder holds (B-80).
+    public static let implementationVersion = 26
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -877,13 +879,20 @@ struct SwiftFormulaConverter: Node {
     /// folder holding `packageFilePath`: configuration is a property of the build, not of the
     /// package being read, and a consuming project cannot write a config file inside a
     /// vendored dependency it does not own.
+    ///
+    /// The reader takes the package's folder too: which `Package@swift-<version>.swift`
+    /// files sit beside `Package.swift` is in its listing, and which of them SwiftPM reads
+    /// is the tool's to decide (`SwiftPackageReader.isVersionSpecificManifest`). The folder
+    /// is the one the converter waits for when the package has not arrived, one node.
     static func packageReaderSpec(packageFilePath: String,
-                                         rootPackageFolder: String) -> GraphSpecNode {
-        GraphSpecNode(SwiftPackageReader.self, inputs: [
+                                  rootPackageFolder: String) -> GraphSpecNode {
+        let packageFolder = Path(packageFilePath).deletingLastComponent.map { $0.string } ?? packageFilePath
+        return GraphSpecNode(SwiftPackageReader.self, inputs: [
             SwiftPackageReader.configuration: ["config": configurationTree(namespace: SwiftPackageReaderConfiguration.settingNamespace,
                                                                           packageFolder: rootPackageFolder,
                                                                           literals: [:])],
-            SwiftPackageReader.packageFile: [packageFilePath: .staticFile(at: packageFilePath)],
+            SwiftPackageReader.packageFile:   [packageFilePath: .staticFile(at: packageFilePath)],
+            SwiftPackageReader.packageFolder: [packageFolder: .folderManifest(at: packageFolder)],
         ]).port(SwiftPackageReader.packageJSON)
     }
 

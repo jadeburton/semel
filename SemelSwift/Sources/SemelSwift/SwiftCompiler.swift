@@ -259,7 +259,9 @@ struct SwiftCompiler: Node {
     /// new `objectiveCHeader` port (B-77 item 4).
     /// 9: a listed or excluded path with a slash behind or a `.` segment is the folder it
     /// names, where it named nothing (B-77 item 4).
-    public static let implementationVersion = 9
+    /// 10: a package's target compiled for the Mac finds the platform's testing modules,
+    /// XCTest and Testing, on the search paths `swift build` gives it (B-80).
+    public static let implementationVersion = 10
 
     // MARK: Ports
 
@@ -599,6 +601,26 @@ struct SwiftCompiler: Node {
         return result
     }
 
+    /// The platform's testing modules as search paths, `-F <platform>/Developer/Library/
+    /// Frameworks` and `-I <platform>/Developer/usr/lib`, for the platform holding the SDK
+    /// at `sdkPath`; those of the two folders that exist.
+    ///
+    /// Given to a package's target on the Mac, as `swift build` gives them to every target
+    /// it compiles there: a library may import XCTest or Testing — swift-syntax's
+    /// `SwiftSyntaxMacrosTestSupport` imports both — and without the paths it fails with
+    /// `no such module 'XCTest'` where SwiftPM builds it. An app's target is not given them,
+    /// as Xcode does not give them to one unless its settings enable testing search paths,
+    /// and neither is a target for another platform, which `swift build` does not build.
+    /// What the folders hold is part of the compiler's fingerprint (`SwiftCompilerPlugins`).
+    static func testingSearchPaths(sdkPath: String) -> [(flag: String, folder: String)] {
+        let developer = URL(fileURLWithPath: sdkPath)
+            .deletingLastPathComponent()   // SDKs
+            .deletingLastPathComponent()   // Developer
+        let candidates = [("-F", developer.appendingPathComponent("Library/Frameworks").path),
+                          ("-I", developer.appendingPathComponent("usr/lib").path)]
+        return candidates.filter { FileManager.default.fileExists(atPath: $0.1) }.map { (flag: $0.0, folder: $0.1) }
+    }
+
     private func compile(inputs: SwiftCompilerInputs,
                          inputSourceFilesSpecs: [String: GraphSpecNode],
                          inputFolderTreesSpecs: [String: GraphSpecNode],
@@ -638,6 +660,11 @@ struct SwiftCompiler: Node {
         }
         arguments.append("-sdk");                            arguments.append(sdkPath)
         settings.append(.swiftSDK(key: "\(namespace).sdk", value: sdk))
+        if inputs.configuration.packageName != nil, sdk == defaultSDKName {
+            for searchPath in Self.testingSearchPaths(sdkPath: sdkPath) {
+                arguments.append(searchPath.flag);           arguments.append(searchPath.folder)
+            }
+        }
 
         if let target = inputs.configuration.target {
             arguments.append("-target");                     arguments.append(target)
