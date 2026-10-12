@@ -107,5 +107,11 @@ public enum Semel {
     /// graph's error ports name text that reads as no document, so it is rebuilt; a
     /// preserved node's error port holding text is reported as a document that cannot be
     /// read until the node runs again, which the rebuild schedules.
-    public static let version = "0.1.16"
+    ///
+    /// 0.2.0: the second public release. Nothing a stored graph holds means anything else;
+    /// the bump is so that the banner and the release tag say the same thing, as 0.1.9
+    /// was, at the cost of one graph rebuild per home, the cache kept. A minor step rather
+    /// than a patch because the release adds three programs — `semel-watch`,
+    /// `semel-monitor` and `semel-cache` — and the protocol moved from 24 to 32.
+    public static let version = "0.2.0"
 }
