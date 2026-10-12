@@ -49,7 +49,8 @@ final class FrameMessageTests: XCTestCase {
         let changed = (0..<20_000).map { "\(folder)/Sources/OrderedCollections/Folder\($0 / 200)/File\($0).swift" }
         let rejection = ErrorResponse.rejectedBatch(folder: folder, lock: "\(folder).semel-lock",
                                                     expected: .contentRoot(String(repeating: "0", count: 64)),
-                                                    found: String(repeating: "f", count: 64), changedPaths: changed)
+                                                    found: String(repeating: "f", count: 64), changedPaths: changed,
+                                                    listing: .lockTreeNotHeld)
 
         let frame = try Frame.response(.error(rejection), correlationID: 9)
         XCTAssertLessThanOrEqual(frame.json.count, Int(Frame.maximumJSONLength))
@@ -57,7 +58,7 @@ final class FrameMessageTests: XCTestCase {
         decoder.append(try FrameEncoder.encode(frame))
         let received = try XCTUnwrap(try decoder.next())
 
-        guard case .error(.batchRejected(_, _, _, _, let paths, let pathsNotListed)) = try received.response() else {
+        guard case .error(.batchRejected(_, _, _, _, let paths, let pathsNotListed, _)) = try received.response() else {
             return XCTFail("the rejection did not survive the frame")
         }
         XCTAssertEqual(paths, Array(changed.prefix(ErrorResponse.batchRejectedPathsListed)))
@@ -69,12 +70,50 @@ final class FrameMessageTests: XCTestCase {
     func test_aSmallBatchRejectionNamesEveryPath() {
         let rejection = ErrorResponse.rejectedBatch(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
                                                     expected: .contentRoot("4d5d"), found: nil,
-                                                    changedPaths: ["Dependencies/Pkg/a.swift", "Dependencies/Pkg/b.swift"])
+                                                    changedPaths: ["Dependencies/Pkg/a.swift", "Dependencies/Pkg/b.swift"],
+                                                    listing: .compared(notPushed: ["Dependencies/Pkg/LICENSE"],
+                                                                       notPushedNotListed: 0, notInTheLock: [],
+                                                                       notInTheLockNotListed: 0))
 
         XCTAssertEqual(rejection, .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
                                                  expected: .contentRoot("4d5d"), found: nil,
                                                  paths: ["Dependencies/Pkg/a.swift", "Dependencies/Pkg/b.swift"],
-                                                 pathsNotListed: 0))
+                                                 pathsNotListed: 0,
+                                                 listing: .compared(notPushed: ["Dependencies/Pkg/LICENSE"],
+                                                                    notPushedNotListed: 0, notInTheLock: [],
+                                                                    notInTheLockNotListed: 0)))
+    }
+
+    /// The names a refused folder lacks against its lock's tree, and those it holds that
+    /// the tree does not, travel as fields of the rejection, each list bounded as its paths
+    /// are and the rest counted, so the refusal fits a frame however much of a vendored
+    /// copy a push left out or brought (B-164).
+    func test_aBatchRejectionCarriesWhatThePushLacksAndWhatTheLockLacksBoundedWithTheirCounts() throws {
+        let folder      = "Dependencies/Charts"
+        let notPushed   = ["\(folder)/LICENSE"] + (0..<20_000).map { "\(folder)/Missing/File\($0).swift" }
+        let notInTheLock = (0..<3).map { "\(folder)/Extra\($0).swift" }
+        let rejection = ErrorResponse.rejectedBatch(folder: folder, lock: "\(folder).semel-lock",
+                                                    expected: .contentRoot(String(repeating: "0", count: 64)),
+                                                    found: String(repeating: "f", count: 64), changedPaths: [],
+                                                    listing: .compared(notPushed: notPushed, notPushedNotListed: 0,
+                                                                       notInTheLock: notInTheLock, notInTheLockNotListed: 0))
+
+        let frame = try Frame.response(.error(rejection), correlationID: 4)
+        XCTAssertLessThanOrEqual(frame.json.count, Int(Frame.maximumJSONLength))
+        var decoder = FrameDecoder()
+        decoder.append(try FrameEncoder.encode(frame))
+        let received = try XCTUnwrap(try decoder.next())
+
+        guard case .error(.batchRejected(_, _, _, _, _, _, let listing)) = try received.response() else {
+            return XCTFail("the rejection did not survive the frame")
+        }
+        XCTAssertEqual(listing, .compared(notPushed:             Array(notPushed.prefix(ErrorResponse.batchRejectedPathsListed)),
+                                          notPushedNotListed:    notPushed.count - ErrorResponse.batchRejectedPathsListed,
+                                          notInTheLock:          notInTheLock,
+                                          notInTheLockNotListed: 0))
+        let json = String(decoding: frame.json, as: UTF8.self)
+        XCTAssertTrue(json.contains("\"notPushed\""), json.prefix(400) + "…")
+        XCTAssertTrue(json.contains("\"notInTheLockNotListed\""), json.prefix(400) + "…")
     }
 
     func test_eventUsesCorrelationIDZero() throws {

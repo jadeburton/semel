@@ -144,6 +144,47 @@ final class LockedFolderEndToEndTests: XCTestCase {
         try server.stop()
     }
 
+    /// B-164 as the owner met it, with Charts: `prepare` vendors a dependency whose root
+    /// holds a `LICENSE` with no extension, and `push **/*.*`, which matches no such name,
+    /// pushes the locked copy whole, says so, and lands.
+    func test_aGlobPushOfAPreparedTreePushesTheLockedCopyWholeWithItsLicense() throws {
+        // Short on purpose: a Unix-domain socket path is limited to 103 bytes on macOS.
+        let root = URL(fileURLWithPath: "/tmp/semel-tests/\(UUID().uuidString.prefix(8))", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let base = root.appendingPathComponent("base", isDirectory: true)
+        let tree = base.appendingPathComponent("tree", isDirectory: true)
+        let shout = try makeRepository(at: root, license: "Apache License, Version 2.0\n")
+        try write("""
+            // swift-tools-version: 5.9
+            import PackageDescription
+
+            let package = Package(
+                name: "App",
+                platforms: [.macOS(.v14)],
+                dependencies: [.package(url: "\(shout.absoluteString)", exact: "1.0.0")],
+                targets: [.target(name: "App", dependencies: [.product(name: "Shout", package: "Shout")])]
+            )
+
+            """, to: tree.appendingPathComponent("Package.swift"))
+        try write("import Shout\npublic let loud = shout\n", to: tree.appendingPathComponent("Sources/App/App.swift"))
+        try EndToEndRun.run("semel-swift", arguments: ["prepare", tree.path, "--platform", "macos"], timeout: 300,
+                            step: "prepare")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tree.appendingPathComponent("Dependencies/Shout/LICENSE").path),
+                      "prepare vendored the dependency with its licence")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tree.appendingPathComponent("Dependencies/Shout.semel-lock").path))
+
+        let server = ServerSession(home: root.appendingPathComponent("home", isDirectory: true))
+        try server.start()
+        defer { server.killIfRunning() }
+
+        let transcript = try semel(["base \(base.path)", "push **/*.*", "ls tree/Dependencies/Shout"], server: server)
+        XCTAssertTrue(transcript.contains("Pushing tree/Dependencies/Shout whole: it is locked\n"), transcript)
+        XCTAssertFalse(transcript.contains("is locked, and the batch changes it"), transcript)
+        XCTAssertFalse(transcript.contains("❌"), transcript)
+        XCTAssertTrue(transcript.contains("LICENSE"), "the licence is in input:\n\(transcript)")
+        try server.stop()
+    }
+
     /// Runs `semel` with each argument a command line, as a script does, and returns all it
     /// printed. A refused push is an error, so the exit status is not asserted.
     private func semel(_ commands: [String], server: ServerSession) throws -> String {
@@ -166,8 +207,9 @@ final class LockedFolderEndToEndTests: XCTestCase {
                             serverLog: { server.logTail })
     }
 
-    /// A git repository holding one library, `Shout`, tagged 1.0.0.
-    private func makeRepository(at root: URL) throws -> URL {
+    /// A git repository holding one library, `Shout`, tagged 1.0.0, with a `LICENSE` at its
+    /// root when one is given.
+    private func makeRepository(at root: URL, license: String? = nil) throws -> URL {
         let repository = root.appendingPathComponent("repositories/Shout", isDirectory: true)
         try write("""
             // swift-tools-version: 5.9
@@ -178,6 +220,9 @@ final class LockedFolderEndToEndTests: XCTestCase {
 
             """, to: repository.appendingPathComponent("Package.swift"))
         try write("public let shout = \"HELLO\"\n", to: repository.appendingPathComponent("Sources/Shout/Shout.swift"))
+        if let license {
+            try write(license, to: repository.appendingPathComponent("LICENSE"))
+        }
         try git(["init", "--quiet", "--initial-branch=main"], in: repository)
         try git(["add", "."], in: repository)
         try git(["commit", "--quiet", "-m", "1.0.0"], in: repository)

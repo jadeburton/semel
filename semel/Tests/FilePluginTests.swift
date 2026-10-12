@@ -234,7 +234,8 @@ final class FilePluginTests: XCTestCase {
         connection.reply(.ok)
         connection.reply(.pushFiles(outcomes: (0..<21).map { _ in .stored(didChange: true) }))
         connection.responses.append((.error(.batchRejected(folder: "src", lock: "src.semel-lock", expected: .contentRoot("aaa"),
-                                                           found: "bbb", paths: ["src/file0.c"], pathsNotListed: 20)), nil))
+                                                           found: "bbb", paths: ["src/file0.c"], pathsNotListed: 20,
+                                                           listing: .lockTreeNotHeld)), nil))
 
         XCTAssertThrowsError(try run("push", ["src"])) { error in
             let failure = error as? ServerError

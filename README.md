@@ -80,7 +80,7 @@ cd -i sources/
 
 | Command | Description |
 |---------|-------------|
-| `push <path> ...` | Push files or directories from disk into the input file system: several paths are one push and one report. A push only adds — a file gone from disk stays in `input:` until `rm` removes it; wrap the two in `begin` … `commit` to settle once. A push is a batch of its own, so one that changes a locked folder without its lock is refused whole — see [locked folders](#locked-folders) |
+| `push <path> ...` | Push files or directories from disk into the input file system: several paths are one push and one report. A push only adds — a file gone from disk stays in `input:` until `rm` removes it; wrap the two in `begin` … `commit` to settle once. A push is a batch of its own, so one that changes a locked folder without its lock is refused whole, and a path or pattern reaching into a locked folder, or naming its lock, pushes that folder whole — see [locked folders](#locked-folders) |
 | `rm <path> ...` (`remove`) | Remove files or directories from the input file system: the one way a source leaves it. One batch and one settle, however many files: nothing that reads a removed file runs a tool over it — a node a formula still names says the file `has been removed` — and what only the removed files held is deleted in that settle |
 | `cp [-i\|-o] <src> [dest]` (`copy`) | Copy a file out of the internal file system to disk |
 | `export <folder> --into <dir>` | Copy every product under `<folder>` of the output file system into `<dir>`, keeping the tree below it |
@@ -379,6 +379,17 @@ A folder is locked when a lock is in `input:` beside it — `Dependencies/GRDB.s
 ```
 
 `input:` is as it was before the batch, and no batch is open. The refusal carries at most fifty of the paths and counts the rest, and the prompt names five and counts every other (`… and 20055 more`), so a whole package pushed against its lock is refused in one reply like any other. Every error the prompt prints starts with ❌.
+
+When the engine holds the tree the lock records — it has accepted the copy as its lock describes it, here or at another path — the refusal also names, after `found:`, what the folder lacks against that tree and what it holds that the tree does not, bounded and counted as the paths are, a folder on one side only named once with a trailing `/`:
+
+```
+  not pushed: Packages/Dependencies/Charts/LICENSE
+  not in the lock: Packages/Dependencies/Charts/Extra.swift
+```
+
+A lock's `content` is a hash `prepare` took of the disk, so a copy the engine has never held as its lock describes it cannot be compared name by name, and the refusal says `not compared: the engine holds no copy of the tree the lock records, …` instead.
+
+A push that reaches a locked folder pushes it whole, from the disk, as `push <folder>` does, and says so first: `push **/*.*` matches no name without a dot, such as Charts' `LICENSE`, and a part of a locked folder can only be refused, so the push prints `Pushing Packages/Dependencies/Charts whole: it is locked` and sends the folder. A file named below a locked folder, and the folder's lock pushed alone, widen the same way; nothing outside the locked folder is added.
 
 A push says what it did once its batch's fate is known. Outside `begin` … `commit` a long push ends `Pushed 20002 files and 1 folder` when its batch commits, and when the barrier refuses it the refusal above is led by `❌ push: 20002 files and 1 folder sent, and none of it committed`. Inside a batch it says `Sent 20002 files and 1 folder, pending the commit`, and `commit` says `Committed.` or prints the refusal. `semel-swift prepare` vendors the folder again and writes its lock with it; removing the lock unlocks the folder.
 

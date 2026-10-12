@@ -78,6 +78,17 @@ final class FilePlugin: CommandPlugin {
             return
         }
 
+        // A locked folder the push reaches is pushed whole, as `push <folder>` sends it: its
+        // lock declares all it holds, so a part of it is refused at the commit (B-164).
+        let wholeLocked = try Self.wholeLockedFolders(reachedBy: entries, matcher: matcher,
+                                                      baseDirectory: context.baseDirectory, context: context)
+        if !wholeLocked.folders.isEmpty {
+            entries = wholeLocked.entries
+            let folders = wholeLocked.folders.map(\.string)
+            context.outputMessage(folders.count == 1 ? "Pushing \(folders[0]) whole: it is locked"
+                                                     : "Pushing \(Self.named(folders)) whole: they are locked")
+        }
+
         // Where a build exported its products is not a source, however the tree above it
         // is pushed. Named only when it was all the push asked for: a push of the tree
         // leaves it out without comment.
@@ -159,6 +170,137 @@ final class FilePlugin: CommandPlugin {
         }
         let unchanged = tally.unchanged > 0 ? ", \(tally.unchanged) unchanged" : ""
         context.outputMessage(heldByOpenBatch ? "Sent \(counts)\(unchanged), pending the commit" : "Pushed \(counts)\(unchanged)")
+    }
+
+    /// The matched entries with every locked folder they reach in part put whole in place
+    /// of what they matched below it, and those folders (B-164).
+    ///
+    /// A folder `F` is locked when `F.semel-lock` is beside it on disk, the rule the
+    /// barrier applies in `input:`. The lock records the content root of all `F` holds, so
+    /// the commit refuses a batch that leaves `F` holding anything else, and a push of part
+    /// of it — `push **/*.*`, which matches no `LICENSE`, or a list of files — can only be
+    /// refused, naming two hashes. So an entry below `F`, or `F`'s lock itself, stands for
+    /// `F` whole, read from the disk as `push F` reads it. The lock counts when the server
+    /// does not hold it as the disk has it: a lock pushed anew names its folder, and one
+    /// pushed alone after `prepare` re-vendored a copy is refused unless the copy comes
+    /// with it. A lock the server holds as it is changes nothing below it, which is what
+    /// lets `semel-watch` push a tree's locks while it leaves the locked folders alone. A
+    /// folder the push already sends whole, or one inside such a folder, is left as it is,
+    /// and so is everything outside `F`: the widening is the lock's, and goes no further
+    /// than the folder the lock names.
+    ///
+    /// The nearest locked folder above an entry is the one widened, as it is the one the
+    /// barrier checks the entry against.
+    private static func wholeLockedFolders(reachedBy entries: [FileWildcardEntry], matcher: FileWildcardMatcher,
+                                           baseDirectory: String,
+                                           context: any CommandContext) throws -> (entries: [FileWildcardEntry], folders: [Path]) {
+        var lockedByFolder: [Path: Bool] = [:]
+        func isLocked(_ folder: Path) -> Bool {
+            if let known = lockedByFolder[folder] {
+                return known
+            }
+            let folderOnDisk = (baseDirectory as NSString).appendingPathComponent(folder.string)
+            var isFolder: ObjCBool = false
+            var lockIsFolder: ObjCBool = false
+            let locked = !folder.isEmpty
+                && FileManager.default.fileExists(atPath: folderOnDisk, isDirectory: &isFolder) && isFolder.boolValue
+                && FileManager.default.fileExists(atPath: DependencyLock.lockPath(forDependencyAt: folderOnDisk),
+                                                  isDirectory: &lockIsFolder) && !lockIsFolder.boolValue
+            lockedByFolder[folder] = locked
+            return locked
+        }
+
+        let pushedWhole = entries.filter { $0.kind == .folder }.map(\.path)
+        func isPushedWhole(_ folder: Path) -> Bool {
+            pushedWhole.contains { folder.segments.starts(with: $0.segments) }
+        }
+
+        // The locked folder each entry stands for, when it stands for one.
+        func lockedFolder(reachedBy entry: FileWildcardEntry) -> Path? {
+            if entry.kind == .file, let folder = DependencyLock.dependencyPath(lockedBy: entry.path), isLocked(folder) {
+                return folder
+            }
+            var candidate = entry.path.deletingLastComponent
+            while let folder = candidate, !folder.isEmpty {
+                if isLocked(folder) {
+                    return folder
+                }
+                candidate = folder.deletingLastComponent
+            }
+            return nil
+        }
+
+        // A folder reached below is widened; one reached only by its lock, only when the
+        // server does not hold that lock as the disk has it.
+        var reachedBelow: Set<Path> = []
+        var reachedByLock: Set<Path> = []
+        for entry in entries {
+            guard let folder = lockedFolder(reachedBy: entry), !isPushedWhole(folder) else {
+                continue
+            }
+            if entry.path.hasPrefix(folder) {
+                reachedBelow.insert(folder)
+            } else {
+                reachedByLock.insert(folder)
+            }
+        }
+        let toWiden = reachedBelow.union(try locksNotHeld(reachedByLock.subtracting(reachedBelow),
+                                                          baseDirectory: baseDirectory, context: context))
+
+        var widened: [Path] = []
+        var folderEntries: [Path: FileWildcardEntry] = [:]
+        var result: [FileWildcardEntry] = []
+        for entry in entries {
+            guard let folder = lockedFolder(reachedBy: entry), toWiden.contains(folder) else {
+                result.append(entry)
+                continue
+            }
+            let isBelow = entry.path != folder && entry.path.hasPrefix(folder)
+            if folderEntries[folder] == nil {
+                guard let folderEntry = try matcher.findAllMatching(pathOrWildcard: folder)
+                        .first(where: { $0.path == folder && $0.kind == .folder }) else {
+                    result.append(entry)
+                    continue
+                }
+                folderEntries[folder] = folderEntry
+                widened.append(folder)
+                if !isBelow {
+                    result.append(entry)
+                }
+                result.append(folderEntry)
+                continue
+            }
+            if !isBelow {
+                result.append(entry)
+            }
+        }
+        return (result, widened)
+    }
+
+    /// The folders among `candidates` whose lock on disk the server does not hold byte for
+    /// byte: a lock pushed anew, which says the folder beside it changed with it. A lock
+    /// pushed as the server holds it says nothing new, and `semel-watch`, which mirrors a
+    /// tree with its locked folders left out, pushes every lock its folders hold.
+    private static func locksNotHeld(_ candidates: Set<Path>, baseDirectory: String,
+                                     context: any CommandContext) throws -> Set<Path> {
+        guard !candidates.isEmpty else {
+            return []
+        }
+        let lockedFolders = candidates.sorted { $0.string < $1.string }
+        let parents = Set(lockedFolders.map { ($0.deletingLastComponent ?? .empty).string }).sorted()
+        let held = try heldChildren(of: parents, context: context)
+        return Set(lockedFolders.filter { folder in
+            guard let name = folder.lastComponent else {
+                return false
+            }
+            let lock = DependencyLock.lockPath(forDependencyAt: folder.string)
+            let lockName = DependencyLock.lockPath(forDependencyAt: name)
+            guard let bytes = FileManager.default.contents(atPath: (baseDirectory as NSString).appendingPathComponent(lock)),
+                  let heldHash = held[(folder.deletingLastComponent ?? .empty).string]?[lockName]?.contentHash else {
+                return true
+            }
+            return Sha256.hash(bytes) != heldHash
+        })
     }
 
     /// What a push that brings a lock removes below the folder the lock locks (B-162).

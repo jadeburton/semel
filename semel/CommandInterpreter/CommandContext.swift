@@ -109,9 +109,9 @@ struct ServerError: Error, CustomStringConvertible {
         case .unrecoverable(let message):      return "the server stopped: \(message)"
         case .cacheStoreFailed(let description): return "the cache could not use its store: \(description)"
         // Locked folders and checkpoints (B-146).
-        case .batchRejected(let folder, let lock, let expected, let found, let paths, let pathsNotListed):
+        case .batchRejected(let folder, let lock, let expected, let found, let paths, let pathsNotListed, let listing):
             let condition = ErrorCondition.batchRejected(folder: folder, lock: lock, expected: expected, found: found,
-                                                         paths: paths, pathsNotListed: pathsNotListed)
+                                                         paths: paths, pathsNotListed: pathsNotListed, listing: listing)
             return ErrorReportRenderer.lines(for: condition).joined(separator: "\n")
         case .checkpointNotFound(let name, let known):
             return "there is no checkpoint named '\(name)'; "

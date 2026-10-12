@@ -652,7 +652,7 @@ final class ErrorRenderingTests: XCTestCase {
             folder: "Packages/Dependencies/GRDB.swift", lock: "Packages/Dependencies/GRDB.swift.semel-lock",
             expected: .contentRoot("aaa"), found: "bbb",
             paths: ["Packages/Dependencies/GRDB.swift/a.swift", "Packages/Dependencies/GRDB.swift/b.swift"],
-            pathsNotListed: 0)), [
+            pathsNotListed: 0, listing: .compared(notPushed: [], notPushedNotListed: 0, notInTheLock: [], notInTheLockNotListed: 0))), [
             "Packages/Dependencies/GRDB.swift is locked, and the batch changes it without a lock it matches: "
                 + "nothing of the batch is committed",
             "  lock: Packages/Dependencies/GRDB.swift.semel-lock",
@@ -669,7 +669,8 @@ final class ErrorRenderingTests: XCTestCase {
         ]
         for (expected, line) in expectations {
             let lines = ErrorReportRenderer.lines(for: .batchRejected(folder: "f", lock: "f.semel-lock", expected: expected,
-                                                                      found: nil, paths: [], pathsNotListed: 0))
+                                                                      found: nil, paths: [], pathsNotListed: 0,
+                                                                      listing: .notComparable))
             XCTAssertEqual(lines.dropFirst().prefix(3), ["  lock: f.semel-lock", line, "  found: no folder"])
         }
     }
@@ -681,13 +682,51 @@ final class ErrorRenderingTests: XCTestCase {
         let listed = (0..<50).map { "Dependencies/Pkg/f\($0).swift" }
         let lines  = ErrorReportRenderer.lines(for: .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
                                                                    expected: .contentRoot("aaa"), found: "bbb",
-                                                                   paths: listed, pathsNotListed: 19_952))
+                                                                   paths: listed, pathsNotListed: 19_952, listing: .lockTreeNotHeld))
         XCTAssertTrue(lines.contains("  paths: \(listed.prefix(5).joined(separator: ", ")) and 19997 more"), "\(lines)")
 
         let few = ErrorReportRenderer.lines(for: .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
                                                                 expected: .contentRoot("aaa"), found: "bbb",
-                                                                paths: ["Dependencies/Pkg/a.swift"], pathsNotListed: 3))
+                                                                paths: ["Dependencies/Pkg/a.swift"], pathsNotListed: 3, listing: .notComparable))
         XCTAssertTrue(few.contains("  paths: Dependencies/Pkg/a.swift and 3 more"), "\(few)")
+    }
+
+    /// What the refused folder lacks against its lock's tree, and what it holds that the
+    /// tree does not, are lines of their own after `found:`, each naming five and counting
+    /// the rest with those the server left out (B-164).
+    func test_batchRejectedNamesWhatThePushLacksAndWhatTheLockLacks() {
+        let folder       = "Dependencies/Charts"
+        let notPushed    = ["\(folder)/LICENSE"] + (0..<49).map { "\(folder)/Missing/F\($0).swift" }
+        let notInTheLock = (0..<6).map { "\(folder)/Extra\($0).swift" }
+        let lines = ErrorReportRenderer.lines(for: .batchRejected(
+            folder: folder, lock: "\(folder).semel-lock", expected: .contentRoot("aaa"), found: "bbb",
+            paths: ["\(folder)/Extra0.swift"], pathsNotListed: 0,
+            listing: .compared(notPushed: notPushed, notPushedNotListed: 100, notInTheLock: notInTheLock,
+                               notInTheLockNotListed: 0)))
+        XCTAssertEqual(Array(lines.dropFirst(3).prefix(4)), [
+            "  found: sha256:bbb",
+            "  not pushed: \(notPushed.prefix(5).joined(separator: ", ")) and 145 more",
+            "  not in the lock: \(notInTheLock.prefix(5).joined(separator: ", ")) and 1 more",
+            "  paths: \(folder)/Extra0.swift",
+        ], "\(lines)")
+
+        let one = ErrorReportRenderer.lines(for: .batchRejected(
+            folder: folder, lock: "\(folder).semel-lock", expected: .contentRoot("aaa"), found: "bbb", paths: [],
+            pathsNotListed: 0, listing: .compared(notPushed: ["\(folder)/LICENSE"], notPushedNotListed: 0, notInTheLock: [],
+                                                  notInTheLockNotListed: 0)))
+        XCTAssertTrue(one.contains("  not pushed: \(folder)/LICENSE"), "\(one)")
+        XCTAssertFalse(one.contains { $0.hasPrefix("  not in the lock:") }, "\(one)")
+    }
+
+    /// A lock whose tree the engine has never folded cannot be compared name by name, and
+    /// the refusal says so rather than naming nothing.
+    func test_batchRejectedSaysWhenTheLocksTreeIsNotHeld() {
+        let lines = ErrorReportRenderer.lines(for: .batchRejected(
+            folder: "f", lock: "f.semel-lock", expected: .contentRoot("aaa"), found: "bbb", paths: [], pathsNotListed: 0,
+            listing: .lockTreeNotHeld))
+        XCTAssertEqual(lines.dropFirst(3).first, "  found: sha256:bbb")
+        XCTAssertTrue(lines.contains("  not compared: the engine holds no copy of the tree the lock records, "
+                                     + "so the names that differ are not listed"), "\(lines)")
     }
 
     func test_binaryTargetNotBuilt() {
