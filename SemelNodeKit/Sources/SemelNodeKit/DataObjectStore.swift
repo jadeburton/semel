@@ -236,14 +236,18 @@ public final class DataObjectStore {
     /// `Data.write(to:options:.atomic)` writes to a temp file and renames, so
     /// the final entry is always coherent.  The first writer wins the rename race;
     /// subsequent writers silently leave the existing entry untouched.
-    public func store(hash: String, content: [UInt8]) throws {
+    ///
+    /// Any contiguous bytes, so a pushed file is written from the request body it arrived
+    /// in rather than from a copy of its own, which beside the body and the frame it was
+    /// read from is a third copy of every file — 68 MB apiece for a vendored binary.
+    public func store(hash: String, content: some ContiguousBytes) throws {
         let url = objectURL(hash: hash)
 
         guard !FileManager.default.fileExists(atPath: url.path) else {
             touch(url)
             return
         }
-        noteStored(bytes: content.count)
+        noteStored(bytes: content.withUnsafeBytes { $0.count })
 
         // Every failure here is a property of the volume, not of the content being
         // stored: out of space, read-only mount, permissions. The next node would hit
@@ -252,7 +256,7 @@ public final class DataObjectStore {
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true)
-            // Written from the array's own buffer to a temporary name, then renamed:
+            // Written from the caller's own buffer to a temporary name, then renamed:
             // atomic, as `Data.write(options: .atomic)` is, without the copy into a
             // `Data` first (B-116).
             let temporary = temporaryURL(beside: url)

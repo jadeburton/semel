@@ -53,40 +53,35 @@ public struct ProjectBuilder: Node {
     /// `spec` with every node in it whose type declares a `formulaFolderProperty` given
     /// `folder` there, unless the formula gave that property itself.
     static func fillingFormulaFolder(_ folder: String, in spec: GraphSpecNode) -> GraphSpecNode {
-        var properties = spec.properties
-        if let type = TypeRegistry.nodeType(forTypeName: spec.typeName) as? Node.Type,
-           let key = type.descriptor.formulaFolderProperty,
-           !properties.contains(where: { $0.key == key }) {
-            properties.append(GraphSpecProperty(key: key, value: folder))
+        var rewriter = GraphSpecRewriter { fillingFormulaFolder(folder, inTopNodeOf: $0) }
+        return rewriter.rewrite(spec)
+    }
+
+    /// `spec` with the formula's folder given to its top node alone.
+    private static func fillingFormulaFolder(_ folder: String, inTopNodeOf spec: GraphSpecNode) -> GraphSpecNode {
+        guard let type = TypeRegistry.nodeType(forTypeName: spec.typeName) as? Node.Type,
+              let key = type.descriptor.formulaFolderProperty else {
+            return spec
         }
-        let inputs = spec.inputs.map { port in
-            GraphSpecInputPort(portName: port.portName, wires: port.wires.map { wire in
-                GraphSpecWire(name: wire.name, node: fillingFormulaFolder(folder, in: wire.node))
-            })
-        }
-        return GraphSpecNode(typeName: spec.typeName, properties: properties, inputs: inputs,
-                             outputs: spec.outputs, outputPort: spec.outputPort)
+        return spec.addingToItself(property: key, value: folder, where: { _ in true })
+    }
+
+    /// The walk that gives every node of a product's expression the formula's folder, as
+    /// `fillingFormulaFolder` does, and every cacheable one the project's root, as
+    /// `adding(property:)` does. One serves a whole pass of the builder, so a
+    /// subexpression that recurs within a product or between products — every compile
+    /// under an app and under the bundle that signs it — is filled once and shared by all
+    /// of them (`GraphSpecRewriter`).
+    static func filler(folder: String, projectRoot: String) -> GraphSpecRewriter {
+        GraphSpecRewriter { fillingTopNode(folder, projectRoot: projectRoot, in: $0) }
     }
 
     /// `spec` with the formula's folder and the project's root given to its top node alone,
-    /// as `fillingFormulaFolder` and `adding(property:)` would give them, for a node whose
-    /// inputs have them already. Both walks rebuild the whole tree below a node, and a tree
-    /// product wraps one expression once per entry: Sequel Ace's signed bundle, an
-    /// expression of every compile of the app, was rebuilt for each of its files, and the
-    /// server grew past twenty gigabytes (B-155). The expression is filled once, and each
-    /// entry shares it.
+    /// for a node whose inputs have them already: a tree product wraps one filled
+    /// expression once per entry, and every entry shares it.
     static func fillingTopNode(_ folder: String, projectRoot: String, in spec: GraphSpecNode) -> GraphSpecNode {
-        var properties = spec.properties
-        if let type = TypeRegistry.nodeType(forTypeName: spec.typeName) as? Node.Type,
-           let key = type.descriptor.formulaFolderProperty,
-           !properties.contains(where: { $0.key == key }) {
-            properties.append(GraphSpecProperty(key: key, value: folder))
-        }
-        if isCacheable(spec), !properties.contains(where: { $0.key == projectRootProperty }) {
-            properties.append(GraphSpecProperty(key: projectRootProperty, value: projectRoot))
-        }
-        return GraphSpecNode(typeName: spec.typeName, properties: properties, inputs: spec.inputs,
-                             outputs: spec.outputs, outputPort: spec.outputPort)
+        fillingFormulaFolder(folder, inTopNodeOf: spec)
+            .addingToItself(property: projectRootProperty, value: projectRoot, where: isCacheable)
     }
 
     public static let descriptor = NodeDescriptor(
@@ -239,11 +234,11 @@ public struct ProjectBuilder: Node {
         /// `fileMetadata` port wired in when it has one, so chmod can be applied on cp.
         /// `filledBelow` says the shape's inputs have had the formula's folder and the
         /// project's root written into them already, so only the shape itself is given them.
+        var filler = Self.filler(folder: parentFolder.string, projectRoot: outputFolder.string)
         func outputFileSpec(fullPath: Path, shapeNode: GraphSpecNode, filledBelow: Bool = false) -> GraphSpecNode {
             let shapeNode = filledBelow
                 ? Self.fillingTopNode(parentFolder.string, projectRoot: outputFolder.string, in: shapeNode)
-                : Self.fillingFormulaFolder(parentFolder.string, in: shapeNode)
-                    .adding(property: Self.projectRootProperty, value: outputFolder.string, where: Self.isCacheable)
+                : filler.rewrite(shapeNode)
             return GraphSpecNode(OutputFile.self,
                                  properties: [OutputFile.pathProperty: fullPath.string],
                                  inputs: [OutputFile.inputPort: ["product": shapeNode]])
@@ -277,8 +272,7 @@ public struct ProjectBuilder: Node {
                 // by the node that made them, so it is wired here first and expanded once
                 // it has arrived — as a wildcard's folder manifest is. Until then the
                 // tree's files are simply not yet products.
-                let treeSpec = Self.fillingFormulaFolder(parentFolder.string, in: shapeNode)
-                    .adding(property: Self.projectRootProperty, value: outputFolder.string, where: Self.isCacheable)
+                let treeSpec = filler.rewrite(shapeNode)
                 treeSpecs[fullPath.string] = treeSpec
                 guard let manifest = treeManifests[fullPath.string] else {
                     continue

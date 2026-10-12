@@ -384,6 +384,44 @@ source publishes the state without running. What is left of the settle is the 4,
 deletions and the idle reports. A cold build was unchanged: 94.5 s before, 95.1 s after,
 852 nodes computed and 430 entries both times.
 
+Measured 2026-10-12 for B-155: the server's memory through a cold push of Sequel Ace's clone
+and the start of its build. The cached checkout less `.git`, the overlay's xib, `prepare
+--platform macos` (41,391 files pushed, 1.1 GB, 27 files over 5 MB and the largest 68 MB),
+release binaries, a fresh home each run, `push sequel-ace` from one `semel` session — the
+tree holds the formula, so the build starts as the push commits — and the server stopped
+300 s after the push returned. The footprint is `footprint -p` every two seconds, in MB of
+2^20 bytes as `footprint` and `vmmap` give them; live is `heap`. Before is `main` at
+`d7a5ad9`. The machine was shared with other agents' builds, so a push's peak moved by a
+few hundred MB from run to run.
+
+| `semelserv`, Sequel Ace | before | after |
+|---|---|---|
+| peak footprint during the push | 370–830 MB (two runs) | 430–500 MB (two runs), 41 MB live |
+| peak footprint in the 300 s after it | 6,430 MB, 5.8 GB of it live in 18 M allocations | 400 MB |
+| time at 4 GB or more | about 100 s | none |
+
+Each fix's share, the same tree and method:
+
+| | peak during the push | peak in the 300 s after it |
+|---|---|---|
+| `main` | 370–830 MB | 6,430 MB |
+| + subexpressions filled once (`GraphSpecRewriter`) | 880 MB | 1,390 MB |
+| + formula calls evaluated once | 780 MB | 250 MB |
+| + pushed files stored from the body | 760 MB | not run |
+| + large bodies mapped, the decoder's room released | 430–500 MB | 400 MB |
+
+Whether the push grows with the tree: the clone without its formula, so the push is all the
+server does, pushed as one copy and as two side by side.
+
+| push only | 41,391 files | 82,782 files |
+|---|---|---|
+| before | 880 MB | 1,020 MB, 748 MB of it freed large blocks |
+| after | 500 MB | 460 MB |
+
+What the after column holds is mostly libmalloc's cache of freed large blocks: up to 64 of
+them, dirty — 364 MB of a 434 MB footprint at one moment of the Sequel Ace push, against
+41 MB live. It is bounded by count and does not grow with the tree, and
+`malloc_zone_pressure_relief` does not release it (B-155).
 
 ## Design, correctness and code quality
 
@@ -789,7 +827,7 @@ each run already costs about 0.6 s more, since it starts a daemon of its own ins
 taking one from the pool. Still open: a document whose ambiguity the two runs happen to
 resolve alike passes, and is caught by the roster's comparison, not by the node.
 
-**B-155** `open` — **A large app made the server's memory grow without bound.** Seen
+**B-155** `done` — **A large app made the server's memory grow without bound.** Seen
 2026-10-11 building Sequel Ace (B-77 item 4). Six cold builds in a row were killed with
 SIGKILL about thirteen minutes in. Swap went from 10 GB to 40 GB in three and a half minutes,
 and the server's footprint reached 24 GB and was still growing. A sample of the server put
@@ -806,10 +844,53 @@ entry's own `TreeFile` and `OutputFile` are given the two properties
 (`ProjectBuilder.fillingTopNode`). The specs are the same as before. The cold build then
 completed: 610 s with `SEMEL_JOBS=4`.
 
-Still open. The server's footprint reaches 7.5 GB about ninety seconds into the same build,
-just after the push of the clone's 41,392 files, and stays between 4 and 6 GB to the end.
-`heap` at one of those moments counted 155 MB live in 27,580 allocations against 4.2 GB of
-footprint, and calling `malloc_zone_pressure_relief` every five seconds changed nothing. So
-the pages are dirty and held, by something `heap` does not attribute. Next: run the push of
-a large tree under `MallocStackLogging` and read `malloc_history` for where the burst is
-allocated.
+Still open then: the server's footprint reached 7.5 GB about ninety seconds into the same
+build, just after the push of the clone's 41,392 files, and stayed between 4 and 6 GB to
+the end. `heap` at one of those moments counted 155 MB live against 4.2 GB of footprint,
+and `malloc_zone_pressure_relief` every five seconds changed nothing.
+
+Fixed 2026-10-12. The push was not the cause; the pass of the formula's builder that
+follows it was, and the push had a smaller cost of its own. Measured with release binaries
+over a fresh home, the footprint sampled every two seconds and `vmmap`, `heap` and `sample`
+taken as it passed 1, 2 and 4 GB (`BACKLOG.md`, Performance, 2026-10-12, for the figures).
+
+1. **The builder spelled its products out.** At 6.3 GB of footprint `heap` counted 5.8 GB
+   live in 18 million allocations, every compute thread in
+   `GraphSpecNode.adding(property:)` under `ProjectBuilder.process`. Filling the products
+   with the formula's folder and the project's root rebuilt every node it met, so a
+   subexpression reached many times — the settings under every compile, every compile
+   under the app and again under the bundle that signs it — came back once per occurrence,
+   each in storage of its own. `GraphSpecRewriter` rewrites each distinct subtree once and
+   shares the copy; one filler serves a builder's pass. The 155 MB against 4.2 GB was most
+   likely this burst after it: here the footprint stood at 4.3 GB after the pass with
+   70 MB resident, and fell to 110 MB over the next 30 s.
+2. **The formula resolver evaluated every function call afresh.** With the fill shared, a
+   burst of up to 1.4 GB remained; at 1.0 GB `heap` counted 0.96 GB live in 4.4 million
+   allocations, every compute thread in `FormulaResolver.evalFuncCall`, the generated
+   formula calling its settings and module functions from every target. A call's value is a
+   function of its arguments, so the resolver keeps each and a call made again is the first
+   call's value.
+3. **A pushed file was held four times over.** The frame's buffer, the body copied out of
+   it, the file copied out of the body (`subdata`) and copied again into an array to hash
+   and store. Files are now slices of the body and stored from where they lie
+   (`Data.intern()`).
+4. **The decoder kept the largest frame's room for the life of the connection**
+   (`removeFirst`), and a large body went through malloc twice. A body of 1 MB or more is
+   now received into a mapping of its own and handed over as the frame's `Data` without a
+   copy, unmapped when the frame goes (`FrameDecoder`, `MappedBody`).
+
+Not the database: the page cache is 64 MB (`cache_size=-65536`) and `vmmap` never showed
+more, there is no `mmap_size`, and the WAL is a file, not the server's memory, checkpointed
+by SQLite as it passes 1,000 pages, since each push request commits its own transaction.
+Nor the journal, whose rows are in the database. What grows with the tree in memory during
+a push is about 40 MB at 41,000 files — the journal's recorded paths and the settle's
+record of the ports written — all live.
+
+What remains is the allocator's, and it does not grow with the tree. libmalloc keeps up to
+64 freed large blocks dirty for reuse, and `vmmap` shows them as `MALLOC_LARGE (empty)`:
+364 MB of a 434 MB footprint at one moment of the push, against 41 MB live. With the cache
+switched off (`MallocLargeCache=0`) the same push, before items 3 and 4, peaked at 306 MB
+where it otherwise reached 780 MB. `malloc_zone_pressure_relief` after every request with a
+body of 1 MB or more released none of it: tried, measured at the same 765 MB, and removed.
+Fewer large allocations do help, which is what items 3 and 4 are: the frames, most of the
+churn, no longer go through malloc at all. Twice the files pushed peaks no higher.
