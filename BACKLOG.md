@@ -740,6 +740,36 @@ executables are byte-reproducible. actool's is not, so `AssetCatalogCompiler` pu
 each `Assets.car` in a canonical form that `assetutil` reads as the file actool wrote, and
 a signed bundle is byte-reproducible whole (B-89).
 
+**B-159** `done` — **A tree of library packages with an asset catalog had no actool
+settings.** Seen 2026-10-12 in the nightly roster on main at 0a501a0: the `icecubes` entry,
+IceCubes' five library roots for the simulator, failed every product with `missing
+settings: apple.assetCatalogCompiler.…`, on `resource: Colors.xcassets` (DesignSystem's
+`Resources`). The `icecubes-app` entry and both Backyard Birds entries passed.
+
+The cause was B-77 item 5 (#199). `SwiftFormulaConverter` 27 compiles a target's catalogs in
+one actool run, `assets<Target>()`, and the target's Swift compile reads the symbols it
+writes (`ImageResource.floor1`), which Backyard Birds' packages need. Before it, a package's
+catalogs were compiled only into its resource bundle, which only an app's formula reaches,
+so a tree whose roots are libraries never ran actool. `semel-swift prepare` on a tree of
+packages wrote the Swift namespaces, and clang's for a C-family target (B-110), and never
+actool's: a project's formula always selects it, a tree's never had. Reproduced with
+release binaries on a cold copy of `C1/icecubes/Packages`: `prepare --platform
+ios-simulator`, then `build` failed with the nightly's message.
+
+Fixed 2026-10-12 in `prepare`, not in the converter. A tree of packages now gets
+`apple.assetCatalogCompiler` when one of its targets, its own or vendored, has a catalog the
+converter compiles, for every platform, in the halves B-109 puts it in: the tool and
+`assetutilPath` in the machine file, the platform, deployment version and devices in
+`semel.config`. Which catalogs count is the converter's walk, `SemelSwift.compilesAssetCatalog`:
+an `.xcassets` folder reached through no hidden folder, whole-folder resource or `.docc`,
+not excluded, in the sources scope or a declared resource, or a declared catalog. The same
+copy then builds all five archives cold, and the `icecubes`, `icecubes-app` and both
+Backyard Birds roster entries pass with byte-identical builds and no exemption. No node's
+output changed, so no version moved.
+
+Not done: a tree whose package has a xib or a storyboard gets no ibtool block either. It
+does not fail today, since only a bundle, which only an app reaches, compiles one.
+
 **B-152** `done` — **ibtool and actool failed for every client on the machine: the pooled
 `ibtoold` kept the working directory of a sandbox Semel had removed.** Seen 2026-10-10
 and again 2026-10-11 (B-77 item 4, Sequel Ace). Every xib, storyboard and catalog of a

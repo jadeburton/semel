@@ -86,9 +86,12 @@ public enum GeneratedFiles {
 
     /// The config namespaces the formula for a tree of packages selects from: what
     /// `SwiftFormulaConverter` emits reads — the clang ones only when a target is a
-    /// C-family one, since a block nothing reads is reported as unused on every build.
-    public static func packageTreeNamespaces(forCFamilyTargets hasCFamilyTargets: Bool) -> [String] {
-        SemelSwift.converterConfigNamespaces(forCFamilyTargets: hasCFamilyTargets)
+    /// C-family one, and the asset catalog compiler's only when a target has a catalog,
+    /// since a block nothing reads is reported as unused on every build.
+    public static func packageTreeNamespaces(forCFamilyTargets hasCFamilyTargets: Bool,
+                                             compilingAssetCatalogs: Bool) -> [String] {
+        SemelSwift.converterConfigNamespaces(forCFamilyTargets: hasCFamilyTargets,
+                                             compilingAssetCatalogs: compilingAssetCatalogs)
     }
 
     /// Whether any of a tree's targets is compiled through clang, read from the target
@@ -108,6 +111,30 @@ public enum GeneratedFiles {
                 relativePaths.append(path)
             }
             return SemelSwift.isCFamilyTargetFolder(holding: relativePaths, sources: target.sources, exclude: target.exclude)
+        }
+    }
+
+    /// Whether any of a tree's targets has an asset catalog the converter compiles, read
+    /// from the target folders on disk by the converter's own rule, hidden folders left
+    /// out as its walk leaves them: a Swift target's compile reads the symbols its
+    /// catalogs' actool run writes, so a tree of library packages runs actool (B-159).
+    public static func hasAssetCatalogs(in summaries: [PackageSummary]) -> Bool {
+        summaries.flatMap(\.targets).contains { target in
+            let enumerator = FileManager.default.enumerator(atPath: target.folder.path)
+            var relativePaths: [String] = []
+            while let path = enumerator?.nextObject() as? String {
+                let name = (path as NSString).lastPathComponent
+                guard !name.hasPrefix(".") else {
+                    enumerator?.skipDescendants()
+                    continue
+                }
+                relativePaths.append(path)
+                if (name as NSString).pathExtension.lowercased() == "xcassets" {
+                    enumerator?.skipDescendants()
+                }
+            }
+            return SemelSwift.compilesAssetCatalog(inTargetFolderHolding: relativePaths, sources: target.sources,
+                                                   exclude: target.exclude, resources: target.resources)
         }
     }
 
@@ -151,7 +178,10 @@ public enum GeneratedFiles {
             generatingScanners: compiledSources.hasLexSources,
             compilingDataModels: compiledSources.hasDataModels)
         var namespaces: [String] = []
-        for namespace in own + SemelSwift.converterConfigNamespaces(forCFamilyTargets: hasCFamilyTargets)
+        // A project compiles catalogs of its own, so the asset catalog compiler is among
+        // `own` whatever its packages hold.
+        for namespace in own + SemelSwift.converterConfigNamespaces(forCFamilyTargets: hasCFamilyTargets,
+                                                                    compilingAssetCatalogs: false)
         where !namespaces.contains(namespace) {
             namespaces.append(namespace)
         }
