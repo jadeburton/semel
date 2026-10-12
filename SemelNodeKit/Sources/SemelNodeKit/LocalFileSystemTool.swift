@@ -17,11 +17,30 @@ import SemelDatabaseModels
 /// go the same way in reverse: `DataObjectStore.store(fileAt:)` hashes each one where
 /// the tool left it and clones it into the store, so a tool's output never passes
 /// through this process's memory (B-116).
+///
+/// The tool's environment is made, never inherited: a fixed `PATH`, `HOME` and `TMPDIR` in
+/// the sandbox, and `DEVELOPER_DIR` naming the developer folder tool discovery found the
+/// tools in. A tool that runs a `/usr/bin` shim — flex runs `m4`, `swift package` runs
+/// `xcrun` for the SDK it compiles a manifest against — resolves it through that folder,
+/// so it reaches the Xcode the discovered tools belong to and not whichever one
+/// `xcode-select` names. The folder enters no cache key: what a shim reaches is a binary
+/// of the discovered toolchain, and the descriptor's fingerprint names those bytes,
+/// where a path in a key would only keep two machines with Xcode in two places apart.
 public class LocalFileSystemTool: ToolRunner {
     private let localPath: String
+    private let developerDirectory: String?
 
-    public init(localPath: String) throws {
-        self.localPath = localPath
+    /// A runner for the tool at `localPath`, given the developer folder this machine's
+    /// tools were discovered in (`MachineQuery.developerDirectory`).
+    public convenience init(localPath: String) throws {
+        try self.init(localPath: localPath, developerDirectory: MachineQuery.developerDirectory)
+    }
+
+    /// A runner for the tool at `localPath`, given `developerDirectory` as `DEVELOPER_DIR`,
+    /// or none when it is nil.
+    public init(localPath: String, developerDirectory: String?) throws {
+        self.localPath          = localPath
+        self.developerDirectory = developerDirectory
 
         let fileManager = FileManager.default
         var isDirectory: ObjCBool = false
@@ -116,6 +135,9 @@ public class LocalFileSystemTool: ToolRunner {
             "HOME":   sandboxPath,
             "TMPDIR": sandboxPath,
         ]
+        if let developerDirectory {
+            processEnvironment["DEVELOPER_DIR"] = developerDirectory
+        }
 
         for (key, value) in environment {
             processEnvironment[key] = value

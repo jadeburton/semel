@@ -87,6 +87,29 @@ final class ClangToolDiscoveryTests: SemelClangTestCase {
         XCTAssertTrue(version.hasPrefix("flex "), "got \(version)")
     }
 
+    /// B-157. The toolchain's `lex` is a script that runs `flex`, and flex expands its
+    /// skeleton through `m4`, a wrapper that runs `gm4` or `bm4`: two toolchains whose
+    /// script is the same bytes and whose m4 is not are told apart by lex's fingerprint.
+    func test_lexIsFingerprintedWithTheFlexAndM4ItRuns() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("semel-lex-helpers-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func toolchain(_ name: String, gm4: String) throws -> String {
+            let bin = root.appendingPathComponent(name, isDirectory: true)
+            try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+            for (file, bytes) in [("lex", "exec flex"), ("flex", "the same flex"), ("m4", "the same wrapper"), ("gm4", gm4)] {
+                try Data(bytes.utf8).write(to: bin.appendingPathComponent(file))
+            }
+            return bin.appendingPathComponent("lex").path
+        }
+        let first  = try toolchain("first", gm4: "one m4")
+        let second = try toolchain("second", gm4: "another m4")
+
+        let fingerprint = try XCTUnwrap(ClangToolDiscovery.lexFinder.companionFingerprint(first))
+        XCTAssertEqual(fingerprint.split(separator: "\n").map { $0.prefix { $0 != "=" } }, ["flex", "gm4", "m4"])
+        XCTAssertNotEqual(fingerprint, ClangToolDiscovery.lexFinder.companionFingerprint(second))
+    }
+
     func test_aToolThatDoesNotExistIsNotLocated() {
         XCTAssertNil(ClangToolDiscovery.locate("definitely-not-a-real-tool-name"))
     }

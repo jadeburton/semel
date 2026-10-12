@@ -49,7 +49,11 @@ struct SwiftPackageReader: Node {
     /// is published relative to the package, as one below an ancestor always was; and the
     /// package's version-specific manifests are laid beside `Package.swift`, so the tool
     /// reads the one SwiftPM would (B-80).
-    public static let implementationVersion = 4
+    /// 5: the tool runs with `DEVELOPER_DIR`, so the SDK `swift package` asks `xcrun` for to
+    /// compile the manifest against is the discovered Xcode's, where it was the one
+    /// `xcode-select` names; and `--manifest-cache none`, where SwiftPM read and wrote its
+    /// shared manifest cache in the user's cache folder (B-157).
+    public static let implementationVersion = 5
 
     // MARK: Ports
 
@@ -205,8 +209,11 @@ struct SwiftPackageReader: Node {
         var jsonOutput   = ""
         var stderrOutput = ""
 
+        // No manifest cache: SwiftPM keeps its shared one under the user's cache folder,
+        // found from the account rather than from `HOME`, so a read would hand back what
+        // another run wrote outside the sandbox, and every read would write there.
         let result = try tool.execute(
-            arguments: ["package", "dump-package", "--package-path", inputs.packageFolderPath],
+            arguments: ["package", "--manifest-cache", "none", "dump-package", "--package-path", inputs.packageFolderPath],
             environment: [:],
             inputFiles: inputs.manifestFiles,
             expectedOutputFileNames: [],   // JSON is emitted to stdout, not a file

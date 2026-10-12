@@ -303,10 +303,10 @@ plugins are fingerprinted (B-80).
 | ClangCompiler | 7 | as above; module cache in the sandbox | as above | as above |
 | ClangLinker | 5 | as above; `-L <sdk>/usr/lib` | the linker `ld` clang runs is not in the key | `ld` in clang's fingerprint |
 | ClangArchiver | 3 | libtool's bytes; `ZERO_AR_DATE` | none; reads no SDK | — |
-| LexGenerator | 1 | lex's bytes | flex runs `m4` through the `/usr/bin` shim | open, B-157 |
+| LexGenerator | 1 | lex's bytes | flex runs `m4` through the `/usr/bin` shim | `DEVELOPER_DIR` set; `flex`, `m4`, `gm4`, `bm4` in lex's fingerprint (B-157) |
 | SwiftCompiler | 9 | SDK name and fingerprint; swiftc's bytes and plugins | `swift-driver` not covered; module cache outside the sandbox | driver, clang, `ld`, libtool in swiftc's fingerprint; cache open, B-157 |
 | SwiftLinker | 6 | as above | clang, `ld`, libtool not covered | in swiftc's fingerprint |
-| SwiftPackageReader | 3 | swift's bytes | `swift-package` not covered; the manifest's SDK found through `xcrun` | `swift-package` in swift's fingerprint; `xcrun` open, B-157 |
+| SwiftPackageReader | 3 | swift's bytes | `swift-package` not covered; the manifest's SDK found through `xcrun` | `swift-package` in swift's fingerprint; `DEVELOPER_DIR` set, no manifest cache, version 5 (B-157) |
 | AssetCatalogCompiler | 6 → 7 | actool's bytes; `assetutilPath` | compiles through the system's CoreUI and, for iOS, the simulator runtime's frameworks | system build; iOS runtimes |
 | IBToolCompiler | 5 → 6 | ibtool's bytes; SDK fingerprint | archives through AppKit, and UIKit of the runtime for iOS | system build; iOS runtimes |
 | CoreDataModelCompiler | 1 → 2 | momc's bytes; SDK fingerprint | archives through the system's Core Data | system build |
@@ -334,6 +334,10 @@ absolute tool and SDK paths in the clang and Apple configurations, the SDK and p
 fingerprints taken of paths, sizes and times, and swiftc's plugin fingerprint covering
 every installed platform. Measured between two real machines, those decide how much a
 shared cache shares; on one Mac they cannot be seen.
+
+The first was closed on 2026-10-12 (B-157 item 1): every tool runs with `DEVELOPER_DIR`
+naming the developer folder discovery found, which enters no key — lex's fingerprint
+carries the `flex` and `m4` it runs instead. The rows above say so.
 
 ## As built (phase 4, 2026-10-12)
 
