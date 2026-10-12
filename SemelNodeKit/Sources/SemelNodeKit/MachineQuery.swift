@@ -52,6 +52,13 @@ public enum MachineQuery {
         return text
     }
 
+    /// The developer folder the machine's toolchain is found in — what `xcode-select -p`
+    /// answers, which is `DEVELOPER_DIR` when this process has one and the folder
+    /// `xcode-select` names when it does not — or nil on a machine without one. Asked once
+    /// per process, as tool discovery asks `xcrun --find`, so it names the Xcode the
+    /// discovered tools came from; every tool run is given it (`LocalFileSystemTool`).
+    public static let developerDirectory: String? = output(of: "/usr/bin/xcode-select", ["-p"])
+
     /// The host as a tool descriptor names it: `macOS` for Darwin, otherwise the kernel's
     /// own name.
     public static var hostPlatform: String {

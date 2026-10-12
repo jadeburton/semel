@@ -80,6 +80,33 @@ final class LocalFileSystemToolTests: XCTestCase {
         XCTAssertTrue(result.infoOutput.contains("declared=[yes]"), "got: \(result.infoOutput)")
     }
 
+    /// B-157. A shim in `/usr/bin` a tool runs — flex's `m4`, the `xcrun` SwiftPM asks for
+    /// an SDK — resolves through `DEVELOPER_DIR` before `xcode-select`, so a tool is given
+    /// the developer folder its toolchain was discovered in and reaches that Xcode's tools.
+    func test_aToolIsGivenTheDeveloperFolderTheMachineNames() throws {
+        let developerDirectory = try XCTUnwrap(MachineQuery.output(of: "/usr/bin/xcode-select", ["-p"]),
+                                               "this machine names no developer folder")
+
+        let result = try runShell("echo \"developer=[$DEVELOPER_DIR]\"")
+
+        XCTAssertEqual(result.exitCode, 0, result.errorOutput)
+        XCTAssertTrue(result.infoOutput.contains("developer=[\(developerDirectory)]"), "got: \(result.infoOutput)")
+    }
+
+    /// The folder a runner is made with is the one the tool sees, whatever the process
+    /// running it was started with; a runner made with none gives the tool none.
+    func test_theDeveloperFolderARunnerIsGivenReachesTheTool() throws {
+        let script = ["-c", "echo \"developer=[${DEVELOPER_DIR-unset}]\""]
+
+        let given = try LocalFileSystemTool(localPath: "/bin/sh", developerDirectory: "/Applications/Other.app/Contents/Developer")
+            .execute(arguments: script, environment: [:], inputFiles: [], expectedOutputFileNames: [])
+        let none = try LocalFileSystemTool(localPath: "/bin/sh", developerDirectory: nil)
+            .execute(arguments: script, environment: [:], inputFiles: [], expectedOutputFileNames: [])
+
+        XCTAssertTrue(given.infoOutput.contains("developer=[/Applications/Other.app/Contents/Developer]"), "got: \(given.infoOutput)")
+        XCTAssertTrue(none.infoOutput.contains("developer=[unset]"), "got: \(none.infoOutput)")
+    }
+
     func test_aToolRunsInsideItsSandboxNotTheProcessWorkingDirectory() throws {
         let result = try runShell("pwd -P")
 

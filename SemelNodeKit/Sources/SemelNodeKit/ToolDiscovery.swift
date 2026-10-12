@@ -84,7 +84,12 @@ public enum ToolDiscovery {
     /// node's configuration. Keeping the version in the configuration rather than
     /// following the machine is deliberate: it is what makes a toolchain upgrade
     /// invalidate the cache instead of silently reusing objects built by another compiler.
+    ///
+    /// The developer folder the finders located the tools in is recorded beside them, and
+    /// every tool runs with it as `DEVELOPER_DIR`, so a shim a tool runs reaches the same
+    /// Xcode (`LocalFileSystemTool`).
     public static func registerInstalledTools(into registry: ToolRunnerRegistry) throws {
+        let developerDirectory = MachineQuery.developerDirectory
         for finder in all {
             guard let path = finder.locate(),
                   let version = finder.version(path) else {
@@ -98,7 +103,7 @@ public enum ToolDiscovery {
                                   architecture: MachineQuery.hostArchitecture,
                                   recursiveHash: toolFingerprint(binary:     toolBinaryFingerprint(ofFileAt: path),
                                                                  companions: finder.companionFingerprint(path))),
-                toolExecutor: try LocalFileSystemTool(localPath: path))
+                toolExecutor: try LocalFileSystemTool(localPath: path, developerDirectory: developerDirectory))
         }
     }
 }

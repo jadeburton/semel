@@ -1389,11 +1389,35 @@ Found by the audit in B-153 phase 3 (the design's "As built (phase 3)"); none of
 two machines share an entry one of them built differently from what the other would — the
 first two let one machine's builds depend on something its graph does not see, and the rest
 cost misses between machines that could share.
-- **`DEVELOPER_DIR` never reaches a tool.** `LocalFileSystemTool` gives a tool a fresh
-  environment, so a `/usr/bin` shim a tool runs — flex's `m4`, the `xcrun` SwiftPM asks for
-  the SDK it compiles a manifest against — resolves through `xcode-select`, which may name
-  another Xcode than the one discovery found. Record the developer folder at discovery
-  (`xcode-select -p`, which honours `DEVELOPER_DIR`) and set it for every tool.
+- ~~**`DEVELOPER_DIR` never reaches a tool.**~~ Done 2026-10-12. `LocalFileSystemTool` gave a
+  tool a fresh environment, so a `/usr/bin` shim a tool runs — flex's `m4`, the `xcrun`
+  SwiftPM asks for the SDK it compiles a manifest against — resolved through `xcode-select`,
+  which may name another Xcode than the one discovery found. `MachineQuery.developerDirectory`
+  asks `xcode-select -p` once per process (it honours `DEVELOPER_DIR`, as the `xcrun --find`
+  of discovery does), `ToolDiscovery` hands it to every runner it registers, and every tool
+  runs with it as `DEVELOPER_DIR`; a runner made by hand (`assetutil`) gets the same. **The
+  folder enters no key.** A path in a key would only keep apart two machines with Xcode in two
+  places (item 4), and what a shim reaches is a binary of the discovered toolchain, which is
+  what the descriptor's fingerprint is for. Walking every tool for one whose output depends on
+  the folder beyond its fingerprint found one: lex. The toolchain's `lex` is a 230-byte script
+  that runs `flex` beside it, and flex expands its skeleton through `m4`, which resolves to the
+  toolchain's `m4` beside lex, itself a wrapper running `gm4` or `bm4`; the descriptor
+  fingerprinted the script alone. lex's fingerprint now carries the bytes of `flex`, `m4`,
+  `gm4` and `bm4` (`ClangToolDiscovery.lexHelpers`), which moves LexGenerator's key without a
+  bump. SwiftPackageReader is bumped to 5: the SDK its manifest compiles against is now the
+  discovered Xcode's, and it passes `--manifest-cache none`, as `swift package dump-package`
+  read and wrote SwiftPM's shared manifest cache in `~/Library/Caches/org.swift.swiftpm`,
+  which SwiftPM finds from the account, not from `HOME`, so a read could return what another
+  run wrote; a manifest now compiles on every read. Nothing else runs a shim — clang and
+  swiftc are given `-isysroot` and `-sdk` and run their helpers from beside themselves,
+  `codesign` is given `CODESIGN_ALLOCATE` — so no other version moves; on a machine whose
+  `xcode-select` names the Xcode discovery found, which is every machine whose shell does not
+  set `DEVELOPER_DIR`, no tool sees a different folder. It costs nothing measurable: cold
+  builds of the IceCubes app (621 nodes, release binaries, a fresh home each,
+  `SEMEL_JOBS=10`) took 68 s, 69 s and 64 s against `main`'s 64 s, 69 s and 68 s, alternated,
+  with byte-identical products. Left: `TOOLCHAINS` and `SDKROOT` reach discovery's `xcrun`
+  and no tool either; nothing here passes either, and a tool run under one would want the
+  same treatment.
 - **swiftc's module cache is outside the sandbox.** No `-module-cache-path` is passed, so the
   compiler keeps its implicit modules under the user's cache folder, which `HOME` and
   `TMPDIR` do not move. The cache validates what it holds, so no output differs; it is a

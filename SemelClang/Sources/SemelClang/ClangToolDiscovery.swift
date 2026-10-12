@@ -28,8 +28,17 @@ enum ClangToolDiscovery {
     /// The lexer generator a target's `.l` files are run through (B-77 item 4): flex, which
     /// the toolchain ships as `lex`.
     static var lexFinder: ToolFinder {
-        ToolFinder(name: "lex", locate: { locate("lex") }, version: lexVersion(ofToolAt:))
+        ToolFinder(name: "lex", locate: { locate("lex") }, version: lexVersion(ofToolAt:),
+                   companionFingerprint: { siblingBinariesFingerprint(besideToolAt: $0, named: lexHelpers) })
     }
+
+    /// What lex runs from beside itself. The toolchain's `lex` is a script that runs
+    /// `flex` beside it, so the script's bytes say nothing of the scanner generator. flex
+    /// expands its skeleton through `m4`, found on `PATH` as the `/usr/bin` shim, which
+    /// resolves through the tool's `DEVELOPER_DIR` to the toolchain's `m4` beside lex — a
+    /// wrapper that runs `gm4` or `bm4` beside itself. The m4 that expands the skeleton
+    /// writes the scanner, so all of them are keyed by their bytes.
+    static let lexHelpers = ["bm4", "flex", "gm4", "m4"]
 
     /// Absolute path to `toolName` in the active toolchain, via `xcrun --find`, or nil if
     /// there is no such tool. Every question this package asks the machine goes through

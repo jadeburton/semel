@@ -98,7 +98,8 @@ final class SwiftPackageReaderTests: SemelSwiftTestCase {
         _ = try makeTool().process(input: try makeInput(folder: "input:/repo/swift-syntax/SwiftParserCLI"))
 
         let invocation = try XCTUnwrap(executor.invocations.first)
-        XCTAssertEqual(invocation.arguments, ["package", "dump-package", "--package-path", "input:/repo/swift-syntax/SwiftParserCLI"])
+        XCTAssertEqual(invocation.arguments, ["package", "--manifest-cache", "none", "dump-package",
+                                              "--package-path", "input:/repo/swift-syntax/SwiftParserCLI"])
         XCTAssertEqual(invocation.inputFileNames, ["input:/repo/swift-syntax/SwiftParserCLI/Package.swift"])
     }
 
