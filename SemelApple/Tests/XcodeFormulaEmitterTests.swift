@@ -669,6 +669,21 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertFalse(none.contains("GeneratedAssetSymbols.swift"), none)
     }
 
+    /// Backyard Birds' settings: the accent color the app's controls take and the color a
+    /// widget is drawn over reach actool, which names them in the partial Info.plist, as
+    /// Xcode passes them; set empty, neither does.
+    func test_theAccentAndWidgetBackgroundColorsReachActool() throws {
+        let named = try formula(xcconfig: "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor\n"
+                                        + "ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground\n")
+        let assets = try block("func assets_IceCubesApp() =", in: named)
+        XCTAssertTrue(assets.contains("accentColor: 'AccentColor'"), assets)
+        XCTAssertTrue(assets.contains("widgetBackgroundColor: 'WidgetBackground'"), assets)
+
+        let empty = try formula(xcconfig: "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME =\n")
+        XCTAssertFalse(empty.contains("accentColor"), empty)
+        XCTAssertFalse(empty.contains("widgetBackgroundColor"), empty)
+    }
+
     func test_theSymbolSettingsReadBackFromTheLiteralsTheyWrite() {
         let symbols = AssetSymbolSettings(bundleIdentifier: "app.codeedit.CodeEdit", generatesExtensions: true, frameworks: "SwiftUI AppKit")
 
@@ -742,6 +757,27 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertEqual(keys["CFBundleDisplayName"] as? String, "Ice Cubes", "a display name with two words is not a list")
         XCTAssertEqual(keys["UIApplicationSupportsIndirectInputEvents"] as? Bool, true)
         XCTAssertEqual(keys["UIDeviceFamily"] as? [Int], [1, 2], "family 7 is visionOS, not built here")
+    }
+
+    /// Backyard Birds' app, as Xcode 26.6 writes its plist: `…_iPhone` is the `~iphone`
+    /// key, a list as `~ipad`'s is, and a setting defined empty —
+    /// `INFOPLIST_KEY_NSHumanReadableCopyright = ""` on its widget — is no key.
+    func test_anIPhoneSettingIsItsTildeKeyAndAnEmptyOneIsNoKey() throws {
+        let emitter = try emitter()
+        let app = try XCTUnwrap(emitter.project.targets.first(where: \.isApplication))
+        let settings = XcodeBuildSettings(values: [
+            "PRODUCT_NAME": "Backyard Birds", "PRODUCT_BUNDLE_IDENTIFIER": "com.example.apple-samplecode.Backyard-Birds",
+            "MACOSX_DEPLOYMENT_TARGET": "14.2", "GENERATE_INFOPLIST_FILE": "YES",
+            "INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone": "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft",
+            "INFOPLIST_KEY_NSHumanReadableCopyright": "",
+        ])
+
+        let keys = try TargetIdentity(target: app, settings: settings, sdk: "macosx").generatedInfoPlistKeys(settings: settings)
+
+        XCTAssertEqual(keys["UISupportedInterfaceOrientations~iphone"] as? [String],
+                       ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft"])
+        XCTAssertNil(keys["UISupportedInterfaceOrientations_iPhone"])
+        XCTAssertNil(keys["NSHumanReadableCopyright"])
     }
 
     /// With `GENERATE_INFOPLIST_FILE = NO` the project's file is the plist and Xcode passes

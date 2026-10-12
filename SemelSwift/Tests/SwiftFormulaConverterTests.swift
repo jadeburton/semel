@@ -2842,8 +2842,15 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                       "got:\n\(contents)")
         XCTAssertFalse(contents.contains("Info.plist"), "only what the manifest names, got:\n\(contents)")
         XCTAssertEqual(try funcDefinition("bundle_CrashReporter", in: result),
-                       "func bundle_CrashReporter() =\n    TreeMerger(under: 'PLCrashReporter_CrashReporter.bundle', "
-                     + "input: ['contents': bundleContents_CrashReporter().files]).files")
+                       "func bundle_CrashReporter() =\n    TreeMerger(under: 'PLCrashReporter_CrashReporter.bundle', input: [\n"
+                     + "        'contents': bundleContents_CrashReporter().files,\n"
+                     + "        'plist': TreeBuilder(input: ['Info.plist': InfoPlistBuilder(keys: '{"
+                     + "\"CFBundleDevelopmentRegion\":\"en\","
+                     + "\"CFBundleIdentifier\":\"pkg.CrashReporter.resources\","
+                     + "\"CFBundleInfoDictionaryVersion\":\"6.0\","
+                     + "\"CFBundleName\":\"PLCrashReporter_CrashReporter\","
+                     + "\"CFBundlePackageType\":\"BNDL\"}').plist]).files\n"
+                     + "    ]).files")
         XCTAssertTrue(try funcDefinition("bundles_CrashReporter", in: result).contains("'CrashReporter': bundle_CrashReporter().files"),
                       "got:\n\(result)")
     }
@@ -2870,6 +2877,94 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                       "got:\n\(macBundle)")
         XCTAssertTrue(try funcDefinition("macBundles_CrashReporter", in: result).contains("'CrashReporter': macBundle_CrashReporter().files"),
                       "got:\n\(result)")
+    }
+
+    // MARK: - Backyard Birds' packages (B-77)
+
+    /// `BackyardBirdsData` as Apple's sample declares it: one target at the package's root,
+    /// `path: "."`, so its folder holds the manifests beside its sources, a `.dynamic`
+    /// library product, a `defaultLocalization`, asset catalogs and a string catalog. A
+    /// second catalog stands for a target with several, which Xcode compiles in one run.
+    private let backyardBirdsDataManifest = """
+        {
+          "name": "BackyardBirdsData",
+          "defaultLocalization": "fr",
+          "dependencies": [],
+          "products": [{"name": "BackyardBirdsData", "targets": ["BackyardBirdsData"], "type": {"library": ["dynamic"]}}],
+          "targets": [
+            {"name": "BackyardBirdsData", "type": "regular", "path": ".", "dependencies": []}
+          ]
+        }
+        """
+
+    private var backyardBirdsDataTree: [String: [FolderManifestEntry]] {
+        ["input:/pkg":       [file("Package.swift"), file("Package@swift-5.9.swift"), file("DataGeneration.swift"),
+                              folder("Assets.xcassets"), folder("Shop.xcassets"), folder("Birds"), folder(".swiftpm")],
+         "input:/pkg/Birds": [file("Bird.swift"), file("Birds.xcstrings")]]
+    }
+
+    /// SwiftPM leaves a package's manifests out of a target at its root: compiled, the
+    /// manifest's `import PackageDescription` failed the target (`no such module`).
+    func test_aTargetAtThePackageRootLeavesTheManifestsOutOfItsSources() throws {
+        let result = try formula(json: backyardBirdsDataManifest, folderContents: backyardBirdsDataTree)
+
+        let compiler = try funcDefinition("compilerBackyardBirdsData", in: result)
+        XCTAssertTrue(compiler.contains("excludedPaths: 'Package.swift,Package@swift-5.9.swift'"), "got:\n\(compiler)")
+    }
+
+    /// A target in a folder of its own never sees the manifests, and its `exclude:` is as
+    /// written.
+    func test_aTargetInItsOwnFolderExcludesNoManifest() throws {
+        let json = backyardBirdsDataManifest.replacingOccurrences(of: "\"path\": \".\"", with: "\"path\": \"Birds\"")
+        let result = try formula(json: json, folderContents: backyardBirdsDataTree)
+
+        XCTAssertFalse(try funcDefinition("compilerBackyardBirdsData", in: result).contains("excludedPaths"), "got:\n\(result)")
+    }
+
+    /// Every catalog of a target in one actool run, which also writes the Swift Xcode
+    /// generates for their images and colors — `ImageResource.floor1` — with the target's
+    /// identifier and no extensions on SwiftUI's types, as Xcode 26.6 runs it for a
+    /// package; the target compiles that Swift, and the bundle holds the run's files.
+    func test_aTargetsAssetCatalogsAreCompiledInOneRunAndItsCompileTakesTheirSymbols() throws {
+        let result = try formula(json: backyardBirdsDataManifest, folderContents: backyardBirdsDataTree)
+
+        let assets = try funcDefinition("assetsBackyardBirdsData", in: result)
+        XCTAssertTrue(assets.contains("'Assets.xcassets': Folder(path: 'input:/pkg/Assets.xcassets').manifest"), "got:\n\(assets)")
+        XCTAssertTrue(assets.contains("'Shop.xcassets': Folder(path: 'input:/pkg/Shop.xcassets').manifest"), "got:\n\(assets)")
+        XCTAssertTrue(assets.contains("assetSymbolBundleIdentifier: 'pkg.BackyardBirdsData'"), "got:\n\(assets)")
+        XCTAssertTrue(assets.contains("swiftAssetSymbolExtensions: 'NO'"), "got:\n\(assets)")
+        XCTAssertTrue(assets.contains("swiftAssetSymbols: 'YES'"), "got:\n\(assets)")
+
+        let contents = try funcDefinition("bundleContents_BackyardBirdsData", in: result)
+        XCTAssertTrue(contents.contains("'assets': assetsBackyardBirdsData().files"), "got:\n\(contents)")
+        XCTAssertFalse(contents.contains("AssetCatalogCompiler("), "one run, not one per catalog, got:\n\(contents)")
+
+        let compiler = try funcDefinition("compilerBackyardBirdsData", in: result)
+        XCTAssertTrue(compiler.contains("extraSourceFiles: [\n            'GeneratedAssetSymbols.swift': assetsBackyardBirdsData().swiftAssetSymbols"),
+                      "got:\n\(compiler)")
+    }
+
+    /// A target with no catalog has no `assets` func and compiles no symbols.
+    func test_aTargetWithoutACatalogCompilesNoSymbols() throws {
+        var tree = backyardBirdsDataTree
+        tree["input:/pkg"] = [file("Package.swift"), file("DataGeneration.swift"), folder("Birds")]
+        let result = try formula(json: backyardBirdsDataManifest, folderContents: tree)
+
+        XCTAssertFalse(result.contains("assetsBackyardBirdsData"), "got:\n\(result)")
+        XCTAssertFalse(try funcDefinition("compilerBackyardBirdsData", in: result).contains("extraSourceFiles"), "got:\n\(result)")
+    }
+
+    /// Both layouts of the bundle carry an Info.plist developed in the package's
+    /// `defaultLocalization`: without one, the iOS app looked its backyard names up in
+    /// whichever `.lproj` Foundation preferred, and showed them in Hebrew.
+    func test_aBundleIsDevelopedInThePackagesDefaultLocalizationInBothLayouts() throws {
+        let result = try formula(json: backyardBirdsDataManifest, folderContents: backyardBirdsDataTree)
+
+        let flat = try funcDefinition("bundle_BackyardBirdsData", in: result)
+        XCTAssertTrue(flat.contains("'Info.plist': InfoPlistBuilder(keys: '{\"CFBundleDevelopmentRegion\":\"fr\","), "got:\n\(flat)")
+        XCTAssertFalse(flat.contains("CFBundleSupportedPlatforms"), "the flat bundle is platform-blind, got:\n\(flat)")
+        let mac = try funcDefinition("macBundle_BackyardBirdsData", in: result)
+        XCTAssertTrue(mac.contains("{\"CFBundleDevelopmentRegion\":\"fr\","), "got:\n\(mac)")
     }
 
     // MARK: - What a product needs from the linker (B-55)

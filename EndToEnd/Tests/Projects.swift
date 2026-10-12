@@ -648,9 +648,115 @@ enum Projects {
                            "lib_SwiftCompilerPluginMessageHandling.a", "lib_SwiftLibraryPluginProvider.a"],
         buildTimeout: 5 * 60)
 
+    /// Apple's Backyard Birds for the Mac (B-77, B-80 item 1), from a fresh clone
+    /// with nothing laid over it: SwiftData's `@Model` expanded by the platform's macro
+    /// plugins, three local packages each a target at its package's root, whose manifests
+    /// stay out of its sources, the catalogs' Swift symbols compiled into the package that
+    /// names `ImageResource.floor1`, a WidgetKit extension under `Contents/PlugIns` signed
+    /// with its sandbox, and the accent and widget background colors in the plists. The
+    /// packages' bundles are developed in English, as their manifests say. Signed ad-hoc and
+    /// verified deep and strict; launched by hand, the app stays up. The build takes under
+    /// a minute, so it runs every hermeticity build.
+    static let backyardBirdsMac = Project(
+        name: "backyard-birds-mac",
+        source: .git(url: "https://github.com/apple/sample-backyard-birds.git",
+                     commit: "1843d5655bf884b501e2889ad9862ec58978fdbe",
+                     subfolder: "."),
+        buildFolder: "backyard-birds-mac",
+        platform: "macos",
+        expectedProducts: [
+            "Backyard Birds.app/Contents/MacOS/Backyard Birds",
+            "Backyard Birds.app/Contents/Info.plist",
+            "Backyard Birds.app/Contents/PkgInfo",
+            "Backyard Birds.app/Contents/Resources/Assets.car",
+            "Backyard Birds.app/Contents/Resources/AppIcon.icns",
+            "Backyard Birds.app/Contents/Resources/he.lproj/Localizable.strings",
+            "Backyard Birds.app/Contents/Resources/BackyardBirdsData_BackyardBirdsData.bundle/Contents/Info.plist",
+            "Backyard Birds.app/Contents/Resources/BackyardBirdsData_BackyardBirdsData.bundle/Contents/Resources/Assets.car",
+            "Backyard Birds.app/Contents/Resources/BackyardBirdsData_BackyardBirdsData.bundle/Contents/Resources/he.lproj/Backyards.strings",
+            "Backyard Birds.app/Contents/Resources/BackyardBirdsUI_BackyardBirdsUI.bundle/Contents/Resources/Assets.car",
+            "Backyard Birds.app/Contents/Resources/LayeredArtworkLibrary_LayeredArtworkLibrary.bundle/Contents/Resources/Assets.car",
+            "Backyard Birds.app/Contents/PlugIns/Widgets.appex/Contents/MacOS/Widgets",
+            "Backyard Birds.app/Contents/PlugIns/Widgets.appex/Contents/Info.plist",
+            "Backyard Birds.app/Contents/PlugIns/Widgets.appex/Contents/Resources/Assets.car",
+            "Backyard Birds.app/Contents/PlugIns/Widgets.appex/Contents/Resources/LayeredArtworkLibrary_LayeredArtworkLibrary.bundle/Contents/Resources/Assets.car",
+            "Backyard Birds.app/Contents/_CodeSignature/CodeResources",
+            "Backyard Birds.app/Contents/PlugIns/Widgets.appex/Contents/_CodeSignature/CodeResources",
+        ],
+        // A cold build here takes 31 s with release binaries and `prepare` 13 s; the budget
+        // is per step and leaves room for the nightly's runner, which is also a workstation.
+        buildTimeout: 10 * 60,
+        onlyUnder: "Backyard Birds.app",
+        executables: ["Backyard Birds.app/Contents/MacOS/Backyard Birds",
+                      "Backyard Birds.app/Contents/PlugIns/Widgets.appex/Contents/MacOS/Widgets"],
+        exported: { out in
+            // The app with its app group, and the widget, signed by itself, with the sandbox
+            // its entitlements add to the group.
+            try SignedBundleCheck.verifying(bundle: "Backyard Birds.app", executable: "Backyard Birds.app/Contents/MacOS/Backyard Birds",
+                                            entitlement: "com.apple.security.application-groups")(out)
+            try SignedBundleCheck.verifying(bundle: "Backyard Birds.app/Contents/PlugIns/Widgets.appex",
+                                            executable: "Backyard Birds.app/Contents/PlugIns/Widgets.appex/Contents/MacOS/Widgets",
+                                            entitlement: "com.apple.security.app-sandbox")(out)
+            let contents = out.appendingPathComponent("Backyard Birds.app/Contents")
+            try checkPlist(contents.appendingPathComponent("Info.plist"), key: "NSAccentColorName", is: "AccentColor")
+            try checkPlist(contents.appendingPathComponent("PlugIns/Widgets.appex/Contents/Info.plist"),
+                           key: "NSWidgetBackgroundColorName", is: "WidgetBackground")
+            try checkPlist(contents.appendingPathComponent("Resources/BackyardBirdsData_BackyardBirdsData.bundle/Contents/Info.plist"),
+                           key: "CFBundleDevelopmentRegion", is: "en")
+        })
+
+    /// The same sample's iOS app for the simulator (B-77): the flat layout, the
+    /// widget under `PlugIns/`, the icon's PNGs, and each package's bundle with the
+    /// Info.plist that says it is developed in English — without it the app showed the
+    /// backyards' names in Hebrew. Xcode also embeds the watchOS app under `Watch/`, a
+    /// target for another platform, which Semel does not build (B-77's map for it). Unsigned,
+    /// as the other simulator bundles are; launched in a simulator by hand, it shows the
+    /// backyards in English. Under a minute to build, so every hermeticity build runs.
+    static let backyardBirdsIOS = Project(
+        name: "backyard-birds-ios",
+        source: .git(url: "https://github.com/apple/sample-backyard-birds.git",
+                     commit: "1843d5655bf884b501e2889ad9862ec58978fdbe",
+                     subfolder: "."),
+        buildFolder: "backyard-birds-ios",
+        platform: "ios-simulator",
+        expectedProducts: [
+            "Backyard Birds.app/Backyard Birds",
+            "Backyard Birds.app/Info.plist",
+            "Backyard Birds.app/PkgInfo",
+            "Backyard Birds.app/Assets.car",
+            "Backyard Birds.app/AppIcon60x60@2x.png",
+            "Backyard Birds.app/he.lproj/Localizable.strings",
+            "Backyard Birds.app/BackyardBirdsData_BackyardBirdsData.bundle/Info.plist",
+            "Backyard Birds.app/BackyardBirdsData_BackyardBirdsData.bundle/Assets.car",
+            "Backyard Birds.app/BackyardBirdsUI_BackyardBirdsUI.bundle/Assets.car",
+            "Backyard Birds.app/LayeredArtworkLibrary_LayeredArtworkLibrary.bundle/Assets.car",
+            "Backyard Birds.app/PlugIns/Widgets.appex/Widgets",
+            "Backyard Birds.app/PlugIns/Widgets.appex/Info.plist",
+            "Backyard Birds.app/PlugIns/Widgets.appex/Assets.car",
+        ],
+        buildTimeout: 10 * 60,
+        onlyUnder: "Backyard Birds.app",
+        executables: ["Backyard Birds.app/Backyard Birds", "Backyard Birds.app/PlugIns/Widgets.appex/Widgets"],
+        exported: { out in
+            for executable in ["Backyard Birds.app/Backyard Birds", "Backyard Birds.app/PlugIns/Widgets.appex/Widgets"] {
+                try AppInspection.checkRecordsTheSDKVersion(executable: out.appendingPathComponent(executable), sdk: "iphonesimulator")
+            }
+            try checkPlist(out.appendingPathComponent("Backyard Birds.app/BackyardBirdsData_BackyardBirdsData.bundle/Info.plist"),
+                           key: "CFBundleDevelopmentRegion", is: "en")
+        })
+
+    /// One key of an exported plist, read with `plutil`.
+    private static func checkPlist(_ plist: URL, key: String, is expected: String) throws {
+        let value = try AppInspection.run(["/usr/bin/plutil", "-extract", key, "raw", "-o", "-", plist.path], viaXcrun: false)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value == expected else {
+            throw EndToEndFailure(step: "the plist \(plist.lastPathComponent)", message: "\(key) is '\(value)', not '\(expected)'")
+        }
+    }
+
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftCPackage, swiftHelloApp, swiftBinaryTargetApp,
                                       swiftMacroApp]
     static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, simdjson, foodTruck, foodTruckMac, netNewsWireMac, netNewsWireIOS,
-                                      codeEdit, sequelAce, swiftDependencies, swiftSyntax]
+                                      codeEdit, sequelAce, swiftDependencies, swiftSyntax, backyardBirdsMac, backyardBirdsIOS]
     static let all: [Project] = fixtures + external
 }
