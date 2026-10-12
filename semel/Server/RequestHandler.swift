@@ -454,11 +454,11 @@ enum HandlerFailure: Error {
         case .replyTooLarge(let request, let bytes):
             return .replyTooLarge(request: request, bytes: bytes, limit: Int(Frame.maximumJSONLength))
         case .batchRejected(let rejection):
-            return .batchRejected(folder:   rejection.folder.string,
-                                  lock:     rejection.lock.string,
-                                  expected: LockExpectation(rejection.expected),
-                                  found:    rejection.found,
-                                  paths:    rejection.paths.map(\.string))
+            return .rejectedBatch(folder:       rejection.folder.string,
+                                  lock:         rejection.lock.string,
+                                  expected:     LockExpectation(rejection.expected),
+                                  found:        rejection.found,
+                                  changedPaths: rejection.paths.map(\.string))
         }
     }
 }

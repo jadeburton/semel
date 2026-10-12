@@ -300,13 +300,16 @@ struct ConditionLines {
                                    Detail(label: "this Semel folds as", value: currentFold)])
         case .lockUnreadable(_, let lockPath, let problem):
             return Drawn(path: path(lockPath), headline: " is not a lock: \(sentence(problem))")
-        case .batchRejected(let folder, let lock, let expected, let found, let paths):
+        case .batchRejected(let folder, let lock, let expected, let found, let paths, let pathsNotListed):
             var details = [Detail(label: "lock", value: path(lock)),
                            Detail(label: "expected", value: described(expected)),
                            Detail(label: "found", value: found.map { DependencyLock.contentScheme + $0 } ?? "no folder")]
             if !paths.isEmpty {
-                details.append(Detail(label: "paths", value: capped(paths.map(path))))
+                details.append(Detail(label: "paths", value: capped(paths.map(path), plus: pathsNotListed)))
             }
+            // A refused batch has been taken back whole, so what a listing shows next is what
+            // was there before it: said here, or an `ls` after the refusal reads as a push lost.
+            details.append(Detail(label: "input", value: "as it was before the batch; nothing the batch pushed or removed is there"))
             return Drawn(path: path(folder),
                          headline: " is locked, and the batch changes it without a lock it matches: "
                                  + "nothing of the batch is committed",
@@ -398,8 +401,14 @@ struct ConditionLines {
 
     /// Up to `pathsNamed` items, then how many more.
     private func capped(_ items: [String]) -> String {
+        capped(items, plus: 0)
+    }
+
+    /// `capped`, for a list the server already cut short: `uncarried` more were left out
+    /// before it arrived, and are counted with those not named here.
+    private func capped(_ items: [String], plus uncarried: Int) -> String {
         let shown = items.prefix(ErrorReportRenderer.pathsNamed).joined(separator: ", ")
-        let rest  = items.count - ErrorReportRenderer.pathsNamed
+        let rest  = max(items.count - ErrorReportRenderer.pathsNamed, 0) + uncarried
         return rest > 0 ? "\(shown) and \(rest) more" : shown
     }
 

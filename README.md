@@ -369,15 +369,18 @@ Beside each copy, `prepare` writes a lock — `Dependencies/GRDB.swift.semel-loc
 A folder is locked when a lock is in `input:` beside it — `Dependencies/GRDB.swift.semel-lock` beside `Dependencies/GRDB.swift`, the rule a build finds a lock by — and the lock is a write barrier. A batch that changes anything below a locked folder (a push, an `rm`, a link) lands only if it also brings the lock the folder then matches, or removes the lock; otherwise the outermost `commit` refuses it whole — every path it touched is put back, and nothing is built from it — and says why:
 
 ```
-Packages/Dependencies/GRDB.swift is locked, and the batch changes it without a lock it matches: nothing of the batch is committed
+❌ Packages/Dependencies/GRDB.swift is locked, and the batch changes it without a lock it matches: nothing of the batch is committed
   lock: Packages/Dependencies/GRDB.swift.semel-lock
   expected: sha256:9c1f…
   found: sha256:47d0…
   paths: Packages/Dependencies/GRDB.swift/GRDB/Core/Database.swift
+  input: as it was before the batch; nothing the batch pushed or removed is there
   re-lock with: semel-swift prepare
 ```
 
-`input:` is as it was before the batch, and no batch is open. `semel-swift prepare` vendors the folder again and writes its lock with it; removing the lock unlocks the folder.
+`input:` is as it was before the batch, and no batch is open. The refusal carries at most fifty of the paths and counts the rest, and the prompt names five and counts every other (`… and 20055 more`), so a whole package pushed against its lock is refused in one reply like any other. Every error the prompt prints starts with ❌.
+
+A push says what it did once its batch's fate is known. Outside `begin` … `commit` a long push ends `Pushed 20002 files and 1 folder` when its batch commits, and when the barrier refuses it the refusal above is led by `❌ push: 20002 files and 1 folder sent, and none of it committed`. Inside a batch it says `Sent 20002 files and 1 folder, pending the commit`, and `commit` says `Committed.` or prints the refusal. `semel-swift prepare` vendors the folder again and writes its lock with it; removing the lock unlocks the folder.
 
 A push outside `begin` … `commit` is a batch of its own, so `push` and `build` are refused the same way, and `build` then stops with `Not built: the push was refused, and nothing was exported.` A lock that does not parse refuses the batch naming its line: a folder with a broken lock is locked shut, not open. `prepare` writes a copy and its lock together, so a `build` after it pushes both in one batch and lands. To change vendored code on purpose, take the lock out (`rm` it, and delete it from disk), which is a visible change to review; `prepare` puts the copy back as the lock describes it. `checkpoint` and `restore` go through the barrier too: a restore across a re-vendor brings the old lock back with the old copy.
 

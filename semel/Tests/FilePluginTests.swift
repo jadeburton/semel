@@ -223,6 +223,48 @@ final class FilePluginTests: XCTestCase {
         XCTAssertEqual(context.messages, ["Pushed 21 files and 1 folder, 2 unchanged"])
     }
 
+    /// A push the lock barrier refuses never says it pushed: its count leads the refusal,
+    /// saying what was sent and that none of it stands (B-161).
+    func test_aRefusedPushSaysWhatItSentAndThatNoneOfItCommitted() throws {
+        for index in 0..<21 {
+            try write("src/file\(index).c", "\(index)")
+        }
+        try replyHoldingNothing()
+        connection.reply(.ok)
+        connection.reply(.ok)
+        connection.reply(.pushFiles(outcomes: (0..<21).map { _ in .stored(didChange: true) }))
+        connection.responses.append((.error(.batchRejected(folder: "src", lock: "src.semel-lock", expected: .contentRoot("aaa"),
+                                                           found: "bbb", paths: ["src/file0.c"], pathsNotListed: 20)), nil))
+
+        XCTAssertThrowsError(try run("push", ["src"])) { error in
+            let failure = error as? ServerError
+            guard case .batchRejected? = failure?.response else {
+                return XCTFail("not the refusal: \(error)")
+            }
+            XCTAssertEqual(failure?.description.split(separator: "\n").first,
+                           "push: 21 files and 1 folder sent, and none of it committed")
+        }
+        XCTAssertEqual(context.messages, [])
+    }
+
+    /// Inside a batch the user opened, the push's files wait for the `commit`, and the count
+    /// says so.
+    func test_aPushInsideAnOpenBatchSaysItsFilesArePendingTheCommit() throws {
+        for index in 0..<21 {
+            try write("src/file\(index).c", "\(index)")
+        }
+        context.openBatchDepth = 1
+        try replyHoldingNothing()
+        connection.reply(.ok)
+        connection.reply(.ok)
+        connection.reply(.pushFiles(outcomes: (0..<21).map { .stored(didChange: $0 > 1) }))
+        connection.reply(.ok)
+
+        try run("push", ["src"])
+
+        XCTAssertEqual(context.messages, ["Sent 21 files and 1 folder, 2 unchanged, pending the commit"])
+    }
+
     /// Three batches' worth of files under one folder, answered only when collected: the
     /// folder and the batches after it, and the push's `endBatch`, scripted in that order
     /// behind the roots and the `beginBatch`.

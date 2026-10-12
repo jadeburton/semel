@@ -46,6 +46,64 @@ needs ../Helper` and pushes the package whole. What remains:
    outside the folder would close it. Design rather than mechanics: it needs a decision on
    how far `build` reaches unasked into sources outside the folder.
 
+**B-161** `done` — **A refused push of a large locked folder said only that a reply was too
+large, and `ls` then showed `(empty)`.** Reported 2026-10-12: about 20,000 files pushed, `ls`
+printed `(empty)`; under `begin`, `push`, `ls`, `commit`, `ls` the files were listed inside
+the batch and gone after the `commit`, and nothing printed read as an error. Reproduced on
+main at 1e372b2 with release binaries: the tree held a locked folder, `Dependencies/<name>`
+with its `.semel-lock`, whose lock did not match what the pushed folder folds to. The lock
+barrier (B-146) worked as designed: the outermost `commit` refused the batch, the unlocked
+files pushed beside the folder with it, and replayed it whole; an unbatched push is a batch
+of one and is refused the same way. What hid it was the refusal itself. `batchRejected`
+named every changed path below the locked folder, and with 20,000 of them the `endBatch`
+reply was 1,064,529 bytes, over the frame's 1 MiB limit, so the server sent `replyTooLarge`
+in its place and the client printed `the server's reply to 'endBatch' is … bytes, over the
+1048576-byte limit for one reply; …`: nothing about the batch being taken back, which lock
+refused it, or how to re-lock. The interactive client also reset its batch depth only on
+`batchRejected`, so after the `replyTooLarge` it believed a batch still open that the server
+had closed, and the next `commit` closed nothing. Not caused by a recent merge: the barrier
+dates from #175 (2026-10-09). Separate invocations (`semel begin`, then `semel 'push tree'`)
+are separate sessions, and a session's batch is committed when it ends, by design.
+
+Fixed 2026-10-12. `batchRejected` names at most `ErrorResponse.batchRejectedPathsListed`
+(50) of the batch's paths and counts the rest in a field of its own, `pathsNotListed`, so the
+refusal fits one frame whatever the batch's size (protocol 31); the client prints the first
+five, as it did, and `and N more`, N counting the carried paths it does not print with
+`pathsNotListed`, and a line `input: as it was before the batch; nothing the batch
+pushed or removed is there`, beside the folder, lock, expected, found and the remedy
+(`re-lock with: semel-swift prepare`). An outermost `commit` that fails for any reason now
+leaves no batch open at the client, since the server closes the batch before it answers.
+The owner then confirmed the lock's refusal was what they hit, and that they missed it
+because it came after the line saying the files were pushed; two more changes follow from
+that. A push says what it did only once its batch's fate is known: `Pushed N files` when its
+own batch commits; when the barrier refuses it, `push: N files sent, and none of it
+committed`, decided from the typed refusal and printed as the refusal's first line; inside a
+batch the user opened, `Sent N files, pending the commit`, and `commit` then says
+`Committed.` or prints the refusal. And every error the client prints starts with ❌, added in
+one place, `ErrorMark`, which `CommandInterpreter.outputError` and `main`'s few errors before
+an interpreter exists go through.
+
+`FrameMessageTests` pins the bounded rejection within a frame; `SessionPluginTests` the
+depth; `LockedFolderEndToEndTests` pushes 20,000 files under a mismatched lock, unbatched
+and under `begin` … `commit`, through the real `semel` and `semelserv`, and checks the
+printed paths and count, the push's lines and the mark; `LockedFolderServerTests` checks
+over a socket that a refusal of 1,001 paths carries fifty and counts the rest.
+
+Open for the owner, not decided: whether a mismatch in one locked folder should reject the
+unlocked files pushed beside it in the same batch. B-146 made a batch all or nothing, which
+is what a mirror's atomicity rests on; the cost is that a push of a whole tree lands nothing
+when one vendored copy has moved.
+
+**B-163** `open` — **`restore`'s reply lists every path it changed, and a restore across a
+large tree passes the frame's limit.** Found 2026-10-12 while fixing B-161, not seen in use.
+`DaemonResponse.restored(name:contentRoot:changedPaths:)` carries every path the restore
+changed, so a restore between two checkpoints that differ by tens of thousands of files —
+a re-vendor of a large package, or a tree pushed whole — makes a reply over the 1 MiB
+limit, and the client hears `replyTooLarge` in place of what the restore did, though the
+restore itself stood. The fix is B-161's shape: a bounded sample of the paths and an
+integer count of the rest, as fields of the typed reply, with a protocol bump. (B-162 is
+taken by another agent's PR not yet open; this entry skips it.)
+
 ## Performance
 
 Measured 2026-09-27 on the IceCubes packages tree (`C1/icecubes/Packages`, thirteen

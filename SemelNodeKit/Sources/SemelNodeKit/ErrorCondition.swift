@@ -235,8 +235,10 @@ public enum ErrorCondition: Codable, Hashable, Sendable, Error, ErrorConditionCo
     /// A batch that changes a locked folder without a lock it matches, refused at `commit`
     /// (B-146): the folder and its lock, relative to `input:`; what the lock records; the
     /// root the batch would leave, nil where it removes the folder; and the paths of the
-    /// batch inside the folder.
-    case batchRejected(folder: String, lock: String, expected: LockExpectation, found: String?, paths: [String])
+    /// batch inside the folder, as many as the rejection carries, with the count of those it
+    /// left out in `pathsNotListed`.
+    case batchRejected(folder: String, lock: String, expected: LockExpectation, found: String?, paths: [String],
+                       pathsNotListed: Int)
     /// A binary target a product reaches whose artifact is not an `.xcframework` that is
     /// there (B-77, B-133).
     case binaryTargetNotBuilt(target: UnbuiltBinaryTarget)
@@ -308,7 +310,7 @@ public enum ErrorCondition: Codable, Hashable, Sendable, Error, ErrorConditionCo
         case .lockMismatch(let folder, _, _, _, _),
              .lockFoldChanged(let folder, _, _, _),
              .lockUnreadable(let folder, _, _),
-             .batchRejected(let folder, _, _, _, _):
+             .batchRejected(let folder, _, _, _, _, _):
             return .relock(package: Path(folder).lastComponent ?? folder)
         case .unlinkedKind(let kind):
             return .register(kind: kind)

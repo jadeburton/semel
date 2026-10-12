@@ -31,11 +31,11 @@ func main() throws {
         do {
             connection = try ServerLauncher.start(socketPath: socketPath) { print($0) }
         } catch {
-            FileHandle.standardError.write(Data("semel: \(error)\n".utf8))
+            FileHandle.standardError.write(Data((ErrorMark.marked("semel: \(error)") + "\n").utf8))
             exit(1)
         }
     } catch {
-        FileHandle.standardError.write(Data("semel: \(error)\n".utf8))
+        FileHandle.standardError.write(Data((ErrorMark.marked("semel: \(error)") + "\n").utf8))
         exit(1)
     }
     // The base the last `base <path>` remembered, when it is still there (B-136); a
@@ -55,7 +55,7 @@ func main() throws {
     do {
         server = try interpreter.connect()
     } catch {
-        FileHandle.standardError.write(Data("semel: \(error)\n".utf8))
+        FileHandle.standardError.write(Data((ErrorMark.marked("semel: \(error)") + "\n").utf8))
         exit(1)
     }
     print("Semel \(server.serverVersion)")

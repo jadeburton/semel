@@ -125,19 +125,58 @@ final class FilePlugin: CommandPlugin {
         // One batch around the whole push, so the engine coalesces its work signals; and so
         // a push nobody wrapped in `begin` … `commit` is checked against the locks as one
         // change, and refused whole when it moves a locked folder (B-146).
-        try context.inBatchOfItsOwn {
-            try push(work, notOnDisk: notOnDisk, context: context)
+        //
+        // The count is said once the batch's fate is known: `Pushed` when the push's own
+        // batch committed, `Sent` and pending when a batch the user opened holds it, and,
+        // when the barrier refused it, what was sent and that none of it stands, ahead of
+        // the refusal's reasons.
+        let heldByOpenBatch = context.openBatchDepth > 0
+        var tally = PushTally()
+        do {
+            try context.inBatchOfItsOwn {
+                try push(work, notOnDisk: notOnDisk, tally: &tally, context: context)
+            }
+        } catch let failure as ServerError {
+            guard case .batchRejected = failure.response else {
+                throw failure
+            }
+            throw ServerError(response: failure.response,
+                              lead:     "push: \(tally.counts ?? "nothing") sent, and none of it committed")
         }
+        guard !tally.namedEachPath, let counts = tally.counts else {
+            return
+        }
+        let unchanged = tally.unchanged > 0 ? ", \(tally.unchanged) unchanged" : ""
+        context.outputMessage(heldByOpenBatch ? "Sent \(counts)\(unchanged), pending the commit" : "Pushed \(counts)\(unchanged)")
     }
 
-    /// The pushing half of `push`: the work list sent, the outcomes reported.
-    private func push(_ work: [PushWork], notOnDisk: [String], context: any CommandContext) throws {
+    /// What a push sent, counted as the replies arrive.
+    private struct PushTally {
+        var files         = 0
+        var folders       = 0
+        var unchanged     = 0
+        /// Whether each path was named as it went, which a short push does in place of a count.
+        var namedEachPath = true
+
+        var counts: String? { FilePlugin.countedTogether(files: files, folders: folders) }
+    }
+
+    /// The pushing half of `push`: the work list sent, each outcome named or counted into
+    /// `tally`.
+    private func push(_ work: [PushWork], notOnDisk: [String], tally: inout PushTally,
+                      context: any CommandContext) throws {
         // A push of a whole project runs to thousands of files: name each one while the
         // list is short enough to read, and count them when it is not.
         let nameEachPath = work.count <= PathList.namedIndividually
+        tally.namedEachPath = nameEachPath
         var files     = 0
         var folders   = 0
         var unchanged = 0
+        defer {
+            tally.files     = files
+            tally.folders   = folders
+            tally.unchanged = unchanged
+        }
 
         defer { reportNotOnDisk(notOnDisk, namedIndividually: nameEachPath, context: context) }
 
@@ -190,11 +229,6 @@ final class FilePlugin: CommandPlugin {
         }
         try pipeline.send(&batch, context: context, report: report)
         try pipeline.collectAll(context: context, report: report)
-
-        guard !nameEachPath, let counts = Self.countedTogether(files: files, folders: folders) else {
-            return
-        }
-        context.outputMessage("Pushed \(counts)" + (unchanged > 0 ? ", \(unchanged) unchanged" : ""))
     }
 
     /// What pushing one entry did, for the report the whole push makes at the end.

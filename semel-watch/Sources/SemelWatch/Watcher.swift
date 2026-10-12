@@ -45,6 +45,11 @@ public final class Watcher {
     /// unless a test wants to read them.
     public var output: (String) -> Void = { print($0) }
 
+    /// An error of the watcher's own, marked as the prompt marks its errors (`ErrorMark`).
+    private func outputError(_ message: String) {
+        output(ErrorMark.marked(message))
+    }
+
     /// How many batches have been issued, the initial one among them.
     public private(set) var batchesIssued = 0
 
@@ -205,7 +210,7 @@ public final class Watcher {
                 guard session.isOpen() else {
                     continue
                 }
-                output("semel-watch: the batch could not be planned: \(error)")
+                outputError("semel-watch: the batch could not be planned: \(error)")
                 return
             }
             guard !commands.isEmpty else {
@@ -234,7 +239,7 @@ public final class Watcher {
             filter.setLocked(locked)
             locksAreStale = false
         } catch {
-            output("semel-watch: could not ask the engine which folders are locked: \(error)")
+            outputError("semel-watch: could not ask the engine which folders are locked: \(error)")
         }
     }
 
@@ -300,7 +305,7 @@ public final class Watcher {
         }
         guard !refused else {
             batchesRefused += 1
-            output("semel-watch: the batch was not committed; nothing was built or exported from it.")
+            outputError("semel-watch: the batch was not committed; nothing was built or exported from it.")
             return
         }
         reportAndExport(in: session)
@@ -323,7 +328,7 @@ public final class Watcher {
         do {
             records = try interpreter.errorRecords()
         } catch {
-            output("semel-watch: could not ask the engine for its errors: \(error)")
+            outputError("semel-watch: could not ask the engine for its errors: \(error)")
             return
         }
         guard records.isEmpty else {
@@ -335,7 +340,7 @@ public final class Watcher {
                     export = try interpreter.exportBeside(records: records, folders: folders, destination: destination,
                                                           exportsWhatHasAValue: true)
                 } catch {
-                    output("semel-watch: the export into \(destination) failed: \(error)")
+                    outputError("semel-watch: the export into \(destination) failed: \(error)")
                 }
             }
             // The prompt that started this watcher prints the report of every settle; the
