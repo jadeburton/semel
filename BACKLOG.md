@@ -425,6 +425,27 @@ them, dirty — 364 MB of a 434 MB footprint at one moment of the Sequel Ace pus
 
 ## Design, correctness and code quality
 
+**B-158** `done` — **The cache limit's loop test read one trim where the engine made
+several.** Seen 2026-10-12 in CI on PR #201, which touched nothing in the cache:
+`CacheSizeLimitLoopTests.test_aGraphThatWritesMoreThanTheLimitKeepsBuildingAndSaysWhatWasEvicted`
+(B-148) found `evicted 4 entries (4.0 KB) — LabellingSampleTool 4; it holds 5.0 KB` where
+it expected 5 and 5, and the last trim's report held 1 eviction where it expected 5. On
+main at 0a501a0 it passed 200 runs in 200 on an idle machine, and failed 320 in 600 with
+twelve copies running at once on the owner's ten-core Mac.
+
+Fixed 2026-10-12. The engine was right and the test read one settle where there were
+several. The test pushed the second edition of its five sources as five writes outside a
+batch, with the loop running. Each write wakes the loop, and the loop settled after
+whichever of them had landed. Every settle trims, and each trim evicted the first edition's
+entries that no node stood on any longer: the ones whose tools had already been run on the
+second edition. The others were still held, which is what the line's "it holds 5.0 KB" and
+the note about held entries say. Printing every notice and the last trim in each failing
+run showed this every time. Out of 354 failures, each had between two and five eviction
+lines, which always added up to 5. The CI run was the split 4 then 1. The engine promises
+one settle only for a batch, so the test's push is now one batch. The test also asserts
+that exactly one eviction line was reported. With the change it passed 200 in 200 alone
+and 600 in 600 under the same load.
+
 **B-156** `done` — **The removal end-to-end test counted a node that may or may not run.**
 Seen 2026-10-11: `RemovalEndToEndTests.test_removingTheFixtureRunsOnlyTheFinderAndWritesNoEntry`
 (B-149) failed in an agent's root suite run with 2 nodes computed where it expected 1, and
