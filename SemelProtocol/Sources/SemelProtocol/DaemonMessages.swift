@@ -410,6 +410,13 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
     /// once; without, asks what it is. A size, typed: the prompt's `20G` is turned into
     /// bytes where it is typed.
     case cacheLimit(limit: ByteCount?)
+    /// Stores the shared cache this home's engine reads from and writes to, nil for none, in
+    /// the home's `semel.engine.config`, and connects to it at once (B-153). Answered
+    /// `sharedCache` with what is in force.
+    case cacheServer(address: CacheAddress?)
+    /// Stores the name this engine gives a shared cache in its hello, nil for none, and
+    /// says hello again under it. Answered `sharedCache`.
+    case cacheIdentity(identity: String?)
     /// The installed tools with their machine settings for `platform` (a `Platform`'s raw
     /// value): the SDK is one per platform (B-109).
     case tools(platform: String)
@@ -504,6 +511,8 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     /// The home's limit, whether it is the default, and what setting it evicted — nil when
     /// the limit was only asked for.
     case cacheLimit(limit: ByteCount, isDefault: Bool, trim: CacheTrimRecord?)
+    /// The shared cache's settings as they now stand, and where its connection is.
+    case sharedCache(summary: SharedCacheSummary)
     case tools(namespaces: [ToolNamespaceRecord])
     /// Where the graph the reset discarded was copied to, so the state that made the reset
     /// necessary can still be read. Absent when there was nothing to discard, and when the
@@ -542,7 +551,7 @@ extension DaemonResponse {
         case .list, .remove, .errors:
             return true
         case .ok, .pushFile, .pushFiles, .contentRoots, .folderChildren, .fetch, .symbolicLink, .check, .collected,
-             .cache, .cacheLimit, .tools,
+             .cache, .cacheLimit, .sharedCache, .tools,
              .reset, .explain, .debug,
              .checkpoint, .checkpoints, .restored:
             return false

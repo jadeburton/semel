@@ -73,11 +73,11 @@ final class AppleToolDiscoveryTests: SemelAppleTestCase {
     }
 
     /// ibtool's namespace declares the SDK as a machine setting, which prepare writes: its
-    /// path, and the fingerprint of the tree behind it (B-47).
+    /// path, and the fingerprint of the tree behind it (B-47) — and the system's build (B-153).
     func test_ibtoolsNamespaceDeclaresTheSDKAsAMachineSetting() throws {
         let namespace = try XCTUnwrap(ToolNamespaceRegistry.entry(forNamespace: "apple.ibToolCompiler"))
         XCTAssertEqual(namespace.toolName, "ibtool")
-        XCTAssertEqual(namespace.machineSettingKeys, ["sdkPath", "sdkFingerprint"])
+        XCTAssertEqual(namespace.machineSettingKeys, ["sdkPath", "sdkFingerprint", "hostOSBuild", "simulatorRuntimes"])
         XCTAssertEqual(namespace.machineFileWriter?.command, "semel-swift prepare")
     }
 

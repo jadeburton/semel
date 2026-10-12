@@ -140,3 +140,20 @@ public func toolBinaryCacheKeyMaterial(configuration properties: [String: String
     // arrives on the configuration wire.
     return "tool=\(identity.name):\(fingerprint)"
 }
+
+/// The fingerprints of the binaries a tool runs from beside itself — `ld` beside clang,
+/// `swift-driver` beside swiftc — one line each, by name, for a finder's
+/// `companionFingerprint` (B-80). A tool's own bytes say nothing of a helper it runs: an
+/// update can replace the linker and leave the compiler as it was, and a key over the
+/// compiler alone would hand one linker's output back for the other's (B-153's audit).
+///
+/// Looked for in the folder of the tool's resolved binary, which is where a toolchain keeps
+/// them. A name not found there is left out, so a toolchain without one of them still keys
+/// by the rest; nil when none is there.
+public func siblingBinariesFingerprint(besideToolAt path: String, named names: [String]) -> String? {
+    let folder = URL(fileURLWithPath: path).resolvingSymlinksInPath().deletingLastPathComponent()
+    let lines = names.sorted().compactMap { name -> String? in
+        toolBinaryFingerprint(ofFileAt: folder.appendingPathComponent(name).path).map { "\(name)=\($0)" }
+    }
+    return lines.isEmpty ? nil : lines.joined(separator: "\n")
+}

@@ -107,8 +107,10 @@ rm build/**
 | `explain <path>` (`why`) | Say why the last settle did what it did to a product (`output:/hello/hello`, `-o hello/hello`, or relative to the current directory): the nodes upstream of it that ran and the ones the cache answered, each with the wires whose values changed for it, down to the pushed files that changed. The record is the last settle's only, kept in memory: a restart forgets it, and `explain` says so |
 | `check` | Walk the graph and report every invariant that does not hold — a wire whose endpoint is gone, a product nothing produces, a manifest disagreeing with its folder. Repairs nothing; `reset` is the repair. Ask it of a settled graph (`wait`, or after `build`): a node the engine is still wiring has no wires yet, and the reply says how many nodes were still scheduled |
 | `collect` | Delete every object in the store that nothing refers to — no port, no cached build, no artifact snapshot, no archived graph, and no tree or content-root document that a referenced object is — and say how many went and how many stayed. The engine runs the same collection itself at idle, once after launch and then whenever the store has grown by 64 MB; an object younger than a minute is never collected |
-| `cache` | List every cached build, largest first: the bytes it alone holds in the store — an object another entry or a pushed file also holds is not its to give back — its cost, its node type and its key, and whether a node of the graph holds values from it or the last settle used it; above them, what the cache holds against its limit, and below them what the last trim evicted |
+| `cache` | List every cached build, largest first: the bytes it alone holds in the store — an object another entry or a pushed file also holds is not its to give back — its cost, its node type and its key, and whether a node of the graph holds values from it or the last settle used it; above them, what the cache holds against its limit and, when the home names a shared cache, where it is, how the connection stands and what it has done (see [A shared cache](#a-shared-cache)); below them, what the last trim evicted |
 | `cache limit [<size>]` | Show the cache limit, or set it: a number of bytes, or one with `K`, `M` or `G` after it (`512M`, `20G`), binary units. A setting of this home, kept in `semel.engine.config` beside the graph and read by `semelserv` when it starts — a setting of the engine, so it enters no build's input and no cache key; 10 GB until one is set. After every settle the engine evicts, until the cache is under its limit, the entries with the lowest cost per byte among those the last settle did not use, then among those it did, and never an entry a node of the graph holds values from; it says what it evicted, and the collector gives the bytes back. A limit below what the cache holds evicts at once |
+| `cache server <host:port>` / `cache server --none` | Name the shared cache (`semel-cache serve`) this engine reads from and writes to, or none. Kept in `semel.engine.config` as `cache.server` and put in force at once: the engine connects on a thread of its own, and until it has, or while the server is unreachable, every lookup is a local miss. With none the engine is its local cache alone |
+| `cache identity <name>` / `cache identity --none` | The name this engine gives the shared cache when it connects, `cache.identity` in `semel.engine.config`: asserted, not authenticated. Changing it connects again under the new name |
 | `t` / `tools [prefix] [--platform <p>]` | List the installed tools as config settings, one block per namespace, as this server's plugins found them; a prefix narrows it to namespaces starting with it (`tools clang`). A report only: the machine's half of the configuration is written outside Semel, by `semel-clang` or `semel-swift prepare` |
 | `reset [--cache]` | Discard everything derived and rebuild it from the input file system, copying the discarded graph aside first; the cached builds are kept, so the rebuild is a pass of cache lookups, and `--cache` discards those too |
 
@@ -207,8 +209,7 @@ person would make, writing the window it would open after `window:` or `live:`.
 `semel-cache` keeps cache entries and the objects they reference under a home folder of
 its own and answers them over TCP, so that machines building the same sources share their
 builds. It is a separate program that links the cache, the transport and the protocol, and
-never the engine. The engine does not use it yet (B-153 phase 3); today it can be run,
-filled and inspected:
+never the engine. Run it on a machine every engine can reach:
 
 ```sh
 .build/release/semel-cache serve  --home /srv/semel-cache --listen 0.0.0.0:7070 --limit 50G --writers all
@@ -224,6 +225,47 @@ requests used is kept, then the cheapest build per byte goes first. `status` pri
 entries and bytes against the limit, and the hits and misses since the server started;
 `purge` removes a poisoned entry by its key, or everything, through the running server when
 there is one.
+
+Point an engine at it from the prompt — the setting is the home's, kept in
+`semel.engine.config` beside the graph, and applied at once:
+
+```
+cache server 192.168.1.20:7070
+cache identity ci-runner
+```
+
+or by writing the file before `semelserv` starts, as a CI machine would:
+
+```
+cache.server    192.168.1.20:7070
+cache.identity  ci-runner
+```
+
+On a local miss the engine asks the shared cache for the entry, fetches the objects it lacks
+into its own store — each hashed before it is kept — writes the entry into its local cache
+and uses it. Every build it runs itself is queued for the server and written on a thread of
+its own, so a slow or stopped server never holds up a settle: the queue keeps at most a
+thousand entries or 64 MB of them and drops its oldest past that. Any failure on the way —
+the server unreachable, an object gone, a hash that does not verify — is a local miss and
+the build runs. A hit whose objects would take longer to fetch than the build took (its
+recorded cost against the link's measured round trip and rate, 100 MB/s assumed until a
+large object has been fetched) is built instead. While the server is unreachable the engine
+asks it nothing, and connects again on its own, a quarter of a second after the first
+failure and up to every five seconds after. A server run with `--writers none` serves this
+engine's lookups and takes none of its builds.
+
+`cache` heads its list with the shared cache:
+
+```
+Shared cache: 192.168.1.20:7070 as ci-runner, connected, read and write.
+  Lookups: 412 hits, 3 misses, 0 failed, 12 declined, 0 while down; 58.2 MB fetched (0.4 ms a request).
+  Writes: 37 entries sent (4.1 MB), 0 queued, 0 dropped, 0 failed.
+```
+
+`hits` were answered by the shared cache, `misses` it had nothing for, `failed` broke on the
+way, `declined` were cheaper to build than to fetch, and `while down` were asked of a
+connection that was not up. `queued` is what waits to be written, `dropped` what the full
+queue let go, and the last failure, when there was one, is said on a line of its own.
 
 ### Formulae
 
@@ -361,6 +403,9 @@ semel/           semel — the prompt; opens a connection to semelserv and nothi
   Transport/           SemelTransport: the wire for every client and server — frames over a
                        Unix socket or TCP, the client connection (correlation, streamed
                        replies, pipelining) and the listener with a connection per client
+  CacheClient/         SemelCacheClient: the engine's way to a shared cache — SemelCache's
+                       RemoteCache over the transport's TCP connection, which SemelServer
+                       installs from semel.engine.config
 semel-swift/     semel-swift — `prepare`: finds a tree's roots, vendors git dependencies,
                  writes semel.fmla and the two config files (SemelSwiftTool)
 semel-clang/     semel-clang — writes semel.machine.config for the clang tools
@@ -416,6 +461,9 @@ SemelCache/      What a build cache is, for the engine and a cache server alike 
   SQLiteCacheStore     The one implementation of the cache's tables, in the graph's database
                        and in a cache server's index (CacheIndexDatabase)
   CacheEviction        B-148's order — cost per byte, the last use's kept — and the trim
+  SharedCache          An engine's client of a shared cache over a RemoteCache: the fetch on a
+                       local miss, the population queue, the reconnection, the fetch policy
+                       (CacheFetchPolicy) and the figures `cache` shows
 SemelNodeKit/    Node-authoring API — no dependency on the engine
   Node                 Protocol for all build steps; wraps a NodeRecord
   NodeDescriptor       The ports a node type declares

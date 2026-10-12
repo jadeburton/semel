@@ -74,6 +74,9 @@ struct CoreDataModelCompilerConfiguration {
 /// compiles and its app does not. Sequel Ace's entities are `manual`.
 public struct CoreDataModelCompiler: Node {
     public static let kind: UInt = 46
+    /// 2: the operating system's build is in the key, since momc archives through the
+    /// system's Core Data (B-153).
+    public static let implementationVersion = 2
 
     // MARK: Ports
 
@@ -119,15 +122,17 @@ public struct CoreDataModelCompiler: Node {
 
     // MARK: Processing
 
-    /// The binary behind the tool version the configuration names (B-17), and the SDK tree
-    /// behind `--sdkroot` (B-47).
+    /// The binary behind the tool version the configuration names (B-17), the SDK tree
+    /// behind `--sdkroot` (B-47), and the system's build, whose Core Data archives the
+    /// model (B-153).
     public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
         guard case .value(let hash)? = try input.onlyWire(onOptionalPort: Self.configuration)?.value else {
             return nil
         }
         let properties = [String: String](plainText: try hash.resolveAsString())
         let lines = [sdkCacheKeyMaterial(sdkPathIn: properties),
-                     toolBinaryCacheKeyMaterial(configuration: properties)].compactMap { $0 }
+                     toolBinaryCacheKeyMaterial(configuration: properties),
+                     HostOperatingSystem.cacheKeyMaterial].compactMap { $0 }
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 

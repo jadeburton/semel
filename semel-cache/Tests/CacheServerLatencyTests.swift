@@ -37,7 +37,7 @@ final class CacheServerLatencyTests: CacheServerTestCase {
     /// A server over the test's home: the named binary, or one in process.
     private func startServer() throws -> (port: UInt16, stop: () -> Void) {
         guard let path = ProcessInfo.processInfo.environment["SEMEL_CACHE_BENCHMARK_SERVER"] else {
-            let server = try CacheServer(home: home, overrides: CacheServerConfiguration(listen: CacheListenAddress(host: "127.0.0.1", port: 0),
+            let server = try CacheServer(home: home, overrides: CacheServerConfiguration(listen: CacheAddress(host: "127.0.0.1", port: 0),
                                                                                          limit: ByteCount.gibibytes(20),
                                                                                          writers: .all))
             try server.start()
@@ -131,7 +131,7 @@ final class CacheServerLatencyTests: CacheServerTestCase {
         _ = try client.send(.cache(.status), body: nil)
         Thread.sleep(forTimeInterval: 3)
         report.append(try measure("getEntry hit", count: 1_000) { index in
-            XCTAssertEqual(try client.send(.cache(.getEntry(key: key("throughput \(index)"))), body: nil).0, .cache(.entry(cost: 100)))
+            XCTAssertEqual(try client.send(.cache(.getEntry(key: key("throughput \(index)"))), body: nil).0, .cache(.entry(cost: 100, objects: held(objects[(index * 10)..<(index * 10 + 10)]))))
         })
         report.append(try measure("getEntry miss", count: 1_000) { index in
             XCTAssertEqual(try client.send(.cache(.getEntry(key: key("absent \(index)"))), body: nil).0, .cache(.miss))

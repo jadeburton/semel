@@ -70,12 +70,98 @@ public struct CacheSummary: Codable, Equatable, Sendable {
     public let limitIsDefault: Bool
     /// The last trim that evicted something since the server started; nil when none has.
     public let lastTrim: CacheTrimRecord?
+    /// The shared cache's settings, and its figures when the home names one (B-153).
+    public let shared: SharedCacheSummary
 
-    public init(entries: Int, bytes: ByteCount, limit: ByteCount, limitIsDefault: Bool, lastTrim: CacheTrimRecord?) {
+    public init(entries: Int, bytes: ByteCount, limit: ByteCount, limitIsDefault: Bool, lastTrim: CacheTrimRecord?,
+                shared: SharedCacheSummary) {
         self.entries        = entries
         self.bytes          = bytes
         self.limit          = limit
         self.limitIsDefault = limitIsDefault
         self.lastTrim       = lastTrim
+        self.shared         = shared
+    }
+}
+
+// MARK: - The shared cache (B-153)
+
+/// Where an engine's connection to its shared cache stands.
+public enum SharedCacheConnection: Codable, Equatable, Sendable {
+    /// Not yet connected since the server started or the setting changed.
+    case connecting
+    case readWrite
+    /// The cache serves this engine's lookups and takes none of its entries.
+    case readOnly
+    /// Unreachable, or lost; the engine connects again with a growing wait, and meanwhile
+    /// every lookup is a local miss.
+    case down(reason: String)
+    /// The cache refused this engine's hello.
+    case rejected(reason: String)
+}
+
+/// What an engine's shared cache has done since the server started or the setting changed.
+public struct SharedCacheFigures: Codable, Equatable, Sendable {
+    /// Lookups answered from the shared cache.
+    public let hits: Int
+    /// Lookups the shared cache had nothing for.
+    public let misses: Int
+    /// Lookups that failed on the way and were taken as misses.
+    public let failures: Int
+    /// Hits whose fetch was judged slower than the build, which ran instead.
+    public let declined: Int
+    /// Lookups made while the connection was down, answered as misses without asking.
+    public let unavailable: Int
+    public let bytesFetched: ByteCount
+    public let entriesSent: Int
+    public let bytesSent: ByteCount
+    /// Entries waiting to be written, entries the full queue dropped, and entries whose
+    /// write failed.
+    public let queued: Int
+    public let dropped: Int
+    public let writeFailures: Int
+    /// The link's rate the fetch policy weighs, in bytes a second; nil while nothing large
+    /// enough has been fetched and the assumed rate stands.
+    public let measuredBytesPerSecond: Int?
+    /// What a request costs however small, in microseconds, as the fetches measured it; nil
+    /// before any.
+    public let measuredMicrosecondsPerRequest: Int?
+    /// The last failure, in words.
+    public let lastFailure: String?
+
+    public init(hits: Int, misses: Int, failures: Int, declined: Int, unavailable: Int, bytesFetched: ByteCount,
+                entriesSent: Int, bytesSent: ByteCount, queued: Int, dropped: Int, writeFailures: Int,
+                measuredBytesPerSecond: Int?, measuredMicrosecondsPerRequest: Int?, lastFailure: String?) {
+        self.hits                   = hits
+        self.misses                 = misses
+        self.failures               = failures
+        self.declined               = declined
+        self.unavailable            = unavailable
+        self.bytesFetched           = bytesFetched
+        self.entriesSent            = entriesSent
+        self.bytesSent              = bytesSent
+        self.queued                 = queued
+        self.dropped                = dropped
+        self.writeFailures          = writeFailures
+        self.measuredBytesPerSecond = measuredBytesPerSecond
+        self.measuredMicrosecondsPerRequest = measuredMicrosecondsPerRequest
+        self.lastFailure            = lastFailure
+    }
+}
+
+/// The shared cache as `cache` heads it: the two settings from the home's file, and, when a
+/// server is named, the connection and the figures.
+public struct SharedCacheSummary: Codable, Equatable, Sendable {
+    public let server: CacheAddress?
+    public let identity: String?
+    /// Nil when no server is named.
+    public let connection: SharedCacheConnection?
+    public let figures: SharedCacheFigures?
+
+    public init(server: CacheAddress?, identity: String?, connection: SharedCacheConnection?, figures: SharedCacheFigures?) {
+        self.server     = server
+        self.identity   = identity
+        self.connection = connection
+        self.figures    = figures
     }
 }

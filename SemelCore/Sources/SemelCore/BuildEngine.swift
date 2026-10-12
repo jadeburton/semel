@@ -5,6 +5,7 @@
 
 import Foundation
 import GRDB
+import SemelCache
 import SemelDatabaseModels
 import SemelNodeKit
 
@@ -394,6 +395,11 @@ public final class BuildEngine {
     /// `semelserv` from `semel.engine.config` when it starts and by `cache limit`; never
     /// stored in the graph, because it is the engine's setting and no build's input.
     @Locked var configuredCacheLimit: ByteCount?
+
+    /// The shared cache this home names, nil when it names none (B-153). Set by `semelserv`
+    /// from `semel.engine.config` and by `cache server`; read by every node's lookup and
+    /// write (`BuildEngine+SharedCache.swift`).
+    @Locked var installedSharedCache: SharedCache?
 
     /// Where `reportUnclaimedConfigKeys` sends its lines. A closure rather than a bare
     /// `print` call so a test can capture what would be printed instead of scraping stdout —

@@ -28,7 +28,10 @@ let package = Package(
         ),
         .testTarget(
             name: "SemelCoreTests",
-            dependencies: ["SemelCore"],
+            dependencies: [
+                "SemelCore",
+                .product(name: "SemelCache", package: "SemelCache"),
+            ],
             path: "Tests"
         ),
     ]

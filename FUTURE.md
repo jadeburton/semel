@@ -1315,15 +1315,101 @@ program. Delivered in four phases, each leaving the repository working.
      is not shared. `Hello` carries no identity yet; `--writers` is a switch, and a list
      of identities is a configuration change when a deployment needs one. A `--writers
      none` server cannot be purged through the protocol; stop it and purge the home.
-3. **The engine as a client.** `cache.server` and `cache.identity` in `semel.engine.config`,
-   set at the prompt; the remote path behind `loadCachedOutputs` and
-   `saveCacheForAllInputsAndOutputs`, a population queue off the processing path, the fetch
-   policy over `cost`; the audit of what a tool observes that no key names; `cache` showing
-   the remote's figures. Every remote failure is a miss.
-4. **The acceptance test.** Two homes on one Mac and `semel-cache` on localhost: the second
-   home, cold, builds a roster project byte for byte from the first one's entries, and
-   again with the server stopped halfway; in CI as a fixture run. Then sharing is on when a
-   server is named.
+3. ~~**The engine as a client.**~~ Done 2026-10-12.
+   - **Settings.** `semel.engine.config` gains `cache.server` (a `CacheAddress`, the type
+     `semel-cache --listen` parses, moved into `SemelProtocol` so both ends read one form)
+     and `cache.identity` (one word). `cache server <host:port>`, `cache server --none`,
+     `cache identity <name>` and `cache identity --none` write the file and put the change
+     in force through a request to the running server (`cacheServer`, `cacheIdentity`,
+     answered `sharedCache`), as `cache limit` does; `semelserv` reads them at start and
+     prints the address. With no server named nothing changes. `Hello` carries the
+     identity, with `wantsWrite` true; the server's grant decides whether the engine writes.
+   - **Where it lives.** `SharedCache`, in `SemelCache`, is the whole client over a
+     `RemoteCache` protocol declared there; the one conformance that speaks frames,
+     `SocketRemoteCache`, is a new root-package target, `SemelCacheClient`, over
+     `SemelTransport`'s TCP `SocketConnection`, installed by `SemelServer`. The brief put
+     the client in `SemelCache` linking the transport, which is a cycle — `SemelProtocol`
+     links `SemelCache` for `CacheKey`, and the transport links the protocol — so the cache
+     declares what it needs and the conformance sits above all three. The engine never
+     links the transport.
+   - **The lookup.** On a local miss `loadCachedOutputs` asks `getEntry`, whose `entry`
+     reply now carries every object the entry holds with its size (protocol version 30);
+     decodes the entry and refuses one its own material keys elsewhere; asks `hasObjects`
+     for the objects this machine lacks; weighs them against the recorded cost; fetches each,
+     hashing it before it is stored; writes the entry into the local cache with the
+     server's object list; and applies it as a hit. Unreachable, refused, a missing object,
+     a hash that does not verify, an entry that does not decode or is filed under the wrong
+     key: each is a miss, counted, never thrown. A type with no static input port, which
+     never writes an entry, never asks.
+   - **The population queue.** After a local write the entry's key, cost, objects and bytes
+     go to a queue written on a thread of its own: `hasObjects`, `putObject` for what the
+     server lacks, `putEntry`. A failure drops the item and counts it. The queue holds a
+     thousand entries or 64 MiB and drops its oldest past either; a read-only grant empties
+     it and takes nothing more. A settle never waits on it.
+   - **The fetch policy.** A fetch is estimated as a request's round trip per object — the
+     quickest of the last 32 fetches — plus the bytes over the rate the fetches of 64 KiB
+     and more moved at, 100 MB/s until one has: a gigabit LAN's payload, the slowest wired
+     link of the first deployment, at which a megabyte is 10 ms. A hit whose fetch would
+     take longer than its build cost is built instead. A rate taken over every fetch read a
+     localhost link as 4 MB/s, because a few kilobytes are a round trip whatever the
+     bandwidth, and declined fifteen tool builds of the C fixture; the two figures apart
+     decline none.
+   - **Reconnection and degradation.** The queue's thread connects, and reconnects with the
+     watcher's backoff (a quarter of a second, doubling to five) when a request finds the
+     connection gone. While it is down a lookup is a flag read and a miss — no connect on
+     the processing path. A request not answered in 15 s, plus a second per megabyte it
+     carries, closes the connection, so a server that stops answering costs a bounded wait.
+   - **`cache`** heads its list with the shared cache: the address and identity, the
+     connection (connecting, read and write, read only, down with why, refused with why),
+     hits, misses, failures, declined fetches, lookups while down, bytes fetched, the
+     measured round trip and rate, entries and bytes sent, the queue's depth, drops and
+     failed writes, and the last failure.
+   - **The audit** of what reaches a tool that its key does not name, every tool node walked
+     (the design's "As built (phase 3)"). Closed here: the system's build (`kern.osversion`)
+     in the keys of actool, ibtool, momc, xcstringstool and codesign, which work through the
+     system's frameworks, and the iOS simulator runtimes installed in actool's and ibtool's
+     for an iOS platform — each also a machine-file line (`hostOSBuild`,
+     `simulatorRuntimes`) — with those five nodes' versions bumped; the bytes of the
+     binaries a tool runs from beside itself in its descriptor's fingerprint (`ld` beside
+     clang; `swift-driver`, clang, `ld` and libtool beside swiftc; `swift-package` beside
+     swift); and `codesign_allocate`'s bytes in the signer's key. Left open: B-157.
+4. ~~**The acceptance test.**~~ Done 2026-10-12, as far as one Mac allows, in CI as a
+   fixture run (`SharedCacheEndToEndTests`). `semel-cache serve` on localhost and three
+   homes naming it: A builds the C and C++ fixtures cold and its queue writes 61 entries;
+   B, cold, builds the C fixture with 31 lookups, every one a hit — every ClangPreprocessor,
+   ClangCompiler and ClangLinker among them — none missed, failed or declined, and exports
+   the same bytes as A; C builds the C fixture from the shared cache (31 hits), the server
+   is stopped, and C builds the C++ fixture with one failed lookup and 29 asked of nothing,
+   30 entries waiting in its queue, and the same bytes as A. The roster's external
+   projects have not been run between two homes. Sharing is on whenever a home names a
+   server; there is no further switch.
+
+**B-157** `open` — **What reaches a tool that its key does not name, left after B-153's audit.**
+Found by the audit in B-153 phase 3 (the design's "As built (phase 3)"); none of these lets
+two machines share an entry one of them built differently from what the other would — the
+first two let one machine's builds depend on something its graph does not see, and the rest
+cost misses between machines that could share.
+- **`DEVELOPER_DIR` never reaches a tool.** `LocalFileSystemTool` gives a tool a fresh
+  environment, so a `/usr/bin` shim a tool runs — flex's `m4`, the `xcrun` SwiftPM asks for
+  the SDK it compiles a manifest against — resolves through `xcode-select`, which may name
+  another Xcode than the one discovery found. Record the developer folder at discovery
+  (`xcode-select -p`, which honours `DEVELOPER_DIR`) and set it for every tool.
+- **swiftc's module cache is outside the sandbox.** No `-module-cache-path` is passed, so the
+  compiler keeps its implicit modules under the user's cache folder, which `HOME` and
+  `TMPDIR` do not move. The cache validates what it holds, so no output differs; it is a
+  hole in the sandbox and a folder that only grows. A cache under `.semel-derived`, as
+  clang's is.
+- **Toolchain trees beside the binaries** — clang's `lib/clang/<version>`, Swift's runtime and
+  compatibility libraries and prebuilt modules, ibtoold's plugins — are named by the tools'
+  versions and binaries, not by their own bytes. The same class of gap the SDK's
+  fingerprint accepts; a companion fingerprint per tree when one is seen to move alone.
+- **Sharing between machines that could.** The clang tools', ibtool's, momc's, actool's and
+  codesign's configurations carry absolute paths — `sdkPath`, `assetutilPath`,
+  `codesignAllocatePath` — so two machines with Xcode at two paths share none of those
+  entries; the SDK's and the plugins' fingerprints are taken of paths, sizes and times, so a
+  differently installed Xcode shares nothing either; and swiftc's plugin fingerprint covers
+  every platform installed. Measure between two real machines before deciding which to key
+  by content instead.
 
 **B-137** `done` — **A reply too large for one frame was refused.**
 Done 2026-10-01. Found when the owner removed a large tree with `rm` and was answered

@@ -26,7 +26,7 @@ public final class RequestHandler {
 
     /// `semel.engine.config`, which a setting changed at the prompt is written to before it
     /// is applied, so the next `semelserv` starts with it.
-    private let engineConfigurationFile: URL
+    let engineConfigurationFile: URL
     private let queue = DispatchQueue(label: "semelserv.requests")
 
     /// Where events go. Weak, because the in-process connection is both the sink and the
@@ -186,7 +186,9 @@ public final class RequestHandler {
                                            kept: collection.kept)), nil)
             case .cache:
                 let report = try engine.cacheReport()
-                return (.daemon(.cache(summary: Self.cacheSummary(report))),
+                let shared = Self.sharedCacheSummary(configuration: try EngineConfiguration.read(from: engineConfigurationFile),
+                                                     cache: engine.sharedCache)
+                return (.daemon(.cache(summary: Self.cacheSummary(report, shared: shared))),
                         try MessageCoder.encode(Self.cacheEntryRecords(report)))
             case .cacheLimit(let limit):
                 guard let limit else {
@@ -200,6 +202,10 @@ public final class RequestHandler {
                 try configuration.write(to: engineConfigurationFile)
                 let trim = try engine.setCacheLimit(limit)
                 return (.daemon(.cacheLimit(limit: limit, isDefault: false, trim: Self.trimRecord(trim))), nil)
+            case .cacheServer(let address):
+                return (.daemon(.sharedCache(summary: try changeSharedCache { $0.cacheServer = address })), nil)
+            case .cacheIdentity(let identity):
+                return (.daemon(.sharedCache(summary: try changeSharedCache { $0.cacheIdentity = identity })), nil)
             case .tools(let platformName):
                 // A name this server does not know answers as macOS rather than failing:
                 // the reply says what is installed either way, and the client validated it.

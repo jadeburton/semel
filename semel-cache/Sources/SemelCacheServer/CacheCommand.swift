@@ -7,6 +7,7 @@
 import Foundation
 import SemelCache
 import SemelNodeKit
+import SemelProtocol
 
 public enum CachePurgeTarget: Equatable {
     case key(CacheKey)
@@ -54,7 +55,7 @@ public enum CacheCommand: Equatable {
                 let value = try takeValue(of: flag, from: &remaining)
                 switch flag {
                 case "--listen":
-                    guard let address = CacheListenAddress(parsing: value) else {
+                    guard let address = CacheAddress(parsing: value) else {
                         throw CacheCommandError.notAnAddress(value)
                     }
                     settings.listen = address

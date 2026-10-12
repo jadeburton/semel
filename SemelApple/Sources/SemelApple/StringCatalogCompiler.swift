@@ -34,7 +34,8 @@ public struct StringCatalogCompiler: Node {
     /// (B-141).
     /// 3: a failure is published as an `ErrorDocument`, the typed value a client renders,
     /// where it was a sentence (B-145).
-    public static let implementationVersion = 3
+    /// 4: the operating system's build is in the key (B-153).
+    public static let implementationVersion = 4
 
     // MARK: Ports
 
@@ -65,9 +66,10 @@ public struct StringCatalogCompiler: Node {
 
     /// The binary behind the tool version the configuration names: two builds of one
     /// version compile a catalog differently, and only a fingerprint of the binary tells
-    /// them apart (B-17).
+    /// them apart (B-17). And the system's build, whose Foundation reads and writes the
+    /// catalog's property lists.
     public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
-        try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
+        appleToolCacheKeyMaterial(try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration))
     }
 
     /// A compile's failure belongs to the catalog it compiles.

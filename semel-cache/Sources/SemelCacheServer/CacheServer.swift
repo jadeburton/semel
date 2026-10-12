@@ -89,7 +89,7 @@ public final class CacheServer {
 
     /// What the server prints when it is listening.
     public var banner: [String] {
-        let listen  = configuration.listen.map { CacheListenAddress(host: $0.host, port: port ?? $0.port) }
+        let listen  = configuration.listen.map { CacheAddress(host: $0.host, port: port ?? $0.port) }
         let limit   = configuration.limit ?? CacheServerConfiguration.defaultLimit
         let writers = configuration.writers ?? CacheServerConfiguration.defaultWriters
         return ["semel-cache, protocol \(ProtocolVersion.current)",

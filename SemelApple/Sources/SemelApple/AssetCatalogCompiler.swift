@@ -152,7 +152,10 @@ public struct AssetCatalogCompiler: Node {
     /// (B-141).
     /// 6: a failure is published as an `ErrorDocument`, the typed value a client renders,
     /// where it was a sentence (B-145).
-    public static let implementationVersion = 6
+    /// 7: the operating system's build is in the key, since actool compiles through the
+    /// system's CoreUI, and for a platform other than the Mac's the simulator runtimes
+    /// installed for it, whose frameworks compile its catalogs (B-153).
+    public static let implementationVersion = 7
 
     // MARK: Ports
 
@@ -193,9 +196,18 @@ public struct AssetCatalogCompiler: Node {
 
     /// The binary behind the tool version the configuration names: two builds of one
     /// version compile a catalog differently, and only a fingerprint of the binary tells
-    /// them apart (B-17).
+    /// them apart (B-17). And the system's build: actool hands the compile to ibtoold, which
+    /// writes `Assets.car` through CoreUI, a framework of the system rather than of Xcode —
+    /// for iOS, the simulator runtime's, so for a platform other than the Mac's the runtimes
+    /// installed for it as well (B-153).
     public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
-        try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
+        guard case .value(let hash)? = try input.onlyWire(onOptionalPort: Self.configuration)?.value else {
+            return nil
+        }
+        let properties = [String: String](plainText: try hash.resolveAsString())
+        let runtimes = SimulatorRuntimes.cacheKeyMaterial(family: properties["platform"].flatMap(SimulatorRuntimes.family(ofPlatformName:)))
+        let lines = [appleToolCacheKeyMaterial(toolBinaryCacheKeyMaterial(configuration: properties)), runtimes].compactMap { $0 }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {

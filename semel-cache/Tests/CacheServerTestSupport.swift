@@ -61,6 +61,16 @@ class CacheServerTestCase: XCTestCase {
         return (Sha256.hash(trimmed), trimmed)
     }
 
+    /// The objects an entry holds as the server answers them: by hash, each once, with its
+    /// size.
+    func held(_ objects: (hash: DataObjectHash, bytes: Data)...) -> [CachedObject] {
+        held(objects)
+    }
+
+    func held(_ objects: some Sequence<(hash: DataObjectHash, bytes: Data)>) -> [CachedObject] {
+        Set(objects.map { CachedObject(hash: $0.hash, bytes: $0.bytes.count) }).sorted { $0.hash < $1.hash }
+    }
+
     /// A key for `seed`, as an engine's would look.
     func key(_ seed: String) -> CacheKey {
         CacheKey(hash: Sha256.hash(Data("key material for \(seed), long enough to be hashed".utf8)))

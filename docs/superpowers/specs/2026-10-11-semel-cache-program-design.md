@@ -212,3 +212,150 @@ Where the server differs from the text above, and what this document left open t
 - **Open.** An object put for an entry that never comes stays until the store next opens or
   `purge --all`. An object over the frame body's 512 MiB cannot be shared. `Hello` carries
   no identity yet; it comes with phase 3's `cache.identity`.
+
+## As built (phase 3, 2026-10-12)
+
+Where the engine's side differs from the text above, what the text left open that phase 3
+decided, and the audit it owed.
+
+- **Where the client lives.** The brief put a `RemoteCache` client in `SemelCache`, linking
+  `SemelTransport` for the TCP connection. That is a cycle: `SemelProtocol` links
+  `SemelCache` for `CacheKey`, and the transport links the protocol. So `SemelCache` declares
+  what it needs of a remote — the `RemoteCache` protocol, a blocking call per request, each
+  failure a `RemoteCacheError` case that says whether the connection is gone — and holds
+  everything an engine does with one in `SharedCache`: the fetch on a local miss, the
+  population queue and its thread, the reconnection, the fetch policy (`CacheFetchPolicy`)
+  and the figures. The one conformance that speaks frames, `SocketRemoteCache`, is a target
+  of the root package, `SemelCacheClient`, above the cache, the protocol and the transport;
+  `SemelServer` links it and installs a `SharedCache` over it into the engine from the
+  home's settings. The engine links neither the transport nor the protocol, and the tests of
+  the hooks run over a remote in the test's process: a `CacheStore` and an object store
+  behind the protocol.
+- **Settings.** `cache.server` is a `CacheAddress` — the host-and-port type `semel-cache
+  --listen` already parsed, moved into `SemelProtocol` so that one parser reads both ends'
+  files — and `cache.identity` one word. `cache server <host:port>|--none` and `cache identity
+  <name>|--none` write `semel.engine.config` first and then put a new `SharedCache` in force,
+  stopping the one before without writing its queue (its entries were meant for a server
+  the home no longer names); a new identity connects again, since the name is said in the
+  hello. `semelserv` reads both at start. With no server named, no `SharedCache` exists
+  and nothing on either hook changes.
+- **The protocol, version 30.** `Hello` gains `identity`, absent when the home names none
+  (and decoded as none from a peer that never sent one); the server keeps it with the
+  connection's grant for the writers' list a deployment will name, and `--writers all|none`
+  decides without it. `getEntry`'s hit is `entry(cost:objects:)`: every object the entry holds
+  with its size, from the server's index, so the client knows what a fetch would move before
+  it moves anything — the server stored the list when the entry was put, and reads nothing
+  inside the entry to give it. The engine's requests `cacheServer(address:)` and
+  `cacheIdentity(identity:)` answer `sharedCache(summary:)`, and `cache`'s summary carries
+  the same `SharedCacheSummary`. Version 29 was taken by the monitor's phase 3 meanwhile.
+- **The lookup** follows the design: `getEntry`; the entry decoded and its own material's
+  key compared with the key asked — the server files what a client says under what the
+  client says, and an entry filed under a key it does not account for is the wrong hit
+  B-13 exists to prevent; `hasObjects` for the objects this machine lacks, before a byte
+  moves; the policy; `getObject` for each, hashed before it is stored; then the entry into
+  the local cache with the server's object list, stamped as used, and applied as a hit.
+  Each failure is a miss, counted, its words kept for `cache`, and the connection marked
+  down when the failure ended it — only the connection the call was made on, so a late
+  failure on a replaced connection does not take down its successor. A type with no static
+  input port never writes an entry, so it never asks.
+- **The population queue** holds a thousand entries or 64 MiB of them and drops its oldest
+  past either; an item is the key, the cost, the objects with their sizes and the entry's
+  bytes — the objects' bytes are read from the object store when it is written. A read-only
+  grant empties the queue and takes nothing more. `populate` takes the lock for an append
+  and returns: a settle whose server takes no write completes (`SharedCacheTests`, with
+  every put held until the test lets go).
+- **The fetch policy.** The text had one rate; the first acceptance run showed why that
+  fails. A rate taken over every fetch read a localhost link as about 4 MB/s, because an
+  object of a few kilobytes costs a round trip whatever the bandwidth, and the policy
+  declined fifteen of the C fixture's tool builds. The estimate is now two figures: a
+  request's own cost, the quickest of the last 32 fetches, per object fetched; and the bytes
+  over the rate the fetches of 64 KiB or more moved at once that cost is taken off them. The
+  rate is 100 MB/s until such a fetch has been measured — a gigabit Ethernet's payload
+  rounded down, the slowest wired link of the first deployment (a LAN), at which a megabyte
+  costs 10 ms, under nearly any tool's run. On the second run nothing was declined. A hit
+  whose objects are all here already is always taken; a cost of 0 ms with anything to fetch
+  never is, which declines the engine's own cheap nodes, as it should.
+- **Reconnection.** The queue's thread connects, and connects again with the watcher's
+  backoff, 0.25 s doubling to 5 s, when a lookup or a write finds the connection gone; a
+  rejected hello is asked again at the longest wait. A lookup while the connection is down
+  is a flag read under the lock. `SocketRemoteCache` closes a connection whose request has
+  had 15 s and a second per megabyte it carries without an answer, which fails every call
+  on it, so a server that stops answering without closing costs one bounded wait.
+- **Time** enters only `SharedCache`, which is resource policy: the fetch policy times
+  fetches, and the reconnection waits. Both decide whether a build is fetched or run, never
+  what it computes. AGENTS.md's time-free invariant says so.
+
+### The audit of machine-derived inputs
+
+Every node that runs a binary, walked from `cacheKeyMaterial` to what `LocalFileSystemTool`
+hands the tool. What every one shares: the environment is replaced, not inherited — `PATH`
+is `/usr/bin:/bin:/usr/sbin:/sbin`, `HOME` and `TMPDIR` are the sandbox, and a node adds
+only `ZERO_AR_DATE` (the archivers), `IBToolNeverDeque` (actool, ibtool) or
+`CODESIGN_ALLOCATE` (codesign) — so `DEVELOPER_DIR`, `SDKROOT`, `LANG` and `TZ` never reach a
+tool; the arguments derive from the node's properties, its input values and its
+configuration, which arrives on a wire and is in the key; the binary named is fingerprinted
+by its bytes (B-17); every SDK fact is in the key and in the machine file (B-47); swiftc's
+plugins are fingerprinted (B-80).
+
+| Node | Version | Key, beside properties and wires | Found | Now |
+|---|---|---|---|---|
+| ClangPreprocessor | 12 | `sdkPath`, `sdkFingerprint` lines; the SDK's live fingerprint; clang's bytes | `ld` not covered (shared finder) | `ld` in clang's fingerprint |
+| ClangCompiler | 7 | as above; module cache in the sandbox | as above | as above |
+| ClangLinker | 5 | as above; `-L <sdk>/usr/lib` | the linker `ld` clang runs is not in the key | `ld` in clang's fingerprint |
+| ClangArchiver | 3 | libtool's bytes; `ZERO_AR_DATE` | none; reads no SDK | — |
+| LexGenerator | 1 | lex's bytes | flex runs `m4` through the `/usr/bin` shim | open, B-157 |
+| SwiftCompiler | 9 | SDK name and fingerprint; swiftc's bytes and plugins | `swift-driver` not covered; module cache outside the sandbox | driver, clang, `ld`, libtool in swiftc's fingerprint; cache open, B-157 |
+| SwiftLinker | 6 | as above | clang, `ld`, libtool not covered | in swiftc's fingerprint |
+| SwiftPackageReader | 3 | swift's bytes | `swift-package` not covered; the manifest's SDK found through `xcrun` | `swift-package` in swift's fingerprint; `xcrun` open, B-157 |
+| AssetCatalogCompiler | 6 → 7 | actool's bytes; `assetutilPath` | compiles through the system's CoreUI and, for iOS, the simulator runtime's frameworks | system build; iOS runtimes |
+| IBToolCompiler | 5 → 6 | ibtool's bytes; SDK fingerprint | archives through AppKit, and UIKit of the runtime for iOS | system build; iOS runtimes |
+| CoreDataModelCompiler | 1 → 2 | momc's bytes; SDK fingerprint | archives through the system's Core Data | system build |
+| StringCatalogCompiler | 3 → 4 | xcstringstool's bytes | reads and writes through the system's Foundation | system build |
+| CodeSigner | 6 → 7 | codesign's bytes; `codesignAllocatePath` as a path | signs through the Security framework; `codesign_allocate` by path only | system build; the allocator's bytes |
+
+What was closed, each with a test: the system's build (`kern.osversion`, read with `sysctl`,
+no process) in the keys of the five tools that work through the system's frameworks, and
+the simulator runtimes installed for the platform (`xcrun simctl list runtimes`, asked once
+per process) in actool's and ibtool's for a platform other than the Mac's — each declared
+twice, as `hostOSBuild` and `simulatorRuntimes` lines under the namespaces `semel-swift
+prepare` writes, with the five nodes' versions bumped; the binaries a tool runs from beside
+itself in its descriptor's fingerprint (`siblingBinariesFingerprint`): `ld` beside clang,
+`swift-driver`, clang, `ld` and libtool beside swiftc, `swift-package` beside swift, which
+moves those keys without a bump; and `codesign_allocate`'s bytes in the signer's key, where
+its path was. A macOS update now misses on every entry of those five tools, which is the
+price of the system's frameworks being in their output.
+
+What is left is filed as B-157, none of it a wrong hit between two machines:
+`DEVELOPER_DIR` does not reach a tool, so a `/usr/bin` shim a tool runs follows
+`xcode-select`; swiftc's implicit module cache is outside the sandbox (it validates itself,
+so no output differs); the toolchain's trees beside the binaries are named by the tools'
+versions, as the SDK class of gap; and three things cost sharing without making it wrong —
+absolute tool and SDK paths in the clang and Apple configurations, the SDK and plugin
+fingerprints taken of paths, sizes and times, and swiftc's plugin fingerprint covering
+every installed platform. Measured between two real machines, those decide how much a
+shared cache shares; on one Mac they cannot be seen.
+
+## As built (phase 4, 2026-10-12)
+
+The acceptance test is `SharedCacheEndToEndTests`, a fixture run in CI. `semel-cache serve`
+on localhost with `--writers all`, and three homes that name it in `semel.engine.config` as
+three machines would. Measured on an Apple M4 with debug builds, each time a `semel`
+session from launch to exit, so a home's start and the export are in it (the C++ fixture
+is the smaller build of the two):
+
+- **A** builds the C fixture (3.7 s) and the C++ fixture (2.1 s) cold; its queue writes 61
+  entries, none dropped or failed.
+- **B**, cold, builds the C fixture in 2.4 s: 31 lookups, 31 hits — 11 ClangPreprocessor,
+  6 ClangCompiler, 4 ClangLinker, 5 ClangIncludeFinder, 5 ProjectBuilder — none missed,
+  failed or declined; the export is A's byte for byte.
+- **C** builds the C fixture from the shared cache (31 hits), the server is stopped, and C
+  builds the C++ fixture on its own: one failed lookup, which marked the connection down,
+  29 lookups asked of nothing, 30 entries waiting in a queue that would drop past a
+  thousand, and both exports A's byte for byte.
+
+The server is stopped between two builds of one home rather than in the middle of a
+settle, which a fixture this small finishes before a test can act; the stop in the middle
+of a build is `SharedCacheTests`' (a remote that stops answering after a hit), and the
+settle that completes while the queue's server takes nothing is too. The roster's external
+projects have not been built between two homes. Sharing is on whenever a home names a
+server; there is no switch beyond the setting.
