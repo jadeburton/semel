@@ -374,7 +374,13 @@ final class CacheSizeLimitLoopTests: SemelCoreTestCase {
         "input:/src/\(index).txt"
     }
 
+    /// One batch, so the edition is one settle and one trim. Five writes outside a batch
+    /// each wake the running loop, which may settle after any of them: every settle
+    /// trims what the passes before it let go of, and the edition's evictions are spread
+    /// over as many reports as there were settles.
     private func push(edition: String) throws {
+        engine.beginBatch()
+        defer { engine.endBatch() }
         _ = try engine.inputFileSystem.ensureEntirePathExistsAsFolders("src", pinned: true)
         for index in 0..<sourceCount {
             let (node, _) = try GraphSpecNode.parse("StaticFile(path: '\(path(index))')").findOrCreateMatchingNode()
@@ -422,7 +428,9 @@ final class CacheSizeLimitLoopTests: SemelCoreTestCase {
         let kept = Set(try engine.database.cacheEntry.selectAllHashes())
         XCTAssertTrue(kept.isDisjoint(with: firstKeys), "the first settle's entries were evicted")
         XCTAssertEqual(kept.count, sourceCount, "the second's are what the graph stands on")
-        let line = try XCTUnwrap(notices.lines.first { $0.contains("evicted") })
+        let evictionLines = notices.lines.filter { $0.contains("evicted") }
+        XCTAssertEqual(evictionLines.count, 1, "one settle, one trim: \(evictionLines)")
+        let line = try XCTUnwrap(evictionLines.first)
         XCTAssertTrue(line.contains("evicted 5 entries"), line)
         XCTAssertTrue(line.contains("LabellingSampleTool 5"), line)
         XCTAssertEqual(try engine.cacheReport().lastTrim?.evictions.count, sourceCount)
