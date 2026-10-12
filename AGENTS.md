@@ -490,7 +490,11 @@ reads (`NodeError.severalWiresOnOneWirePort`) (B-141). A port you forget to decl
   atomicity, not the push. `semel-watch` is the client that mirrors a disk, and it does so
   by issuing `rm` itself: at launch it compares what `input:` holds below each watched
   folder with the disk and removes the difference in the same batch as its push. Do not
-  make `push` or `build` subtract.
+  make `push` or `build` subtract. The one exception is the lock's, and it is the
+  watcher's too: a push that brings a `<folder>.semel-lock` the server does not hold as
+  the disk has it removes what the server holds below `<folder>` and the disk lacks, in
+  the push's batch (B-162). A lock says what its whole folder holds, so the removal is
+  the lock's statement, a file the user put there, not the push's.
 
 ## Tests
 

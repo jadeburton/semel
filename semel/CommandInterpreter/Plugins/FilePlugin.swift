@@ -122,6 +122,8 @@ final class FilePlugin: CommandPlugin {
             }
         }
 
+        let replaced = Self.replacedByTheirLocks(work: work, notOnDisk: notOnDisk, baseDirectory: context.baseDirectory)
+
         // One batch around the whole push, so the engine coalesces its work signals; and so
         // a push nobody wrapped in `begin` … `commit` is checked against the locks as one
         // change, and refused whole when it moves a locked folder (B-146).
@@ -134,7 +136,16 @@ final class FilePlugin: CommandPlugin {
         var tally = PushTally()
         do {
             try context.inBatchOfItsOwn {
-                try push(work, notOnDisk: notOnDisk, tally: &tally, context: context)
+                // Said as part of the push, whose own lines say whether its batch stood: the
+                // removal goes with the push when the barrier refuses it.
+                if let counts = replaced.counts {
+                    context.outputMessage("Locked anew: \(Self.named(replaced.folders.map(\.string))); with the push, "
+                                          + "taking out \(counts) the copy no longer holds: "
+                                          + Self.named(replaced.reportedPaths))
+                    try remove(replaced.removals.map(\.string), under: .empty, reportsRemoval: false, context: context)
+                }
+                try push(work, notOnDisk: notOnDisk.filter { !replaced.reportedPaths.contains($0) }, tally: &tally,
+                         context: context)
             }
         } catch let failure as ServerError {
             guard case .batchRejected = failure.response else {
@@ -148,6 +159,75 @@ final class FilePlugin: CommandPlugin {
         }
         let unchanged = tally.unchanged > 0 ? ", \(tally.unchanged) unchanged" : ""
         context.outputMessage(heldByOpenBatch ? "Sent \(counts)\(unchanged), pending the commit" : "Pushed \(counts)\(unchanged)")
+    }
+
+    /// What a push that brings a lock removes below the folder the lock locks (B-162).
+    ///
+    /// A lock is a statement about the whole folder beside it: `prepare` writes a copy and
+    /// its lock together, and the lock's root is the copy's and nothing else. A push only
+    /// adds, so a copy re-vendored with fewer files — a release that renamed or dropped
+    /// some — would leave the old copy's files in `input:` below the new one, the folder's
+    /// pushed root would fold them, and the barrier would refuse every later push of the
+    /// tree, the lock included. So a push that sends a lock the server does not hold as
+    /// the disk has it mirrors that folder, as `semel-watch` does on a change to a lock:
+    /// what the server holds there and the disk does not is removed in the push's batch,
+    /// and the barrier at `commit` judges the folder as the lock describes it. The
+    /// removal is the lock's, a file the user put there; a push that brings no new lock
+    /// removes nothing, below a locked folder or anywhere else.
+    ///
+    /// Only paths absent from the disk, by `lstat`: a dot-named folder the walk does not
+    /// list is still there, and is not the push's to take.
+    ///
+    /// ISSUE: a name holding `*` or `?` is left alone and stays reported as kept, since
+    /// `rm` reads its argument as a wildcard and would take its siblings too.
+    private static func replacedByTheirLocks(work: [PushWork], notOnDisk: [String],
+                                             baseDirectory: String) -> ReplacedByLocks {
+        var folders: [Path] = []
+        for case .send(let entry) in work where entry.kind == .file && entry.symbolicLinkTarget == nil {
+            guard let folder = DependencyLock.dependencyPath(lockedBy: entry.path) else {
+                continue
+            }
+            folders.append(folder)
+        }
+        guard !folders.isEmpty else {
+            return ReplacedByLocks(folders: [], removals: [], reportedPaths: [])
+        }
+
+        var replacedFolders: Set<Path> = []
+        var removals: [Path] = []
+        var reported: [String] = []
+        for held in notOnDisk {
+            let path = Path(held.hasSuffix("/") ? String(held.dropLast()) : held)
+            guard let folder = folders.first(where: { path != $0 && path.hasPrefix($0) }),
+                  !held.contains("*"), !held.contains("?") else {
+                continue
+            }
+            var status = stat()
+            let absolute = (baseDirectory as NSString).appendingPathComponent(path.string)
+            guard lstat(absolute, &status) != 0, errno == ENOENT else {
+                continue
+            }
+            replacedFolders.insert(folder)
+            removals.append(path)
+            reported.append(held)
+        }
+        return ReplacedByLocks(folders: folders.filter { replacedFolders.contains($0) }, removals: removals,
+                               reportedPaths: reported)
+    }
+
+    /// What a push takes out below the folders whose new locks it brings: the folders, the
+    /// paths removed, and those paths as a push names what the disk lacks, a folder with a
+    /// trailing `/`.
+    private struct ReplacedByLocks {
+        let folders:       [Path]
+        let removals:      [Path]
+        let reportedPaths: [String]
+
+        /// "5 files and 1 folder"; nil when nothing is taken out.
+        var counts: String? {
+            let folderCount = reportedPaths.filter { $0.hasSuffix("/") }.count
+            return FilePlugin.countedTogether(files: reportedPaths.count - folderCount, folders: folderCount)
+        }
     }
 
     /// What a push sent, counted as the replies arrive.
@@ -796,7 +876,11 @@ final class FilePlugin: CommandPlugin {
     }
 
     /// The removing half of `rm`: each pattern sent, the removal reported.
-    private func remove(_ pathsOrWildcards: [String], under base: Path, context: any CommandContext) throws {
+    ///
+    /// `reportsRemoval` off leaves the count and the paths to a caller that said them
+    /// already; a pattern that matched nothing is still an error.
+    private func remove(_ pathsOrWildcards: [String], under base: Path, reportsRemoval: Bool = true,
+                        context: any CommandContext) throws {
         // The reply to a removal of a whole tree streams (B-137): each part is counted as it
         // comes and says how far the removal has got, and no more paths are kept than the
         // report can name.
@@ -809,7 +893,7 @@ final class FilePlugin: CommandPlugin {
                     return
                 }
                 removal.add(files: files, folders: folders)
-                if let counts = Self.countedTogether(files: removal.fileCount, folders: removal.folderCount) {
+                if reportsRemoval, let counts = Self.countedTogether(files: removal.fileCount, folders: removal.folderCount) {
                     context.outputMessage("Removing: \(counts) so far")
                 }
             }
@@ -821,7 +905,7 @@ final class FilePlugin: CommandPlugin {
                 context.outputError("rm: \(pathOrWildcard): no such file or directory")
             }
         }
-        guard !removal.isEmpty else {
+        guard reportsRemoval, !removal.isEmpty else {
             return
         }
 

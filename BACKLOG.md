@@ -483,6 +483,74 @@ them, dirty — 364 MB of a 434 MB footprint at one moment of the Sequel Ace pus
 
 ## Design, correctness and code quality
 
+**B-162** `done` — **A dependency re-vendored with fewer files was refused by its lock on
+every push.** Reported 2026-10-12 on a proprietary package depending on
+[Charts](https://github.com/danielgindi/Charts). `semel-swift prepare` had written
+`Dependencies/Charts.semel-lock`. Every `push` and `build` of the tree was then refused at
+`commit`, and running `prepare` again on main at 1e372b2 changed nothing:
+
+```
+Not on disk, kept: 5 files and 1 folder (push only adds; rm removes them): App/Dependencies/Charts/Charts.podspec, App/Dependencies/Charts/Package.resolved, …, App/Dependencies/Charts/Source/Supporting Files/Charts.h, App/Dependencies/Charts/Tests/ChartsTests/__Snapshots__Silicon__/
+App/Dependencies/Charts is locked, and the batch changes it without a lock it matches: nothing of the batch is committed
+  lock: App/Dependencies/Charts.semel-lock
+  expected: sha256:82e51b57426781b0a31ccf643874c85172c95a333faf65c97143270e22083b9c
+  found: sha256:bce0febc5461a6a25461278807652a57d921634207bacde3fb5582efd46042da
+  paths: App/Dependencies/Charts.semel-lock, App/Dependencies/Charts/CONTRIBUTING.md, … and 270 more
+  re-lock with: semel-swift prepare
+```
+
+The two folds agree. On a fresh engine, Charts 5.1.0 (Mac) and master (simulator) are
+prepared, pushed and built with no refusal. Charts holds no links, pipes, case-only name
+pairs or `Package@swift-*` manifests, and its one declared resource
+(`PrivacyInfo.xcprivacy`) is on disk. The `expected` root above is the lock a fresh 5.1.0
+`prepare` writes, byte for byte.
+
+The cause is what the engine already held. The lock was written over a copy that
+replaced an older one the engine still held: 4.1.0 to 5.1.0, where Charts became DGCharts
+and renamed or dropped files (`Charts.h`, the podspec, two schemes, and a folder of
+snapshots named `__Snapshots__\u{F8FF}Silicon__`, U+F8FF being Apple's logo). A push only
+adds, so the old copy's files stayed in `input:` below the new copy. The folder's pushed
+root folded them, the lock folded only the disk, and the barrier refused the batch. Every
+later push was refused the same way, since none of them could remove anything, and
+`prepare` could not help, since it never talks to the engine. The client's own line said
+what was wrong (`Not on disk, kept`). `rm` of those paths in the push's batch let it land.
+`semel-watch` already mirrored a locked folder when its lock changed (B-146); `push` and
+`build` did not, which broke the README's promise that a build after `prepare` "pushes
+both in one batch and lands".
+
+Fixed in the client. A push that sends a lock the server does not hold as the disk has it
+mirrors the folder that lock locks, in the push's batch: what the server holds below that
+folder and the disk lacks (by `lstat`, so a dot-named folder the walk does not list is
+left alone) is removed with `rm`. The push says so in one line before its own (`Locked
+anew: <folder>; with the push, taking out 5 files and 1 folder the copy no longer holds:
+…`), and `rm` adds no `Removed` lines of its own. With B-161's wording, the push's last
+line then says whether the batch stood: `Pushed`, `Sent …, pending the commit`, or, on a
+refusal, `sent, and none of it committed`, which takes the removal back too. A lock is a
+statement about its whole folder, and its file is something the user put there, so the
+removal is the lock's and not the push's. A push that brings no new lock only adds, below
+a locked folder or anywhere else, and a file gone from a locked copy without a new lock is
+still refused. AGENTS.md's "A push only adds" and the README's locked-folders section name
+the exception. `DependencyLock.dependencyPath(lockedBy:)` is the inverse of `lockPath`,
+which `semel-watch` now uses too. Left open: a name holding `*` or `?` is not removed,
+because `rm` reads its argument as a wildcard. The batch is then refused, naming the path
+as kept.
+
+No node changed, so there are no version bumps. The lock's document and its fold are
+unchanged, and existing locks stay valid. Tests: `ReVendorPushTests` (root, five cases: a
+re-vendor that drops a file and renames a folder lands, with the folder's pushed root
+equal to the lock's; a re-vendor whose lock the copy does not match is refused, its
+removal taken back with the batch; a file gone outside the re-locked folder is kept; a file gone from a
+locked copy with no new lock is refused and kept; a new lock over a copy that lost nothing
+removes nothing). Two of these fail without the fix. `LockFoldParityTests` gains the
+shape: a copy re-vendored with fewer files over the one the graph holds, whose pushed root
+differs from the lock until the leftovers are removed. Checked by hand: Charts 4.1.0
+prepared and pushed, the pin moved to 5.1.0, `prepare`, then `build`: the build lands,
+removes the six leftovers, and builds the target importing DGCharts.
+
+Not fixed, seen on the way: when a re-resolution drops a dependency (swift-algorithms and
+swift-numerics, which Charts 4.1.0 needed and 5.1.0 does not), `prepare` leaves its copy
+and lock in `Dependencies`.
+
 **B-158** `done` — **The cache limit's loop test read one trim where the engine made
 several.** Seen 2026-10-12 in CI on PR #201, which touched nothing in the cache:
 `CacheSizeLimitLoopTests.test_aGraphThatWritesMoreThanTheLimitKeepsBuildingAndSaysWhatWasEvicted`

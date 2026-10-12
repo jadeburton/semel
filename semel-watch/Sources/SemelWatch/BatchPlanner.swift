@@ -66,11 +66,7 @@ public enum LockedFolder {
 
     /// The folder a lock at `path` locks, when the path is a lock's.
     public static func folder(lockedBy path: Path) -> Path? {
-        let suffix = ".\(DependencyLock.fileExtension)"
-        guard let name = path.lastComponent, name.hasSuffix(suffix), name.count > suffix.count else {
-            return nil
-        }
-        return Path(segments: path.segments.dropLast()) / String(name.dropLast(suffix.count))
+        DependencyLock.dependencyPath(lockedBy: path)
     }
 }
 
