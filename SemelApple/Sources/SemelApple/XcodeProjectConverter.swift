@@ -84,7 +84,9 @@ public struct XcodeProjectConverter: Node {
     /// the bundle's resources, where both were refused (B-77 item 4).
     /// 23: a command-line tool a Mac app's copy-files phase copies is built, signed by
     /// itself and copied where the phase says (B-77 item 4).
-    public static let implementationVersion = 23
+    /// 24: the accent and widget background colors reach actool, an `INFOPLIST_KEY_…_iPhone`
+    /// setting is its `~iphone` key, and one defined empty is no key (B-77, Backyard Birds).
+    public static let implementationVersion = 24
 
     // MARK: Ports
 

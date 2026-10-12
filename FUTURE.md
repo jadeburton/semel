@@ -3755,10 +3755,119 @@ application target, simulator only, all library code in packages. In suggested o
    alone. A framework target that defines a module and names no map gets none, and a
    framework's resources that a compiler takes are copied, not built (item 9's ISSUE),
    neither of which Sequel Ace's two frameworks need.
-5. *Mastodon iOS (official)* — IceCubes's domain with different structure: a Core Data
+5. *apple/sample-backyard-birds* — done for the Mac and the simulator (2026-10-12), in the
+   roster as `backyard-birds-mac` and `backyard-birds-ios`, from a fresh clone with nothing
+   laid over it; B-80's first acceptance test. Pinned at
+   `1843d5655bf884b501e2889ad9862ec58978fdbe` (main, 2023-12-06, "Updated for Xcode 15.1").
+   Both exports pass every hermeticity build byte-identical with no exemption, the Mac app
+   verifies with `codesign --verify --deep --strict`, launched by `open` it stays up, and
+   the iOS app installed in a simulator shows its backyards, their art from the packages'
+   catalogs and their names in English.
+
+   *What the project is.* One project in the older form, every target listing its files
+   through groups: the multiplatform app `Backyard Birds` (`SDKROOT = auto`,
+   `SUPPORTED_PLATFORMS = iphoneos iphonesimulator macosx`), the WidgetKit extension
+   `Widgets` (the same, and watchOS), and the watchOS app `Backyard Birds (Watch)`, which
+   the iOS app embeds under `Watch/`. Every configuration is based on
+   `Configuration/SampleCode.xcconfig`, one line,
+   `SAMPLE_CODE_DISAMBIGUATOR=${DEVELOPMENT_TEAM}`, which the bundle identifiers and the
+   entitlements' app group name. Generated plists over the project's own files (the
+   app's is an empty dictionary, the widget's names the extension point),
+   `ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME` on both, the widget's
+   `…_WIDGET_BACKGROUND_COLOR_NAME`, `INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone`
+   and `_iPad`, iOS keys behind `[sdk=iphoneos*]` and `[sdk=iphonesimulator*]`
+   conditions, the hardened runtime, Swift 5. Three local packages, `BackyardBirdsData`,
+   `BackyardBirdsUI` and `LayeredArtworkLibrary`, each one `.dynamic` library product
+   and one target at its package's root (`path: "."`), with `defaultLocalization: "en"`
+   on two; `BackyardBirdsData` holds the nine SwiftData `@Model` classes and the string
+   catalogs of their names. No remote package. `prepare --platform macos` takes 13 s,
+   `--platform ios-simulator` 9 s.
+
+   *What stops it*, in the order met (`SwiftFormulaConverter` 27, `XcodeProjectConverter`
+   24; `AssetCatalogCompiler` gains two literals and no version, since no command line
+   it wrote before changes):
+
+   1. ~~**The manifest is compiled.**~~ Done. A target at its package's root saw
+      `Package.swift` among its sources, and the compile failed on `no such module
+      'PackageDescription'`. SwiftPM leaves a package's manifests out of such a target, and
+      so does the converter now: `Package.swift` and every `Package@swift-….swift` the
+      folder holds join the target's `exclude:` (`SPMManifest.excludingManifestFiles`).
+      PLCrashReporter, the other target at its root, names its sources and never met it.
+   2. ~~**The packages' catalog symbols.**~~ Done. `LayeredArtworkLibrary` names
+      `ImageResource.floor1` and `BackyardBirdsUI` `ColorResource.premiumBirdFood`, the
+      Swift Xcode generates for a package target's catalogs, which the app's own compile
+      already took (CodeEdit's item 10). A target's catalogs are now compiled in one actool
+      run, `assets<Target>()`, as Xcode compiles them into one `Assets.car` — one run per
+      catalog would have written two for a target with two, which the bundle's merge
+      refuses — with Xcode's arguments for a package as its build log gives them: the
+      target's identifier (`backyardbirdsdata.BackyardBirdsData`), which no line of the
+      text holds, since it reads the bundle through `Bundle.module` under `SWIFT_PACKAGE`,
+      and `--generate-swift-asset-symbol-extensions NO`. The extensions off is what lets
+      `BackyardBirdsUI` declare `Color.premiumBirdFood` itself. The target compiles the
+      text as `GeneratedAssetSymbols.swift`. A C target's run asks for no symbols.
+   3. ~~**The plists against Xcode's.**~~ Done. With both building, the exports were set
+      beside `xcodebuild`'s for the same commit, Mac and simulator. The app had a
+      `UISupportedInterfaceOrientations_iPhone` string where Xcode writes the
+      `~iphone` list; it had no `NSAccentColorName`, and the widget no
+      `NSWidgetBackgroundColorName`, which actool writes when it is told the colors; and
+      the widget had an empty `NSHumanReadableCopyright` Xcode leaves out. The emitter
+      now passes both colors as literals the asset catalog compiler hands actool
+      (`--accent-color`, `--widget-background-color`; a name no catalog has is actool's
+      warning and no key, checked by hand), writes `…_iPhone` as `~iphone`, and leaves
+      out an `INFOPLIST_KEY_*` setting defined empty. Not reproduced, said here: Xcode's
+      Mac plist also carries `UIStatusBarStyle = ""` and
+      `UIApplicationSupportsIndirectInputEvents = false`, from the iOS-only settings whose
+      `[sdk=…]` conditions do not hold, keys a Mac app does not read.
+   4. ~~**The simulator app speaks Hebrew.**~~ Done. Installed in a simulator, the iOS
+      app showed the backyards' names — `BackyardBirdsData`'s `Backyards.xcstrings` — in
+      Hebrew. The development language's strings are in the source, so the bundle holds
+      `ar.lproj` to `zh-Hans.lproj` and no `en.lproj`, and the flat bundle had no
+      Info.plist to say it is developed in English, so `Bundle` resolved the lookup through
+      one of the others. Xcode's flat bundle has one. The flat bundle now has an Info.plist
+      too, platform-blind, and both layouts state the package's `defaultLocalization`
+      (`en` when it names none, as Xcode does), where the Mac's said `en` whatever the
+      package said. With it the app shows `Bird Springs`.
+   5. **SwiftData's `@Model`** — nothing to do. The nine models expand through the
+      platform's plugins on PR #178's footing, and the app's data generation, in memory as
+      the sample ships it, runs at launch.
+   6. **The widget extension** — nothing to do. A second app-extension kind beside the
+      Share and Finder Sync extensions (`com.apple.widgetkit-extension`, from the
+      project's plist), embedded under `PlugIns`, and on the Mac signed with its own
+      sandbox and app group before the app is, as Food Truck's widget is.
+   7. **The StoreKit configuration file** — nothing to do. `Misc/Store.storekit` is a file
+      reference in a group, in no build phase, and no shared scheme names it; Xcode's
+      bundle leaves it out too.
+   8. **The packages' products are `.dynamic`** — open, as everywhere (CodeEdit's item
+      12). Xcode builds `BackyardBirdsData.framework` and the other two and embeds all
+      three in the app and again in the widget; Semel links every package product
+      statically, so each executable carries the code and each bundle its own copy of the
+      three resource bundles, as Xcode's does too. Nothing at run time tells the two apart
+      here.
+   9. **The widget's App Intents metadata** — open. Xcode runs
+      `appintentsmetadataprocessor` over the widget's executable, its Swift sources and the
+      const values `swiftc` extracts, and writes
+      `Widgets.appex/Contents/Resources/Metadata.appintents` (`extract.actionsdata`, the
+      configuration intent `BackyardWidgetIntent`, and `version.json`); over the three
+      packages it extracts nothing and writes nothing. Semel writes none, so the widget's
+      configuration intent is undescribed to the system. Wanted: the compiler's
+      `-emit-const-values` output on a port, and a node running the processor; whether
+      its output is a function of its input is not checked.
+   10. **The watchOS app** — open. Xcode's simulator build embeds `Backyard Birds
+      (Watch)`, with its own widget, under `Watch/`: a target for another platform inside
+      one build, which `prepare --platform` does not describe. The iOS app runs without it.
+   11. Not Semel's business: Xcode's debug builds put the code in `….debug.dylib` beside a
+      stub executable and `__preview.dylib` (`ENABLE_DEBUG_DYLIB`, for previews). A
+      package bundle's plist lacks Xcode's `LSMinimumSystemVersion` or `MinimumOSVersion`
+      and `UIDeviceFamily`, which no lookup reads.
+
+   *Times*, release binaries on an M4 busy with other agents: a cold build of the Mac
+   app 31 to 62 s (361 nodes), of the simulator app 42 to 54 s (340 nodes). The roster's
+   runs, four builds each with debug binaries, `prepare` included, took 132 s for the Mac
+   and 173 s for the simulator, so `buildTimeout` is 10 minutes a step.
+6. *Mastodon iOS (official)* — IceCubes's domain with different structure: a Core Data
    `.xcdatamodeld` (`CoreDataModelCompiler` since Sequel Ace's 1), several extensions, generated-code build phases,
    a big local SDK package.
-6. *Wikipedia iOS* — heavy Objective-C and Swift mixing, bridging headers, generated
+7. *Wikipedia iOS* — heavy Objective-C and Swift mixing, bridging headers, generated
    `-Swift.h`. An app target's Objective-C and its bridging header are built since
    NetNewsWire's 6, and the `-Swift.h` its Objective-C imports since Sequel Ace's 4.
 
@@ -3766,7 +3875,9 @@ Expected to surface: script build phases, framework and dynamic-library targets,
 Data models. Non-synchronized groups surfaced with item 1 and are read; Objective-C in
 the application target, and storyboards and xibs (`ibtool`), with item 2 (its 6 and 8),
 and are built; framework targets of a referenced project with item 4 (its 9), and are
-built, and a Core Data model and lex scanners with item 4 (its 1), and are built.
+built, and a Core Data model and lex scanners with item 4 (its 1), and are built. A
+target for another platform embedded in the app (a watchOS app) and App Intents metadata
+surfaced with item 5 (its 9 and 10), and are open.
 
 **B-78** `open` — **More Swift packages.**
 
@@ -3890,7 +4001,8 @@ plugins a target uses as not run, where it dropped them unsaid. Since 2026-10-10
 macros (items 1 and 3 below); build-tool plugins are still not run, as B-77 decided. These
 are the acceptance tests, in rising cost:
 
-1. *apple/sample-backyard-birds* — SwiftData's `@Model` comes from plugins shipped in the
+1. *apple/sample-backyard-birds* — done (2026-10-12), in the roster as `backyard-birds-mac`
+   and `backyard-birds-ios` (B-77 item 5). SwiftData's `@Model` comes from plugins shipped in the
    toolchain, so macro expansion is tested without building swift-syntax. Also widgets, a
    StoreKit configuration file, local packages.
 
@@ -3907,7 +4019,14 @@ are the acceptance tests, in rising cost:
    `semelserv` listens: hashing the 85 MB by content (0.6 s from a cold copy on an M4,
    longer on a slow disk) kept a hosted runner's server from answering before the client
    that started it gave up; the walk takes 0.01 s. Accepted by the `swift-macro-app` fixture, whose
-   app uses `@Observable` and `@Model`; the sample itself is not in the roster.
+   app uses `@Observable` and `@Model`.
+
+   *The sample, done 2026-10-12* (B-77 item 5): in the roster as `backyard-birds-mac` and
+   `backyard-birds-ios`, from a fresh clone. Its nine `@Model` classes asked nothing new;
+   what stopped it was the manifest compiled into a target at its package's root and the
+   packages' catalog symbols, and once it built, three plist differences from Xcode's and
+   a bundle with no development region, which made the simulator app speak Hebrew. The
+   widget's App Intents metadata and the embedded watchOS app are open there.
 2. *swift-syntax* alone — no macro support needed to build it; a large pure-Swift build and
    a useful performance benchmark in its own right.
 

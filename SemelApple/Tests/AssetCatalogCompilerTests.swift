@@ -28,7 +28,8 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
 
     private let catalog = "input:/app/Assets.xcassets"
 
-    private func configuration(appIcon: String? = nil, symbols: AssetSymbolSettings? = nil) throws -> NodeValue {
+    private func configuration(appIcon: String? = nil, symbols: AssetSymbolSettings? = nil,
+                               colors: [String: String] = [:]) throws -> NodeValue {
         var text = """
             toolDescriptor.name=\(descriptor.name)
             toolDescriptor.version=\(descriptor.version)
@@ -40,6 +41,9 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
             assetutilPath=\(AppleToolDiscovery.locate("assetutil") ?? "/usr/bin/assetutil")
             """
         if let appIcon { text += "\nappIcon=\(appIcon)" }
+        for (key, value) in colors.sorted(by: { $0.key < $1.key }) {
+            text += "\n\(key)=\(value)"
+        }
         for (key, value) in (symbols?.literals ?? [:]).sorted(by: { $0.key < $1.key }) {
             text += "\n\(key)=\(value)"
         }
@@ -54,13 +58,14 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
     /// the color set's below it.
     private func process(appIcon: String? = nil,
                          symbols: AssetSymbolSettings? = nil,
+                         colors: [String: String] = [:],
                          treeArrived: Bool = false,
                          files: [String: NodeValue] = [:]) throws -> ProcessOutput {
         let node = try AssetCatalogCompiler(thisNode: NodeRecord(id: 1, kind: AssetCatalogCompiler.kind))
         let listings = [catalog: try catalogListing,
                         "\(catalog)/AccentColor.colorset": try manifestValue("\(catalog)/AccentColor.colorset", files: ["Contents.json"])]
         return try node.process(input: ProcessInput(inputValues: [
-            AssetCatalogCompiler.configuration: ["configuration": try configuration(appIcon: appIcon, symbols: symbols)],
+            AssetCatalogCompiler.configuration: ["configuration": try configuration(appIcon: appIcon, symbols: symbols, colors: colors)],
             AssetCatalogCompiler.catalogs:      [catalog: try catalogListing],
             AssetCatalogCompiler.catalogTrees:  treeArrived ? try treeValues(from: listings).filter { $0.key == catalog } : [:],
             AssetCatalogCompiler.catalogFiles:  files,
@@ -68,9 +73,11 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
     }
 
     /// The whole catalog, as it stands once its tree and its files have arrived.
-    private func processWholeCatalog(appIcon: String? = nil, symbols: AssetSymbolSettings? = nil) throws -> ProcessOutput {
+    private func processWholeCatalog(appIcon: String? = nil, symbols: AssetSymbolSettings? = nil,
+                                     colors: [String: String] = [:]) throws -> ProcessOutput {
         try process(appIcon: appIcon,
                     symbols: symbols,
+                    colors: colors,
                     treeArrived: true,
                     files: ["\(catalog)/Contents.json": .value(try "{}".intern()),
                             "\(catalog)/AccentColor.colorset/Contents.json": .value(try "{\"colors\":[]}".intern())])
@@ -126,6 +133,16 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
         // A daemon of its own, never one of the pool another run left in its folder (B-152).
         XCTAssertEqual(executor.invocations.last?.environment, ["IBToolNeverDeque": "YES"])
         XCTAssertEqual(executor.invocations.last?.expectedOutputFileNames, ["partial.plist"])
+    }
+
+    /// The accent and widget background colors, Backyard Birds' widget's, follow the icon
+    /// as Xcode passes them, for actool to name in the partial Info.plist.
+    func test_passesTheAccentAndWidgetBackgroundColors() throws {
+        _ = try processWholeCatalog(appIcon: "AppIcon",
+                                    colors: ["accentColor": "AccentColor", "widgetBackgroundColor": "WidgetBackground"])
+
+        XCTAssertEqual(Array(executor.lastArguments.drop { $0 != "--app-icon" }.prefix(6)),
+                       ["--app-icon", "AppIcon", "--accent-color", "AccentColor", "--widget-background-color", "WidgetBackground"])
     }
 
     // MARK: - Asset symbols (B-77 item 10)

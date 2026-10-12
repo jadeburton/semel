@@ -197,9 +197,36 @@ final class ExternalProjectTests: XCTestCase {
         }
     }
 
+    /// B-77 and B-80 item 1: Apple's Backyard Birds for the Mac — SwiftData's `@Model`
+    /// from the platform's macro plugins, local packages at their roots with catalog
+    /// symbols, a WidgetKit extension. Signed and verified deep and strict.
+    func test_backyardBirdsBuildsForTheMac() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.backyardBirdsMac)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("backyard-birds-mac\n\(error)")
+        }
+    }
+
+    /// B-77: the same sample's iOS app for the simulator, the widget beside it.
+    func test_backyardBirdsBuildsForTheSimulator() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.backyardBirdsIOS)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("backyard-birds-ios\n\(error)")
+        }
+    }
+
     func test_everyExternalProjectInTheRosterHasATestHere() {
         XCTAssertEqual(Set(Projects.external.map(\.name)),
                        ["icecubes", "icecubes-app", "semel", "lua", "sqlite", "simdjson", "food-truck", "food-truck-mac",
-                        "netnewswire-mac", "netnewswire-ios", "codeedit", "sequel-ace", "swift-dependencies", "swift-syntax"])
+                        "netnewswire-mac", "netnewswire-ios", "codeedit", "sequel-ace", "swift-dependencies", "swift-syntax",
+                        "backyard-birds-mac", "backyard-birds-ios"])
     }
 }

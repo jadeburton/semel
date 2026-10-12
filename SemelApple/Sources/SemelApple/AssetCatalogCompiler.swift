@@ -30,6 +30,13 @@ struct AssetCatalogCompilerConfiguration {
     /// The app icon set to compile and to name in the partial Info.plist, if any. A
     /// formula literal rather than a config setting: it says what the product *is*.
     let appIcon: String?
+    /// The color set the app's controls take as their accent, and the one a widget is drawn
+    /// over: Xcode's `ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME` and
+    /// `…_WIDGET_BACKGROUND_COLOR_NAME`, which actool checks against the catalogs and names
+    /// in the partial Info.plist (`NSAccentColorName`, `NSWidgetBackgroundColorName`).
+    /// Literals, as `appIcon` is; a name no catalog has is actool's warning and no key.
+    let accentColor: String?
+    let widgetBackgroundColor: String?
     /// The `assetutil` that checks the canonical `Assets.car` reads as the one actool wrote
     /// (B-89): a fact about the machine, written by `semel-swift prepare`.
     let assetutilPath: String
@@ -48,6 +55,8 @@ struct AssetCatalogCompilerConfiguration {
 
         targetDevices = devices.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         appIcon = properties["appIcon"]
+        accentColor = properties["accentColor"]
+        widgetBackgroundColor = properties["widgetBackgroundColor"]
         swiftAssetSymbols = AssetSymbolSettings(literals: properties)
     }
 
@@ -265,6 +274,12 @@ public struct AssetCatalogCompiler: Node {
         var arguments = common
         if let appIcon = configuration.appIcon {
             arguments += ["--app-icon", appIcon]
+        }
+        if let accentColor = configuration.accentColor {
+            arguments += ["--accent-color", accentColor]
+        }
+        if let widgetBackgroundColor = configuration.widgetBackgroundColor {
+            arguments += ["--widget-background-color", widgetBackgroundColor]
         }
         arguments += ["--output-partial-info-plist", Self.partialInfoPlistFile]
         arguments += ["--output-format", "human-readable-text"]

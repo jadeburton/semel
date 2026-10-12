@@ -792,6 +792,13 @@ struct XcodeFormulaEmitter {
             if let appIcon = settings["ASSETCATALOG_COMPILER_APPICON_NAME"] {
                 assetLiterals["appIcon"] = appIcon
             }
+            // The colors the partial Info.plist names, as Xcode passes them to actool.
+            if let accentColor = settings["ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME"], !accentColor.isEmpty {
+                assetLiterals["accentColor"] = accentColor
+            }
+            if let widgetBackground = settings["ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME"], !widgetBackground.isEmpty {
+                assetLiterals["widgetBackgroundColor"] = widgetBackground
+            }
             let symbols = AssetSymbolSettings(settings: settings, bundleIdentifier: identity.bundleIdentifier)
             if let symbols {
                 assetLiterals.merge(symbols.literals) { _, symbol in symbol }
@@ -1774,8 +1781,10 @@ struct TargetIdentity {
         guard settings["GENERATE_INFOPLIST_FILE"] == "YES" else {
             return keys
         }
+        // A setting defined empty — `INFOPLIST_KEY_NSHumanReadableCopyright = ""` — is no key
+        // in the plist Xcode writes.
         for (setting, value) in settings.values.sorted(by: { $0.key < $1.key })
-        where setting.hasPrefix("INFOPLIST_KEY_") {
+        where setting.hasPrefix("INFOPLIST_KEY_") && !value.isEmpty {
             let key = String(setting.dropFirst("INFOPLIST_KEY_".count))
             if key.hasSuffix("_Generation") {
                 // `UILaunchScreen_Generation = YES` stands for an empty `UILaunchScreen`
@@ -1786,6 +1795,9 @@ struct TargetIdentity {
             } else if key.hasSuffix("_iPad") {
                 let plistKey = String(key.dropLast("_iPad".count)) + "~ipad"
                 keys[plistKey] = Self.typedValue(value, forKey: plistKey)
+            } else if key.hasSuffix("_iPhone") {
+                let plistKey = String(key.dropLast("_iPhone".count)) + "~iphone"
+                keys[plistKey] = Self.typedValue(value, forKey: plistKey)
             } else {
                 keys[key] = Self.typedValue(value, forKey: key)
             }
@@ -1795,7 +1807,7 @@ struct TargetIdentity {
 
     /// The keys whose setting is a space-separated list and whose plist value is an array.
     private static let arrayKeys: Set<String> = [
-        "UISupportedInterfaceOrientations", "UISupportedInterfaceOrientations~ipad",
+        "UISupportedInterfaceOrientations", "UISupportedInterfaceOrientations~ipad", "UISupportedInterfaceOrientations~iphone",
         "UIBackgroundModes", "UIRequiredDeviceCapabilities", "LSApplicationQueriesSchemes",
     ]
 
