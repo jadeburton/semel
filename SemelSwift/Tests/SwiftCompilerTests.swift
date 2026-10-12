@@ -419,6 +419,20 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         XCTAssertEqual(arguments[frontend - 1], "-Xfrontend", "the frontend flag has no driver spelling")
     }
 
+    /// B-157. swiftc's implicit module cache is a folder of the sandbox, named relative to
+    /// it as clang's is, so what one compile builds there goes with its sandbox and nothing
+    /// is written to the user's cache folder.
+    func test_keepsTheImplicitModuleCacheInTheSandbox() throws {
+        var input = try makeInput(folder: try manifest("input:/ext/Sources", [file("Main.swift")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/ext/Sources/Main.swift": .value(try "// main".intern())]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        let arguments = executor.lastArguments
+        let cache = try XCTUnwrap(arguments.firstIndex(of: "-module-cache-path"), "\(arguments)")
+        XCTAssertEqual(arguments[cache + 1], "\(ToolSandbox.derivedStateFolderName)/swift-module-cache")
+    }
+
     /// A target that borrows every source it has — an extension whose folder no target
     /// owns — wires no folder at all, and compiles the extras alone.
     func test_compilesWithExtraSourceFilesAndNoFolder() throws {

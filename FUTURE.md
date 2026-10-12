@@ -1418,11 +1418,35 @@ cost misses between machines that could share.
   with byte-identical products. Left: `TOOLCHAINS` and `SDKROOT` reach discovery's `xcrun`
   and no tool either; nothing here passes either, and a tool run under one would want the
   same treatment.
-- **swiftc's module cache is outside the sandbox.** No `-module-cache-path` is passed, so the
-  compiler keeps its implicit modules under the user's cache folder, which `HOME` and
-  `TMPDIR` do not move. The cache validates what it holds, so no output differs; it is a
-  hole in the sandbox and a folder that only grows. A cache under `.semel-derived`, as
-  clang's is.
+- ~~**swiftc's module cache is outside the sandbox.**~~ Done 2026-10-12. No
+  `-module-cache-path` was passed, so the compiler kept its implicit modules under the user's
+  cache folder, which `HOME` and `TMPDIR` do not move: a hole in the sandbox and a folder that
+  only grows. **The owner's decision: nothing may live outside the sandbox, because a cache
+  file outside it cannot be trusted not to be corrupted or misversioned, so the sandboxed cache
+  lands and its cost is accepted.** `SwiftCompiler` passes `-module-cache-path .semel-derived/swift-module-cache`
+  (`SwiftCompiler.moduleCachePath`), mirroring `ClangLanguageFeatures.moduleCachePath`, and
+  is bumped to 11 for the command line. The swift fixtures built before and after are the same
+  bytes in all four builds of each, and the user's `clang/ModuleCache` gained 93 files while
+  the first ran and none of the second's. But a compile then builds its Clang modules and the
+  SDK's Swift modules afresh in every sandbox — about 2 s more for one file importing SwiftUI
+  and AppKit than over a warm user cache. Cold builds of the IceCubes app (`icecubes-app`,
+  `prepare --platform ios-simulator`, 621 nodes computed, 177 files exported) with release
+  binaries, a fresh home each, `SEMEL_JOBS=10`, alternated on one M4 Mac at a load average
+  of 6–7, `main` at `0a501a0` against it (measured together with item 1, whose own cold
+  builds were 68 s, 69 s and 64 s against `main`'s 64 s, 69 s and 68 s, so the cost is this
+  item's):
+
+  | cold build, IceCubes app | `main` | sandboxed module cache |
+  |---|---|---|
+  | wall, three rounds | 70 s, 73 s, 73 s | 111 s, 112 s, 109 s |
+  | CPU of the server and its tools (user + sys) | 207 s, 216 s, 208 s | 348 s, 360 s, 360 s |
+
+  About 52% more wall time and 70% more CPU, for byte-identical products. What `main` saves
+  is a module cache shared by every compile on the machine and kept between builds, which the
+  graph does not see. The remedy, explicit module builds, is B-160. A `-g` a target's own
+  flags add would record each imported module at its `.pcm`'s absolute
+  path, which would then name the sandbox (an `ISSUE:` on `moduleCachePath`); nothing Semel
+  writes passes one.
 - **Toolchain trees beside the binaries** — clang's `lib/clang/<version>`, Swift's runtime and
   compatibility libraries and prebuilt modules, ibtoold's plugins — are named by the tools'
   versions and binaries, not by their own bytes. The same class of gap the SDK's
@@ -1434,6 +1458,23 @@ cost misses between machines that could share.
   differently installed Xcode shares nothing either; and swiftc's plugin fingerprint covers
   every platform installed. Measure between two real machines before deciding which to key
   by content instead.
+
+**B-160** `open` — **Explicit module builds: the SDK's modules as nodes, built once.**
+Not urgent: the cost it recovers was accepted when B-157 item 2 put swiftc's module cache in
+the sandbox. Every compile builds the Clang modules and the SDK's Swift modules it imports
+afresh in its own sandbox, which made a cold build of the IceCubes app about 52% longer (70–73
+s to 109–112 s) and its CPU about 70% more (B-157 item 2 has the table). The remedy is to
+make those modules nodes of their own: one per module, SDK and target, built once from the
+SDK and its fingerprint, and handed to each compile that imports it as an input, through
+swiftc's explicit module build (`-explicit-module-build`, or the frontend's
+`-disable-implicit-swift-modules` with `-explicit-swift-module-map-file` and the Clang
+modules' `.pcm` files), so that nothing is built implicitly in a sandbox. As node outputs
+they are cached like any other, keyed by the SDK fingerprint, the compiler's and the target,
+and shared through `semel-cache`, so a second machine fetches them instead of building them.
+Which modules a compile needs is the dependency scan's answer (`swift-frontend
+-scan-dependencies`), which is itself a tool run and would be a node; how the scan's result
+becomes demands, and whether one node per module or one per SDK and target is the right
+grain, are the design's first questions.
 
 **B-137** `done` — **A reply too large for one frame was refused.**
 Done 2026-10-01. Found when the owner removed a large tree with `rm` and was answered
