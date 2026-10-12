@@ -438,7 +438,8 @@ public enum Preparation {
             // and say nothing about the deployment version; they only add languages.
             let vendoredSummaries = try vendoredManifestFolders(in: dependencies).map(summarizeVendored)
             namespaces = GeneratedFiles.packageTreeNamespaces(
-                forCFamilyTargets: GeneratedFiles.hasCFamilyTargets(in: summaries + vendoredSummaries))
+                forCFamilyTargets:      GeneratedFiles.hasCFamilyTargets(in: summaries + vendoredSummaries),
+                compilingAssetCatalogs: GeneratedFiles.hasAssetCatalogs(in: summaries + vendoredSummaries))
             allSummaries = summaries + vendoredSummaries
         }
 

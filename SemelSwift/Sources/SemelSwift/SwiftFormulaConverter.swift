@@ -168,8 +168,10 @@ struct SwiftFormulaConverter: Node {
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
     /// reported as unused keys on every build. A package's objects go into an archive
-    /// or the Swift linker's product, so `clang.linker` is not among them.
-    static let configNamespaces: [String] = swiftConfigNamespaces + clangConfigNamespaces
+    /// or the Swift linker's product, so `clang.linker` is not among them. A target's
+    /// asset catalogs are compiled whenever the target is, for the symbols its compile
+    /// reads, so their compiler is.
+    static let configNamespaces: [String] = swiftConfigNamespaces + clangConfigNamespaces + [assetCatalogCompilerNamespace]
 
     /// What every package's formula selects from.
     static let swiftConfigNamespaces: [String] = [
