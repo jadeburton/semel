@@ -625,10 +625,34 @@ first):
    to end by `swift-c-package`'s `ObjCKit`, whose header opens `@import Foundation;`,
    whose source `#error`s without `__has_feature(objc_arc)` and synthesizes a `weak`
    property, which only ARC can; its `App` says a weak reference clears when run.
-8. **No `SWIFTPM_MODULE_BUNDLE` for Objective-C.** SwiftPM generates a bundle accessor
-   for a C-family target with resources; the converter builds the bundle (done 8) but
-   generates no accessor, so a target that reads its bundle through the macro does not
-   compile. PLCrashReporter does not use it.
+8. ~~**No `SWIFTPM_MODULE_BUNDLE` for Objective-C.**~~ Done (2026-10-13). An owner's
+   Objective-C target read its resources through the macro and did not compile. SwiftPM
+   (6.3, checked on a scratch package) writes `resource_bundle_accessor.h` and `.m` into
+   the derived sources of a target with resources *and* a `.m` or `.mm` — a C or C++
+   target with resources gets its bundle and no accessor, since the accessor needs
+   Foundation — compiles the `.m` with the target and passes `-include` for the header to
+   every compile of it, C and C++ sources too, which the header's `#if __OBJC__` leaves
+   empty. `ResourceBundleAccessorWriter` (`SemelSwift`, kind 47) writes both, a source
+   node like `ModuleMapWriter` whose properties are the module's c99 name and the bundle's
+   (`FormulaIdentifier.resourceBundleName`). The header is SwiftPM's byte for byte, ended
+   by a newline; the source defines `<Module>_SWIFTPM_MODULE_BUNDLE` but looks where the
+   Swift accessor looks — beside the main bundle's executable, in its
+   `Contents/Resources`, beside the target's code — and raises naming the bundle, where
+   SwiftPM's falls back to the absolute path of its build folder. The converter gives the
+   header to the target's preprocessor as its `prefixHeader`, the port Xcode's
+   `GCC_PREFIX_HEADER` already used, so it is placed, `-include`d and a declared input
+   whose value is in the key and wakes the preprocessor when it changes; and compiles the
+   source as one more object of the target through `preprocessBundleAccessor<Target>()`,
+   the target's preprocessor with the writer's source for its input. Both paths are under
+   the target's hidden `.DerivedSources`, which no walk enters. SwiftFormulaConverter v28;
+   no clang node changed. Pinned by `ResourceBundleAccessorWriterTests` and
+   `SwiftFormulaConverterTests`; end to end by `swift-c-package`, whose `ObjCKit` reads
+   `greeting.txt` through the macro and whose `App` prints it when the exported
+   executable is run. A package's executable product has no bundle beside it in `output:`
+   — no product is a bundle, for a Swift target's `Bundle.module` as for this — so the
+   fixture's formula publishes ObjCKit's as a tree product. PLCrashReporter, whose target
+   has Objective-C and a processed privacy manifest, now compiles the accessor too, as
+   under SwiftPM. Items 9 and 10 are untouched by it.
 9. **A search path above the target.** `.headerSearchPath("../Shared")` names a folder
    the converter's walk of the target never reaches, and `PackageClangTarget` leaves it
    out as it would a missing one.
