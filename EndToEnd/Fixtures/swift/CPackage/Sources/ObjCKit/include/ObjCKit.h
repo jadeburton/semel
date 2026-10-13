@@ -2,3 +2,4 @@
 // Like NetNewsWire's RSDatabaseObjC.h it reaches back into the target for its headers.
 
 #import "../OKOwner.h"
+#import "../OKResources.h"

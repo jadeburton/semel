@@ -11,7 +11,8 @@ import PackageDescription
 // preprocessed and not.
 //
 // Beside it, what NetNewsWire's packages need (B-77): an Objective-C target whose
-// headers `@import Foundation;` and whose code compiles only under ARC, imported from
+// headers `@import Foundation;`, whose code compiles only under ARC and reads its
+// resources through `SWIFTPM_MODULE_BUNDLE` (B-55 item 8), imported from
 // Swift through an umbrella header in `include` that reaches back into the target and
 // no module map; a C target whose named public folder has an umbrella header and no
 // module map; and, as Zip lays out Minizip, a C target inside the folder of the Swift
@@ -58,7 +59,8 @@ let package = Package(
             ]
         ),
         .target(
-            name: "ObjCKit"
+            name: "ObjCKit",
+            resources: [.process("Resources")]
         ),
         .target(
             name: "Shapes",

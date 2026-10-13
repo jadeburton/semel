@@ -2486,6 +2486,80 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertFalse(result.contains("modules: 'true'"), "got:\n\(result)")
     }
 
+    // MARK: - The Objective-C bundle accessor (B-55 item 8)
+
+    private var resourceCLibJSON: String {
+        cLibJSON("\"resources\": [{\"path\": \"Resources\", \"rule\": {\"process\": {}}}]")
+    }
+
+    private func resourceCLibTree(sources: [FolderManifestEntry]) -> [String: [FolderManifestEntry]] {
+        ["input:/pkg/src":           sources + [folder("include"), folder("Resources")],
+         "input:/pkg/src/include":   [file("CLib.h")],
+         "input:/pkg/src/Resources": [file("greeting.txt")],
+         "input:/pkg/extensions":    [file("table.c")]]
+    }
+
+    /// SwiftPM's `-include <DerivedSources>/resource_bundle_accessor.h` on every compile of
+    /// an Objective-C target with resources: here the header is the preprocessor's
+    /// `prefixHeader`, written by the accessor's writer under the target's
+    /// `.DerivedSources`, so `SWIFTPM_MODULE_BUNDLE` is defined in every source of it.
+    func test_anObjectiveCTargetWithResourcesIsPreprocessedWithTheAccessorsHeader() throws {
+        let result = try formula(json: resourceCLibJSON, folderContents: resourceCLibTree(sources: [file("Lib.m"), file("plain.c")]))
+
+        let writer = "ResourceBundleAccessorWriter(bundleName: 'App_CLib', moduleName: 'CLib')"
+        let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") },
+                                         "got:\n\(result)")
+        XCTAssertTrue(preprocessor.contains("        input: [path: StaticFile(path: path)],\n"), preprocessor)
+        XCTAssertTrue(preprocessor.contains("prefixHeader: ['input:/pkg/src/.DerivedSources/resource_bundle_accessor.h': \(writer).header]"),
+                      preprocessor)
+    }
+
+    /// And SwiftPM's `resource_bundle_accessor.m` is one more object of the target: the
+    /// writer's source, preprocessed as the target's own sources are — with the header
+    /// forced in and the same settings — and compiled as they are.
+    func test_anObjectiveCTargetWithResourcesCompilesTheAccessorsSource() throws {
+        let result = try formula(json: resourceCLibJSON, folderContents: resourceCLibTree(sources: [file("Lib.m")]))
+
+        let writer = "ResourceBundleAccessorWriter(bundleName: 'App_CLib', moduleName: 'CLib')"
+        let ownPreprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") })
+        let accessorPreprocessor = try funcDefinition("preprocessBundleAccessorCLib", in: result)
+        XCTAssertEqual(accessorPreprocessor,
+                       ownPreprocessor
+                           .replacingOccurrences(of: "func preprocessCLib(path) =", with: "func preprocessBundleAccessorCLib() =")
+                           .replacingOccurrences(of: "input: [path: StaticFile(path: path)]",
+                                                 with: "input: ['input:/pkg/src/.DerivedSources/resource_bundle_accessor.m': \(writer).source]"))
+
+        let product = try productBlock("App", in: result)
+        let accessorEntry = try XCTUnwrap(product.components(separatedBy: "\n").first { $0.contains("preprocessBundleAccessorCLib") },
+                                          "got:\n\(product)")
+        XCTAssertTrue(accessorEntry.hasPrefix("        'input:/pkg/src/.DerivedSources/resource_bundle_accessor.m.o': ClangCompiler("),
+                      accessorEntry)
+        XCTAssertTrue(accessorEntry.contains("input: ['input:/pkg/src/.DerivedSources/resource_bundle_accessor.m.p': "
+                                             + "preprocessBundleAccessorCLib()]"), accessorEntry)
+        XCTAssertTrue(accessorEntry.contains("SettingsLiteral(defines: 'SWIFT_PACKAGE=1', modules: 'true', objectiveCARC: 'true')"),
+                      accessorEntry)
+    }
+
+    /// SwiftPM generates the accessor only where it can compile: it needs Foundation, so a
+    /// C or C++ target with resources has its bundle and no accessor, and an Objective-C
+    /// target without resources has neither. An Objective-C++ source is enough.
+    func test_onlyAnObjectiveCTargetWithResourcesHasTheAccessor() throws {
+        let objectiveCxx = try formula(json: resourceCLibJSON, folderContents: resourceCLibTree(sources: [file("more.cpp"), file("Lib.mm")]))
+        XCTAssertTrue(objectiveCxx.contains("prefixHeader: ['input:/pkg/src/.DerivedSources/resource_bundle_accessor.h'"),
+                      "got:\n\(objectiveCxx)")
+
+        let plainC = try formula(json: resourceCLibJSON, folderContents: resourceCLibTree(sources: [file("plain.c"), file("more.cpp")]))
+        XCTAssertTrue(plainC.contains("func bundle_CLib()"), "the bundle is built, got:\n\(plainC)")
+        XCTAssertFalse(plainC.contains("ResourceBundleAccessorWriter"), "got:\n\(plainC)")
+        XCTAssertFalse(plainC.contains("prefixHeader"), "got:\n\(plainC)")
+
+        var tree = resourceCLibTree(sources: [file("Lib.m")])
+        tree["input:/pkg/src"] = [file("Lib.m"), folder("include")]
+        let noResources = try formula(json: appOverCLib, folderContents: tree)
+        XCTAssertFalse(noResources.contains("ResourceBundleAccessorWriter"), "got:\n\(noResources)")
+        XCTAssertFalse(noResources.contains("prefixHeader"), "got:\n\(noResources)")
+    }
+
     /// cmark-gfm-extensions includes cmark-gfm's headers by search path; SwiftPM puts the
     /// dependency's public headers on it, and so does the generated preprocessor.
     func test_aCTargetsHeaderFoldersIncludeThePublicHeadersOfTheCTargetsItDependsOn() throws {

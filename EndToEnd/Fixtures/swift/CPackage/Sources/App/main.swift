@@ -1,4 +1,5 @@
 import CLib
+import Foundation
 import ObjCKit
 import Shapes
 import Smoothing
@@ -17,3 +18,9 @@ guard OKOwner.weakReferenceClears() else {
     fatalError("a weak reference outlived its object: ObjCKit was not compiled with ARC")
 }
 print("a weak reference clears")
+
+// ObjCKit reads its bundle through SWIFTPM_MODULE_BUNDLE, beside this executable (B-55).
+guard let greeting = OKResources.greeting() else {
+    fatalError("ObjCKit's bundle holds no greeting.txt")
+}
+print("ObjCKit's resource: \(greeting.trimmingCharacters(in: .whitespacesAndNewlines))")

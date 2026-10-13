@@ -163,7 +163,11 @@ struct SwiftFormulaConverter: Node {
     /// target compiles the Swift that run writes for their symbols; the flat resource
     /// bundle has an Info.plist, and both state the package's `defaultLocalization` (B-77,
     /// Backyard Birds).
-    public static let implementationVersion = 27
+    /// 28: a C target with resources and Objective-C sources compiles the bundle accessor
+    /// SwiftPM generates for it, `ResourceBundleAccessorWriter`'s source, and every source
+    /// of it is preprocessed with the accessor's header as its `prefixHeader`, so
+    /// `SWIFTPM_MODULE_BUNDLE` is defined (B-55 item 8).
+    public static let implementationVersion = 28
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -2143,9 +2147,9 @@ struct SwiftFormulaConverter: Node {
             for target in clangTargets {
                 let fn = preprocessorFuncName(for: target.name)
                 guard !emittedFuncs.contains(fn) else { continue }
-                blocks.append(buildPreprocessorFuncDef(target: target,
-                                                       packageFolder: rootPackageFolder,
-                                                       lookupAll: allTargetsNamed))
+                blocks += buildPreprocessorFuncDef(target: target,
+                                                   packageFolder: rootPackageFolder,
+                                                   lookupAll: allTargetsNamed)
                 emittedFuncs.insert(fn)
             }
 
@@ -2613,7 +2617,7 @@ struct SwiftFormulaConverter: Node {
             }
         }
         for target in clangTargets where emittedFuncs.insert(preprocessorFuncName(for: target.name)).inserted {
-            blocks.append(buildPreprocessorFuncDef(target: target, packageFolder: packageFolder, lookupAll: lookupAll))
+            blocks += buildPreprocessorFuncDef(target: target, packageFolder: packageFolder, lookupAll: lookupAll)
         }
 
         let linkerConfig = Self.configurationExpression(
@@ -2683,6 +2687,11 @@ struct SwiftFormulaConverter: Node {
 
     private func preprocessorFuncName(for targetName: String) -> String {
         "preprocess\(sanitizedIdentifier(targetName))"
+    }
+
+    /// The preprocessor of the bundle accessor SwiftPM generates for a target (B-55 item 8).
+    private func accessorPreprocessorFuncName(for targetName: String) -> String {
+        "preprocessBundleAccessor\(sanitizedIdentifier(targetName))"
     }
 
     private func assetCatalogFuncName(for targetName: String) -> String {
@@ -2864,7 +2873,7 @@ struct SwiftFormulaConverter: Node {
     /// ends the formula's string — the limit `sourcePaths` has on the Swift side.
     private func buildPreprocessorFuncDef(target: SPMTarget,
                                           packageFolder: String,
-                                          lookupAll: (String) -> [SPMTarget]) -> String {
+                                          lookupAll: (String) -> [SPMTarget]) -> [String] {
         let folder = target.folder(in: target.overridePackageFolder ?? packageFolder)
         var folders = [folder]
         let ownHeaders = headerFolder(of: target, packageFolder: packageFolder)
@@ -2911,14 +2920,49 @@ struct SwiftFormulaConverter: Node {
         let configExpr = Self.configurationExpression(namespace: Self.clangPreprocessorNamespace,
                                                       packageFolder: buildRoot(defaultingTo: packageFolder),
                                                       literals: literals)
-        return "func \(preprocessorFuncName(for: target.name))(path) =\n" +
-               "    ClangPreprocessor(\n" +
-               "        configuration: ['config': \(configExpr)],\n" +
-               "        input: [path: StaticFile(path: path)],\n" +
-               "        headerFolders: [\n" + folderWires.joined(separator: ",\n") + "\n        ]" +
-               (headerTrees.isEmpty ? "" : ",\n        headerTrees: [\n" + headerTrees.joined(separator: ",\n") + "\n        ]") +
-               "\n    )"
+        let accessor = resourceBundleAccessor(of: target, packageFolder: packageFolder)
+        func preprocessor(input: String) -> String {
+            "    ClangPreprocessor(\n" +
+            "        configuration: ['config': \(configExpr)],\n" +
+            "        input: [\(input)],\n" +
+            "        headerFolders: [\n" + folderWires.joined(separator: ",\n") + "\n        ]" +
+            (accessor.map { ",\n        prefixHeader: ['\($0.headerPath)': \($0.writer).\(ResourceBundleAccessorWriter.headerPort)]" } ?? "") +
+            (headerTrees.isEmpty ? "" : ",\n        headerTrees: [\n" + headerTrees.joined(separator: ",\n") + "\n        ]") +
+            "\n    )"
+        }
+        var blocks = ["func \(preprocessorFuncName(for: target.name))(path) =\n" + preprocessor(input: "path: StaticFile(path: path)")]
+        if let accessor {
+            blocks.append("func \(accessorPreprocessorFuncName(for: target.name))() =\n"
+                          + preprocessor(input: "'\(accessor.sourcePath)': \(accessor.writer).\(ResourceBundleAccessorWriter.sourcePort)"))
+        }
+        return blocks
     }
+
+    /// The bundle accessor SwiftPM generates for a C-family target with resources and
+    /// Objective-C sources, nil for any other target (B-55 item 8): the writer of its two
+    /// files, and the paths they are given among the target's inputs.
+    ///
+    /// The paths are in a hidden folder of the target's, `.DerivedSources`, after SwiftPM's
+    /// `DerivedSources`: a walk of the target never enters a hidden folder, so no source or
+    /// header pushed there can be taken for them, and nothing pushes the path, the writer's
+    /// output being the only value the wires carry. The header is the preprocessor's
+    /// `prefixHeader` for every source of the target, the accessor's own among them, so a
+    /// change to it is a changed input of each.
+    private func resourceBundleAccessor(of target: SPMTarget,
+                                        packageFolder: String) -> (writer: String, headerPath: String, sourcePath: String)? {
+        guard target.clangInfo?.hasObjectiveC == true, !target.resources.isEmpty else {
+            return nil
+        }
+        let derived = PackageClangTarget.joined(target.folder(in: target.overridePackageFolder ?? packageFolder),
+                                                Self.derivedSourcesFolderName)
+        let writer = "ResourceBundleAccessorWriter(bundleName: '\(target.resourceBundleName)', moduleName: '\(target.moduleName)')"
+        return (writer,
+                PackageClangTarget.joined(derived, ResourceBundleAccessorWriter.headerFileName),
+                PackageClangTarget.joined(derived, ResourceBundleAccessorWriter.sourceFileName))
+    }
+
+    /// The folder of a C target the files SwiftPM derives for it are placed in.
+    static let derivedSourcesFolderName = ".DerivedSources"
 
     /// The linker's object entries for one C target: one for-each over the target's
     /// sources at any depth — a `**/*.<ext>` per extension its tree holds — less what its
@@ -2975,6 +3019,12 @@ struct SwiftFormulaConverter: Node {
             entries.append("        {f: \(items(clangInfo.assemblyPatterns))} \"%%f%%.o\": ClangCompiler(" +
                            "configuration: ['config': \(configExpr)], " +
                            "input: [\"%%f%%\": StaticFile(path: f)])")
+        }
+        // The bundle accessor SwiftPM generates is one more Objective-C source of the target.
+        if let accessor = resourceBundleAccessor(of: target, packageFolder: packageFolder) {
+            entries.append("        '\(accessor.sourcePath).o': ClangCompiler(" +
+                           "configuration: ['config': \(configExpr)], " +
+                           "input: ['\(accessor.sourcePath).p': \(accessorPreprocessorFuncName(for: target.name))()]\(moduleTrees))")
         }
         return entries
     }

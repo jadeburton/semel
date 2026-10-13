@@ -1,2 +1,7 @@
 // A Swift package with a C target in it, and a C executable beside the Swift one.
 include SwiftFormulaConverter(path: <.>).formula
+
+// ObjCKit's resource bundle beside the executable, laid out as SwiftPM lays it out on the
+// Mac, where its accessor finds it when App runs (B-55 item 8). No package product is a
+// bundle, so the formula publishes it.
+product 'CPackage_ObjCKit.bundle/' = bundleContents_ObjCKit().files

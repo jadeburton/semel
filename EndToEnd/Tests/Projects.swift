@@ -68,14 +68,23 @@ enum Projects {
     /// And what CodeEdit's packages need (B-77 item 3): an Objective-C target whose own
     /// module map covers its header, `SWIFT_PACKAGE` in Swift and Objective-C, a `package`
     /// function called across targets, Swift in a documentation catalog that must not be
-    /// compiled, and a dependency held on macOS alone.
+    /// compiled, and a dependency held on macOS alone. The Objective-C target reads its
+    /// resource through `SWIFTPM_MODULE_BUNDLE` (B-55 item 8); the formula publishes its
+    /// bundle beside the executable, and the exported executable is run.
     static let swiftCPackage = Project(
         name: "swift-c-package",
         source: .fixture(folder: "."),
         buildFolder: "swift/CPackage",
         platform: "macos",
-        expectedProducts: ["App", "ctool"],
-        buildTimeout: fixtureTimeout)
+        expectedProducts: ["App", "ctool", "CPackage_ObjCKit.bundle/greeting.txt"],
+        buildTimeout: fixtureTimeout,
+        executables: ["App", "ctool"],
+        exported: { out in
+            let printed = try AppInspection.run([out.appendingPathComponent("App").path], viaXcrun: false)
+            guard printed.hasSuffix("a weak reference clears\nObjCKit's resource: hello from ObjCKit's bundle\n") else {
+                throw EndToEndFailure(step: "run the app", message: "App printed:\n\(printed)")
+            }
+        })
 
     /// Its catalog holds a colour with a dark appearance and its icon is an Icon Composer
     /// `.icon`, the two things actool writes differently from one compile to the next, so
