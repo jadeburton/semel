@@ -167,7 +167,9 @@ struct SwiftFormulaConverter: Node {
     /// SwiftPM generates for it, `ResourceBundleAccessorWriter`'s source, and every source
     /// of it is preprocessed with the accessor's header as its `prefixHeader`, so
     /// `SWIFTPM_MODULE_BUNDLE` is defined (B-55 item 8).
-    public static let implementationVersion = 28
+    /// 29: the accessor's two files are under the input root's `.DerivedSources`, outside
+    /// every target's folder, so no umbrella directory takes the header into a module (B-165).
+    public static let implementationVersion = 29
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -2942,26 +2944,34 @@ struct SwiftFormulaConverter: Node {
     /// Objective-C sources, nil for any other target (B-55 item 8): the writer of its two
     /// files, and the paths they are given among the target's inputs.
     ///
-    /// The paths are in a hidden folder of the target's, `.DerivedSources`, after SwiftPM's
-    /// `DerivedSources`: a walk of the target never enters a hidden folder, so no source or
-    /// header pushed there can be taken for them, and nothing pushes the path, the writer's
-    /// output being the only value the wires carry. The header is the preprocessor's
-    /// `prefixHeader` for every source of the target, the accessor's own among them, so a
-    /// change to it is a changed input of each.
+    /// The paths are under `.DerivedSources` at the input root, after SwiftPM's
+    /// `DerivedSources`, at the target folder's path below it, so each target's are its own.
+    /// Never inside the target's folder: a target whose public headers are its folder
+    /// (`publicHeadersPath: "."`, FirebaseCoreExtension) has that folder as its module's
+    /// umbrella directory, which takes in every header below it, hidden folders included.
+    /// An accessor header in the module, forced in with `-include`, is one `clang -E` closes
+    /// without opening, and no compile of that text succeeds (B-165). SwiftPM keeps its
+    /// derived sources in its build folder, outside every target, which has the same effect.
+    /// Nothing pushes the paths, the writer's outputs being the only values the wires carry.
+    /// The header is the preprocessor's `prefixHeader` for every source of the target, the
+    /// accessor's own among them, so a change to it is a changed input of each.
     private func resourceBundleAccessor(of target: SPMTarget,
                                         packageFolder: String) -> (writer: String, headerPath: String, sourcePath: String)? {
         guard target.clangInfo?.hasObjectiveC == true, !target.resources.isEmpty else {
             return nil
         }
-        let derived = PackageClangTarget.joined(target.folder(in: target.overridePackageFolder ?? packageFolder),
-                                                Self.derivedSourcesFolderName)
+        let targetFolder = Path(target.folder(in: target.overridePackageFolder ?? packageFolder))
+        let belowRoot    = targetFolder.firstComponent == FileSystemName.input ? Array(targetFolder.segments.dropFirst())
+                                                                               : targetFolder.segments
+        let derived      = Path(segments: [FileSystemName.input, Self.derivedSourcesFolderName] + belowRoot)
         let writer = "ResourceBundleAccessorWriter(bundleName: '\(target.resourceBundleName)', moduleName: '\(target.moduleName)')"
         return (writer,
-                PackageClangTarget.joined(derived, ResourceBundleAccessorWriter.headerFileName),
-                PackageClangTarget.joined(derived, ResourceBundleAccessorWriter.sourceFileName))
+                derived.appending(ResourceBundleAccessorWriter.headerFileName).string,
+                derived.appending(ResourceBundleAccessorWriter.sourceFileName).string)
     }
 
-    /// The folder of a C target the files SwiftPM derives for it are placed in.
+    /// The folder at the input root the files SwiftPM derives for a C target are placed
+    /// under, at the target folder's path.
     static let derivedSourcesFolderName = ".DerivedSources"
 
     /// The linker's object entries for one C target: one for-each over the target's

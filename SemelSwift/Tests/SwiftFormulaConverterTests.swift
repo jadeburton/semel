@@ -2501,8 +2501,8 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
     /// SwiftPM's `-include <DerivedSources>/resource_bundle_accessor.h` on every compile of
     /// an Objective-C target with resources: here the header is the preprocessor's
-    /// `prefixHeader`, written by the accessor's writer under the target's
-    /// `.DerivedSources`, so `SWIFTPM_MODULE_BUNDLE` is defined in every source of it.
+    /// `prefixHeader`, written by the accessor's writer under the target's path in the
+    /// input root's `.DerivedSources`, so `SWIFTPM_MODULE_BUNDLE` is defined in every source of it.
     func test_anObjectiveCTargetWithResourcesIsPreprocessedWithTheAccessorsHeader() throws {
         let result = try formula(json: resourceCLibJSON, folderContents: resourceCLibTree(sources: [file("Lib.m"), file("plain.c")]))
 
@@ -2510,7 +2510,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") },
                                          "got:\n\(result)")
         XCTAssertTrue(preprocessor.contains("        input: [path: StaticFile(path: path)],\n"), preprocessor)
-        XCTAssertTrue(preprocessor.contains("prefixHeader: ['input:/pkg/src/.DerivedSources/resource_bundle_accessor.h': \(writer).header]"),
+        XCTAssertTrue(preprocessor.contains("prefixHeader: ['input:/.DerivedSources/pkg/src/resource_bundle_accessor.h': \(writer).header]"),
                       preprocessor)
     }
 
@@ -2527,14 +2527,14 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                        ownPreprocessor
                            .replacingOccurrences(of: "func preprocessCLib(path) =", with: "func preprocessBundleAccessorCLib() =")
                            .replacingOccurrences(of: "input: [path: StaticFile(path: path)]",
-                                                 with: "input: ['input:/pkg/src/.DerivedSources/resource_bundle_accessor.m': \(writer).source]"))
+                                                 with: "input: ['input:/.DerivedSources/pkg/src/resource_bundle_accessor.m': \(writer).source]"))
 
         let product = try productBlock("App", in: result)
         let accessorEntry = try XCTUnwrap(product.components(separatedBy: "\n").first { $0.contains("preprocessBundleAccessorCLib") },
                                           "got:\n\(product)")
-        XCTAssertTrue(accessorEntry.hasPrefix("        'input:/pkg/src/.DerivedSources/resource_bundle_accessor.m.o': ClangCompiler("),
+        XCTAssertTrue(accessorEntry.hasPrefix("        'input:/.DerivedSources/pkg/src/resource_bundle_accessor.m.o': ClangCompiler("),
                       accessorEntry)
-        XCTAssertTrue(accessorEntry.contains("input: ['input:/pkg/src/.DerivedSources/resource_bundle_accessor.m.p': "
+        XCTAssertTrue(accessorEntry.contains("input: ['input:/.DerivedSources/pkg/src/resource_bundle_accessor.m.p': "
                                              + "preprocessBundleAccessorCLib()]"), accessorEntry)
         XCTAssertTrue(accessorEntry.contains("SettingsLiteral(defines: 'SWIFT_PACKAGE=1', modules: 'true', objectiveCARC: 'true')"),
                       accessorEntry)
@@ -2545,7 +2545,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     /// target without resources has neither. An Objective-C++ source is enough.
     func test_onlyAnObjectiveCTargetWithResourcesHasTheAccessor() throws {
         let objectiveCxx = try formula(json: resourceCLibJSON, folderContents: resourceCLibTree(sources: [file("more.cpp"), file("Lib.mm")]))
-        XCTAssertTrue(objectiveCxx.contains("prefixHeader: ['input:/pkg/src/.DerivedSources/resource_bundle_accessor.h'"),
+        XCTAssertTrue(objectiveCxx.contains("prefixHeader: ['input:/.DerivedSources/pkg/src/resource_bundle_accessor.h'"),
                       "got:\n\(objectiveCxx)")
 
         let plainC = try formula(json: resourceCLibJSON, folderContents: resourceCLibTree(sources: [file("plain.c"), file("more.cpp")]))
@@ -2558,6 +2558,22 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let noResources = try formula(json: appOverCLib, folderContents: tree)
         XCTAssertFalse(noResources.contains("ResourceBundleAccessorWriter"), "got:\n\(noResources)")
         XCTAssertFalse(noResources.contains("prefixHeader"), "got:\n\(noResources)")
+    }
+
+    /// FirebaseCoreExtension's `publicHeadersPath: "."` makes its whole folder the umbrella
+    /// directory of its module, so an accessor placed anywhere below it is a header of that
+    /// module: forced in with `-include`, `clang -E` closes the module around it without
+    /// opening it, and every source of the target fails to compile. SwiftPM keeps derived
+    /// sources out of the target, and so does the converter: the two files are under the
+    /// input root's `.DerivedSources`, at the target folder's path below it.
+    func test_theAccessorsFilesAreOutsideTheTargetsFolder() throws {
+        let json = cLibJSON("\"publicHeadersPath\": \".\", \"resources\": [{\"path\": \"Resources\", \"rule\": {\"process\": {}}}]")
+        let result = try formula(json: json, folderContents: resourceCLibTree(sources: [file("Lib.m")]))
+
+        XCTAssertTrue(result.contains("prefixHeader: ['input:/.DerivedSources/pkg/src/resource_bundle_accessor.h': "),
+                      "got:\n\(result)")
+        XCTAssertTrue(result.contains("input: ['input:/.DerivedSources/pkg/src/resource_bundle_accessor.m': "), "got:\n\(result)")
+        XCTAssertFalse(result.contains("input:/pkg/src/.DerivedSources"), "got:\n\(result)")
     }
 
     /// cmark-gfm-extensions includes cmark-gfm's headers by search path; SwiftPM puts the
