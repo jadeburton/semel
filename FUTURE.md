@@ -644,7 +644,9 @@ first):
    whose value is in the key and wakes the preprocessor when it changes; and compiles the
    source as one more object of the target through `preprocessBundleAccessor<Target>()`,
    the target's preprocessor with the writer's source for its input. Both paths are under
-   the target's hidden `.DerivedSources`, which no walk enters. SwiftFormulaConverter v28;
+   `.DerivedSources` at the input root, at the target folder's path below it, outside
+   every target as SwiftPM's build folder is (v29, B-165: inside the target's folder, an
+   umbrella directory took the header into the module). SwiftFormulaConverter v28;
    no clang node changed. Pinned by `ResourceBundleAccessorWriterTests` and
    `SwiftFormulaConverterTests`; end to end by `swift-c-package`, whose `ObjCKit` reads
    `greeting.txt` through the macro and whose `App` prints it when the exported

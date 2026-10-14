@@ -558,6 +558,39 @@ them, dirty — 364 MB of a 434 MB footprint at one moment of the Sequel Ace pus
 
 ## Design, correctness and code quality
 
+**B-165** `done` — **Sequel Ace stopped building: Firebase's FirebaseCoreExtension did not
+compile once it had the Objective-C bundle accessor.** The nightly end-to-end run on main
+at 6e9bf82 (run 38458159093, 2026-10-13) failed its external-projects step with no log
+kept; the archived roots held one with a home and no output, `sequel-ace`. Run locally
+with release binaries, its first build failed in two sources of FirebaseCoreExtension:
+
+```
+In file included from sequel-ace/Dependencies/firebase-ios-sdk/FirebaseCore/Extension/.DerivedSources/resource_bundle_accessor.m:1:
+  <built-in>:2:22: error: no matching '#pragma clang module begin' for this '#pragma clang module end'
+      2 | #pragma clang module end /*FirebaseCoreExtension*/
+```
+
+and the same for `FirebaseCore/Extension/dummy.m`. 6e9bf82 (B-55 item 8,
+SwiftFormulaConverter v28) gave every Objective-C target with resources SwiftPM's
+`resource_bundle_accessor.h`, forced into each compile with `-include`, and placed it in a
+hidden `.DerivedSources` inside the target's folder. FirebaseCoreExtension declares
+`publicHeadersPath: "."`, so its folder is its module's umbrella directory, and clang's
+walk of an umbrella directory takes in hidden folders: the accessor header became a
+header of the module the sources are compiled as. `clang -E` with `-fmodule-name` writes
+`#pragma clang module end` after an `-include`d header of the own module without the
+matching `begin`, and the compile of that text fails. Reproduced in a scratch folder with
+the same flags; the same header outside the umbrella directory preprocesses clean.
+`swift build` on a target shaped like it (`publicHeadersPath: "."`, a `.m`, a processed
+resource) generates and compiles the accessor too, from
+`.build/…/Ext.build/DerivedSources`, outside every target. NetNewsWire's PLCrashReporter
+and CodeEdit, whose targets with the accessor have an `include` folder, passed.
+
+Fixed 2026-10-14: the accessor's two files are under `.DerivedSources` at the input root,
+at the target folder's path below it (`input:/.DerivedSources/<target folder>/…`), so
+they are no target's and in no module. SwiftFormulaConverter v29. Pinned by
+`SwiftFormulaConverterTests.test_theAccessorsFilesAreOutsideTheTargetsFolder`, which
+failed before the fix; `sequel-ace` builds twice with identical bytes again.
+
 **B-162** `done` — **A dependency re-vendored with fewer files was refused by its lock on
 every push.** Reported 2026-10-12 on a proprietary package depending on
 [Charts](https://github.com/danielgindi/Charts). `semel-swift prepare` had written
