@@ -26,6 +26,9 @@
       location = "group:SemelApple">
    </FileRef>
    <FileRef
+      location = "group:SemelCMake">
+   </FileRef>
+   <FileRef
       location = "group:SemelExamples">
    </FileRef>
    <FileRef

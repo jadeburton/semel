@@ -85,6 +85,73 @@ final class ExternalProjectTests: XCTestCase {
         }
     }
 
+    // MARK: - CMake projects, translated (B-166)
+
+    /// B-166: the SQLite mirror read from its own CMakeLists.txt — a shared library beside
+    /// the archive, and the defines the file states — with nothing laid over it.
+    func test_sqliteBuildsFromItsCMakeLists() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.sqliteCMake)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("sqlite-cmake\n\(error)")
+        }
+    }
+
+    /// B-166: cJSON — options deciding a shared library, a tests subdirectory whose
+    /// executables link it, and a `foreach` skipped whole.
+    func test_cJSONBuildsFromItsCMakeLists() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.cJSON)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("cjson\n\(error)")
+        }
+    }
+
+    /// B-166: LibTomMath — one archive from 154 listed sources with compile options over
+    /// each, the widest fan-out of a translated project.
+    func test_libtommathBuildsFromItsCMakeLists() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.libtommath)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("libtommath\n\(error)")
+        }
+    }
+
+    /// B-166: TinyXML-2 — Windows line ends, no language named, a header among the
+    /// sources, and defines in generator expressions the archive does without.
+    func test_tinyxml2BuildsFromItsCMakeLists() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.tinyxml2)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("tinyxml2\n\(error)")
+        }
+    }
+
+    /// B-166: pugixml — a generator expression over three lines, dependent options
+    /// refused, and the static target under the output name the file gives it.
+    func test_pugixmlBuildsFromItsCMakeLists() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.pugixml)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("pugixml\n\(error)")
+        }
+    }
+
     /// B-77: Apple's Food Truck sample for the simulator — file lists over groups, a
     /// localized `.strings`, a package with resources, a widget extension.
     func test_foodTruckBuildsTwiceForTheSimulator() throws {
@@ -227,6 +294,6 @@ final class ExternalProjectTests: XCTestCase {
         XCTAssertEqual(Set(Projects.external.map(\.name)),
                        ["icecubes", "icecubes-app", "semel", "lua", "sqlite", "simdjson", "food-truck", "food-truck-mac",
                         "netnewswire-mac", "netnewswire-ios", "codeedit", "sequel-ace", "swift-dependencies", "swift-syntax",
-                        "backyard-birds-mac", "backyard-birds-ios"])
+                        "backyard-birds-mac", "backyard-birds-ios", "sqlite-cmake", "cjson", "libtommath", "tinyxml2", "pugixml"])
     }
 }

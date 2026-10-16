@@ -33,6 +33,9 @@ DerivedData/
 # anyone runs prepare in the tree itself. A fixture's own semel.config is committed, as
 # a project's is; MyApp's is prepare's to write.
 EndToEnd/Fixtures/swift/MyApp/semel.config
+# The CMake fixture's formula and config are semel-cmake's to write, in the harness's copy
+EndToEnd/Fixtures/cmake/semel.fmla
+EndToEnd/Fixtures/cmake/semel.config
 EndToEnd/Fixtures/**/Dependencies/
 
 # The machine's half of any configuration (B-109): written by `semel-clang` or
