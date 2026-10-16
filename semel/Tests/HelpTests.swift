@@ -72,17 +72,17 @@ final class HelpTests: XCTestCase {
 
     func test_helpAboutNothingKnownSaysSo() {
         XCTAssertEqual(interpreter.handleCommand("help frobnicate"), .failed)
-        XCTAssertEqual(lines, ["help: no command named frobnicate"])
+        XCTAssertEqual(lines, ["❌ help: no command named frobnicate"])
     }
 
     func test_aTypoNamesTheNearestVerb() {
         XCTAssertEqual(interpreter.handleCommand("buidl hello"), .failed)
-        XCTAssertEqual(lines, ["Unknown command: buidl — did you mean build? `help` lists them all"])
+        XCTAssertEqual(lines, ["❌ Unknown command: buidl — did you mean build? `help` lists them all"])
     }
 
     func test_aWordNearNothingGetsNoGuess() {
         XCTAssertEqual(interpreter.handleCommand("frobnicate"), .failed)
-        XCTAssertEqual(lines, ["Unknown command: frobnicate; `help` lists them"])
+        XCTAssertEqual(lines, ["❌ Unknown command: frobnicate; `help` lists them"])
     }
 
     func test_theNearestVerbIsWithinAFewEdits() {

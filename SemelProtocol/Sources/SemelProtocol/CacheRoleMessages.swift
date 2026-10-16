@@ -51,9 +51,10 @@ public enum CacheRequest: Codable, Equatable, Sendable {
 }
 
 public enum CacheResponse: Codable, Equatable, Sendable {
-    /// A hit: the entry's bytes are in the body, and `cost` is what it recorded, which is
-    /// what a client weighs a fetch of its missing objects against.
-    case entry(cost: Int)
+    /// A hit: the entry's bytes are in the body, `cost` is what it recorded, and `objects`
+    /// are the objects it holds with their sizes, as the server holds them. A client weighs
+    /// the bytes of the ones it lacks against the cost before it fetches any of them.
+    case entry(cost: Int, objects: [CachedObject])
     /// No entry under the key, or no object under the hash.
     case miss
     /// An entry or an object is filed.

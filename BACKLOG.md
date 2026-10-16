@@ -46,6 +46,139 @@ needs ../Helper` and pushes the package whole. What remains:
    outside the folder would close it. Design rather than mechanics: it needs a decision on
    how far `build` reaches unasked into sources outside the folder.
 
+**B-161** `done` — **A refused push of a large locked folder said only that a reply was too
+large, and `ls` then showed `(empty)`.** Reported 2026-10-12: about 20,000 files pushed, `ls`
+printed `(empty)`; under `begin`, `push`, `ls`, `commit`, `ls` the files were listed inside
+the batch and gone after the `commit`, and nothing printed read as an error. Reproduced on
+main at 1e372b2 with release binaries: the tree held a locked folder, `Dependencies/<name>`
+with its `.semel-lock`, whose lock did not match what the pushed folder folds to. The lock
+barrier (B-146) worked as designed: the outermost `commit` refused the batch, the unlocked
+files pushed beside the folder with it, and replayed it whole; an unbatched push is a batch
+of one and is refused the same way. What hid it was the refusal itself. `batchRejected`
+named every changed path below the locked folder, and with 20,000 of them the `endBatch`
+reply was 1,064,529 bytes, over the frame's 1 MiB limit, so the server sent `replyTooLarge`
+in its place and the client printed `the server's reply to 'endBatch' is … bytes, over the
+1048576-byte limit for one reply; …`: nothing about the batch being taken back, which lock
+refused it, or how to re-lock. The interactive client also reset its batch depth only on
+`batchRejected`, so after the `replyTooLarge` it believed a batch still open that the server
+had closed, and the next `commit` closed nothing. Not caused by a recent merge: the barrier
+dates from #175 (2026-10-09). Separate invocations (`semel begin`, then `semel 'push tree'`)
+are separate sessions, and a session's batch is committed when it ends, by design.
+
+Fixed 2026-10-12. `batchRejected` names at most `ErrorResponse.batchRejectedPathsListed`
+(50) of the batch's paths and counts the rest in a field of its own, `pathsNotListed`, so the
+refusal fits one frame whatever the batch's size (protocol 31); the client prints the first
+five, as it did, and `and N more`, N counting the carried paths it does not print with
+`pathsNotListed`, and a line `input: as it was before the batch; nothing the batch
+pushed or removed is there`, beside the folder, lock, expected, found and the remedy
+(`re-lock with: semel-swift prepare`). An outermost `commit` that fails for any reason now
+leaves no batch open at the client, since the server closes the batch before it answers.
+The owner then confirmed the lock's refusal was what they hit, and that they missed it
+because it came after the line saying the files were pushed; two more changes follow from
+that. A push says what it did only once its batch's fate is known: `Pushed N files` when its
+own batch commits; when the barrier refuses it, `push: N files sent, and none of it
+committed`, decided from the typed refusal and printed as the refusal's first line; inside a
+batch the user opened, `Sent N files, pending the commit`, and `commit` then says
+`Committed.` or prints the refusal. And every error the client prints starts with ❌, added in
+one place, `ErrorMark`, which `CommandInterpreter.outputError` and `main`'s few errors before
+an interpreter exists go through.
+
+`FrameMessageTests` pins the bounded rejection within a frame; `SessionPluginTests` the
+depth; `LockedFolderEndToEndTests` pushes 20,000 files under a mismatched lock, unbatched
+and under `begin` … `commit`, through the real `semel` and `semelserv`, and checks the
+printed paths and count, the push's lines and the mark; `LockedFolderServerTests` checks
+over a socket that a refusal of 1,001 paths carries fifty and counts the rest.
+
+Open for the owner, not decided: whether a mismatch in one locked folder should reject the
+unlocked files pushed beside it in the same batch. B-146 made a batch all or nothing, which
+is what a mirror's atomicity rests on; the cost is that a push of a whole tree lands nothing
+when one vendored copy has moved.
+
+**B-163** `open` — **`restore`'s reply lists every path it changed, and a restore across a
+large tree passes the frame's limit.** Found 2026-10-12 while fixing B-161, not seen in use.
+`DaemonResponse.restored(name:contentRoot:changedPaths:)` carries every path the restore
+changed, so a restore between two checkpoints that differ by tens of thousands of files —
+a re-vendor of a large package, or a tree pushed whole — makes a reply over the 1 MiB
+limit, and the client hears `replyTooLarge` in place of what the restore did, though the
+restore itself stood. The fix is B-161's shape: a bounded sample of the paths and an
+integer count of the rest, as fields of the typed reply, with a protocol bump. (B-162 is
+taken by another agent's PR not yet open; this entry skips it.)
+
+**B-164** `done` — **`push **/*.*` was refused by Charts' lock, and the refusal gave two
+hashes and no way to see that one file was missing.** Reported 2026-10-12 on main with
+Charts 5.1.0 vendored by `semel-swift prepare` (lock `Dependencies/Charts.semel-lock`,
+content root `sha256:82e51b57…`, exactly what a fresh `prepare` writes):
+
+```
+push **/*.*
+push: 20730 files and 314 folders sent, and none of it committed
+Dependencies/Charts is locked, and the batch changes it without a lock it matches: nothing of the batch is committed
+  lock: Dependencies/Charts.semel-lock
+  expected: sha256:82e51b57…  found: sha256:783cd4bc…
+  paths: Dependencies/Charts, Dependencies/Charts.semel-lock, Dependencies/Charts/Assets, … and 654 more
+  input: as it was before the batch; nothing the batch pushed or removed is there
+```
+
+No `Not on disk, kept:` line, so the engine held nothing stale. The cause: `**/*.*` matches
+only names holding a dot, and Charts has `LICENSE` at its root, the only dot-less regular
+file in the 5.1.0 tree. The lock covers it, the push never sent it, and the folder the
+batch left folded to another root. The barrier was right to refuse; the push was wrong to
+send part of a locked folder, and the refusal could not say which part was missing.
+
+Fixed 2026-10-12, in two parts.
+
+1. **The refusal names what the folder lacks and what it holds beyond the lock.**
+   `batchRejected` gains `listing`, a `LockListing` (SemelNodeKit, shared with
+   `ErrorCondition.batchRejected`; protocol 32): `compared(notPushed:notPushedNotListed:
+   notInTheLock:notInTheLockNotListed:)`, each list bounded at fifty as B-161's paths are
+   and the rest counted; `lockTreeNotHeld`; or `notComparable` for a lock that does not
+   parse or was folded under another format. The barrier computes it inside the commit's
+   savepoint, before the replay, by walking the lock's root and the folder's pushed root
+   together through their documents (`FolderContentRoot.namesDiffering`, on
+   `lines(ofDocument:)`), into a subfolder only where the two roots differ; a name on one
+   side only is said once, a folder with a trailing `/`. The client prints `not pushed:`
+   and `not in the lock:` after `found:`, five names and `and N more`; B-161's lines,
+   wording and mark are unchanged. The lock's documents are in the engine's store only
+   once the engine has folded that tree itself — its root is a hash `prepare` took of the
+   disk — so a copy the engine has never accepted as its lock describes it, the owner's
+   first push among them, cannot be compared name by name, and the refusal says `not
+   compared: the engine holds no copy of the tree the lock records, …`. Once a copy has
+   landed, a later batch that leaves it short — an `rm`, a partial push, another copy of
+   the same release elsewhere in the tree pushed in part — is named file by file.
+2. **A push that reaches a locked folder pushes it whole.** In `push`, a matched entry
+   below a folder `F` with `F.semel-lock` beside it on disk stands for `F` whole, read from
+   the disk as `push F` sends it, and the push says so first: `Pushing
+   Dependencies/Charts whole: it is locked` (several folders on one line, named as a push
+   names paths). It applies to patterns and to lists of files; a folder the push already
+   sends whole is left alone, the nearest locked folder above an entry is the one widened
+   (the one the barrier checks it against), and nothing outside the locked folder is
+   added. A pattern that matches only the lock itself widens too when the server does not
+   hold that lock as the disk has it: a lock pushed anew names its folder, and after a
+   re-vendor the lock alone would only be refused. A lock the server holds byte for byte
+   does not widen, which is what keeps `semel-watch` — whose launch mirror pushes a tree's
+   locks while leaving the locked folders alone — as it was. The widening only adds; B-162's
+   removal for a new lock follows from the folder's expansion as before.
+
+Tests: `LockedFolderWholePushTests` (root, six: `**/*.*` over two locked copies holding a
+`LICENSE`; a pattern reaching one; a file list; a lock alone; a lock the server holds;
+folders already whole); `LockedFolderEndToEndTests.test_aGlobPushOfAPreparedTreePushesTheLockedCopyWholeWithItsLicense`
+(real `prepare` of a repository with a `LICENSE`, then `push **/*.*` through `semel` and
+`semelserv`); `LockedFolderServerTests` (a partial push of a second copy of a held release
+names `LICENSE` as not pushed and the client prints it; an `rm`; files and a folder not in
+the lock; a tree never held is `lockTreeNotHeld`); `FrameMessageTests` and
+`MessageJSONTests` (the fields bounded within a frame, round trips);
+`ErrorRenderingTests` (five and the count on each line, the not-compared line);
+`FolderContentRootNamesDifferingTests` (SemelNodeKit). The widening tests and the server's
+listing tests fail with their fix taken out.
+
+Checked by hand with release binaries, a package depending on Charts 5.1.0 and a fresh
+`prepare` (lock `sha256:82e51b57…`): on main at 4116caa `push **/*.*` was refused with
+`found: sha256:783cd4bc…`, the owner's two hashes; with the fix it printed `Pushing
+Dependencies/Charts whole: it is locked` and `Pushed 580 files and 1 folder`, and `ls`
+showed `LICENSE`. An `rm Dependencies/Charts/LICENSE` after it was refused with `found:
+sha256:783cd4bc…` and `not pushed: Dependencies/Charts/LICENSE`: the one file the owner's
+push left out.
+
 ## Performance
 
 Measured 2026-09-27 on the IceCubes packages tree (`C1/icecubes/Packages`, thirteen
@@ -221,12 +354,18 @@ and the converter's passes included — and a build with nothing changed under a
 `swift build` of the same wrapper, packages resolved, took 17 s. A compile here is a module
 at a time with `-whole-module-optimization`, where SwiftPM's debug build compiles a module's
 files in batches across the cores, which is most of the gap on a package whose two largest
-modules, `SwiftSyntax` and `SwiftParser`, are most of its source. swift-syntax at its own
-root does not convert: `prepare` takes its nested `SwiftParserCLI` package for a root, whose
-manifest depends on `..` by path and names that package `swift-syntax`, and `dump-package`
-in the reader's sandbox, which holds the one manifest, names `..` for the sandbox's own
-folder and refuses the product. swift-dependencies 1.17.0, its macro built from swift-syntax, took 44 s
-cold under the same conditions.
+modules, `SwiftSyntax` and `SwiftParser`, are most of its source. swift-dependencies 1.17.0,
+its macro built from swift-syntax, took 44 s cold under the same conditions.
+
+Measured 2026-10-12, swift-syntax 603.0.2 at its own root (B-80 item 2): `prepare --platform
+macos` takes the package at the top as the one root and vendors nothing, and the build is
+every library product, the two test-support ones the wrapper left out among them — nineteen
+archives. Debug binaries, a fresh home started by the build itself, `SEMEL_JOBS` unset (ten
+jobs), an M4 shared with other agents' work (load average 5–7): two cold builds took 62 s and
+71 s, 128 nodes, and a build with nothing changed 2.1 s. `swift build` of the checkout, every
+target, took 57 s at a load average of 11–16. Where the time goes is the module-at-a-time
+compile above; a loaded machine moves the figure a long way — a cold build at a load average
+of 145–170 took 200 s.
 
 Measured 2026-10-01 again, on the same four trees assembled afresh — 4,530 files in 1,345
 folders, 166 MB: this repository as `git archive` exports it at `2957914`, the other three
@@ -378,8 +517,168 @@ source publishes the state without running. What is left of the settle is the 4,
 deletions and the idle reports. A cold build was unchanged: 94.5 s before, 95.1 s after,
 852 nodes computed and 430 entries both times.
 
+Measured 2026-10-12 for B-155: the server's memory through a cold push of Sequel Ace's clone
+and the start of its build. The cached checkout less `.git`, the overlay's xib, `prepare
+--platform macos` (41,391 files pushed, 1.1 GB, 27 files over 5 MB and the largest 68 MB),
+release binaries, a fresh home each run, `push sequel-ace` from one `semel` session — the
+tree holds the formula, so the build starts as the push commits — and the server stopped
+300 s after the push returned. The footprint is `footprint -p` every two seconds, in MB of
+2^20 bytes as `footprint` and `vmmap` give them; live is `heap`. Before is `main` at
+`d7a5ad9`. The machine was shared with other agents' builds, so a push's peak moved by a
+few hundred MB from run to run.
+
+| `semelserv`, Sequel Ace | before | after |
+|---|---|---|
+| peak footprint during the push | 370–830 MB (two runs) | 430–500 MB (two runs), 41 MB live |
+| peak footprint in the 300 s after it | 6,430 MB, 5.8 GB of it live in 18 M allocations | 400 MB |
+| time at 4 GB or more | about 100 s | none |
+
+Each fix's share, the same tree and method:
+
+| | peak during the push | peak in the 300 s after it |
+|---|---|---|
+| `main` | 370–830 MB | 6,430 MB |
+| + subexpressions filled once (`GraphSpecRewriter`) | 880 MB | 1,390 MB |
+| + formula calls evaluated once | 780 MB | 250 MB |
+| + pushed files stored from the body | 760 MB | not run |
+| + large bodies mapped, the decoder's room released | 430–500 MB | 400 MB |
+
+Whether the push grows with the tree: the clone without its formula, so the push is all the
+server does, pushed as one copy and as two side by side.
+
+| push only | 41,391 files | 82,782 files |
+|---|---|---|
+| before | 880 MB | 1,020 MB, 748 MB of it freed large blocks |
+| after | 500 MB | 460 MB |
+
+What the after column holds is mostly libmalloc's cache of freed large blocks: up to 64 of
+them, dirty — 364 MB of a 434 MB footprint at one moment of the Sequel Ace push, against
+41 MB live. It is bounded by count and does not grow with the tree, and
+`malloc_zone_pressure_relief` does not release it (B-155).
 
 ## Design, correctness and code quality
+
+**B-165** `done` — **Sequel Ace stopped building: Firebase's FirebaseCoreExtension did not
+compile once it had the Objective-C bundle accessor.** The nightly end-to-end run on main
+at 6e9bf82 (run 38458159093, 2026-10-13) failed its external-projects step with no log
+kept; the archived roots held one with a home and no output, `sequel-ace`. Run locally
+with release binaries, its first build failed in two sources of FirebaseCoreExtension:
+
+```
+In file included from sequel-ace/Dependencies/firebase-ios-sdk/FirebaseCore/Extension/.DerivedSources/resource_bundle_accessor.m:1:
+  <built-in>:2:22: error: no matching '#pragma clang module begin' for this '#pragma clang module end'
+      2 | #pragma clang module end /*FirebaseCoreExtension*/
+```
+
+and the same for `FirebaseCore/Extension/dummy.m`. 6e9bf82 (B-55 item 8,
+SwiftFormulaConverter v28) gave every Objective-C target with resources SwiftPM's
+`resource_bundle_accessor.h`, forced into each compile with `-include`, and placed it in a
+hidden `.DerivedSources` inside the target's folder. FirebaseCoreExtension declares
+`publicHeadersPath: "."`, so its folder is its module's umbrella directory, and clang's
+walk of an umbrella directory takes in hidden folders: the accessor header became a
+header of the module the sources are compiled as. `clang -E` with `-fmodule-name` writes
+`#pragma clang module end` after an `-include`d header of the own module without the
+matching `begin`, and the compile of that text fails. Reproduced in a scratch folder with
+the same flags; the same header outside the umbrella directory preprocesses clean.
+`swift build` on a target shaped like it (`publicHeadersPath: "."`, a `.m`, a processed
+resource) generates and compiles the accessor too, from
+`.build/…/Ext.build/DerivedSources`, outside every target. NetNewsWire's PLCrashReporter
+and CodeEdit, whose targets with the accessor have an `include` folder, passed.
+
+Fixed 2026-10-14: the accessor's two files are under `.DerivedSources` at the input root,
+at the target folder's path below it (`input:/.DerivedSources/<target folder>/…`), so
+they are no target's and in no module. SwiftFormulaConverter v29. Pinned by
+`SwiftFormulaConverterTests.test_theAccessorsFilesAreOutsideTheTargetsFolder`, which
+failed before the fix; `sequel-ace` builds twice with identical bytes again.
+
+**B-162** `done` — **A dependency re-vendored with fewer files was refused by its lock on
+every push.** Reported 2026-10-12 on a proprietary package depending on
+[Charts](https://github.com/danielgindi/Charts). `semel-swift prepare` had written
+`Dependencies/Charts.semel-lock`. Every `push` and `build` of the tree was then refused at
+`commit`, and running `prepare` again on main at 1e372b2 changed nothing:
+
+```
+Not on disk, kept: 5 files and 1 folder (push only adds; rm removes them): App/Dependencies/Charts/Charts.podspec, App/Dependencies/Charts/Package.resolved, …, App/Dependencies/Charts/Source/Supporting Files/Charts.h, App/Dependencies/Charts/Tests/ChartsTests/__Snapshots__Silicon__/
+App/Dependencies/Charts is locked, and the batch changes it without a lock it matches: nothing of the batch is committed
+  lock: App/Dependencies/Charts.semel-lock
+  expected: sha256:82e51b57426781b0a31ccf643874c85172c95a333faf65c97143270e22083b9c
+  found: sha256:bce0febc5461a6a25461278807652a57d921634207bacde3fb5582efd46042da
+  paths: App/Dependencies/Charts.semel-lock, App/Dependencies/Charts/CONTRIBUTING.md, … and 270 more
+  re-lock with: semel-swift prepare
+```
+
+The two folds agree. On a fresh engine, Charts 5.1.0 (Mac) and master (simulator) are
+prepared, pushed and built with no refusal. Charts holds no links, pipes, case-only name
+pairs or `Package@swift-*` manifests, and its one declared resource
+(`PrivacyInfo.xcprivacy`) is on disk. The `expected` root above is the lock a fresh 5.1.0
+`prepare` writes, byte for byte.
+
+The cause is what the engine already held. The lock was written over a copy that
+replaced an older one the engine still held: 4.1.0 to 5.1.0, where Charts became DGCharts
+and renamed or dropped files (`Charts.h`, the podspec, two schemes, and a folder of
+snapshots named `__Snapshots__\u{F8FF}Silicon__`, U+F8FF being Apple's logo). A push only
+adds, so the old copy's files stayed in `input:` below the new copy. The folder's pushed
+root folded them, the lock folded only the disk, and the barrier refused the batch. Every
+later push was refused the same way, since none of them could remove anything, and
+`prepare` could not help, since it never talks to the engine. The client's own line said
+what was wrong (`Not on disk, kept`). `rm` of those paths in the push's batch let it land.
+`semel-watch` already mirrored a locked folder when its lock changed (B-146); `push` and
+`build` did not, which broke the README's promise that a build after `prepare` "pushes
+both in one batch and lands".
+
+Fixed in the client. A push that sends a lock the server does not hold as the disk has it
+mirrors the folder that lock locks, in the push's batch: what the server holds below that
+folder and the disk lacks (by `lstat`, so a dot-named folder the walk does not list is
+left alone) is removed with `rm`. The push says so in one line before its own (`Locked
+anew: <folder>; with the push, taking out 5 files and 1 folder the copy no longer holds:
+…`), and `rm` adds no `Removed` lines of its own. With B-161's wording, the push's last
+line then says whether the batch stood: `Pushed`, `Sent …, pending the commit`, or, on a
+refusal, `sent, and none of it committed`, which takes the removal back too. A lock is a
+statement about its whole folder, and its file is something the user put there, so the
+removal is the lock's and not the push's. A push that brings no new lock only adds, below
+a locked folder or anywhere else, and a file gone from a locked copy without a new lock is
+still refused. AGENTS.md's "A push only adds" and the README's locked-folders section name
+the exception. `DependencyLock.dependencyPath(lockedBy:)` is the inverse of `lockPath`,
+which `semel-watch` now uses too. Left open: a name holding `*` or `?` is not removed,
+because `rm` reads its argument as a wildcard. The batch is then refused, naming the path
+as kept.
+
+No node changed, so there are no version bumps. The lock's document and its fold are
+unchanged, and existing locks stay valid. Tests: `ReVendorPushTests` (root, five cases: a
+re-vendor that drops a file and renames a folder lands, with the folder's pushed root
+equal to the lock's; a re-vendor whose lock the copy does not match is refused, its
+removal taken back with the batch; a file gone outside the re-locked folder is kept; a file gone from a
+locked copy with no new lock is refused and kept; a new lock over a copy that lost nothing
+removes nothing). Two of these fail without the fix. `LockFoldParityTests` gains the
+shape: a copy re-vendored with fewer files over the one the graph holds, whose pushed root
+differs from the lock until the leftovers are removed. Checked by hand: Charts 4.1.0
+prepared and pushed, the pin moved to 5.1.0, `prepare`, then `build`: the build lands,
+removes the six leftovers, and builds the target importing DGCharts.
+
+Not fixed, seen on the way: when a re-resolution drops a dependency (swift-algorithms and
+swift-numerics, which Charts 4.1.0 needed and 5.1.0 does not), `prepare` leaves its copy
+and lock in `Dependencies`.
+
+**B-158** `done` — **The cache limit's loop test read one trim where the engine made
+several.** Seen 2026-10-12 in CI on PR #201, which touched nothing in the cache:
+`CacheSizeLimitLoopTests.test_aGraphThatWritesMoreThanTheLimitKeepsBuildingAndSaysWhatWasEvicted`
+(B-148) found `evicted 4 entries (4.0 KB) — LabellingSampleTool 4; it holds 5.0 KB` where
+it expected 5 and 5, and the last trim's report held 1 eviction where it expected 5. On
+main at 0a501a0 it passed 200 runs in 200 on an idle machine, and failed 320 in 600 with
+twelve copies running at once on the owner's ten-core Mac.
+
+Fixed 2026-10-12. The engine was right and the test read one settle where there were
+several. The test pushed the second edition of its five sources as five writes outside a
+batch, with the loop running. Each write wakes the loop, and the loop settled after
+whichever of them had landed. Every settle trims, and each trim evicted the first edition's
+entries that no node stood on any longer: the ones whose tools had already been run on the
+second edition. The others were still held, which is what the line's "it holds 5.0 KB" and
+the note about held entries say. Printing every notice and the last trim in each failing
+run showed this every time. Out of 354 failures, each had between two and five eviction
+lines, which always added up to 5. The CI run was the split 4 then 1. The engine promises
+one settle only for a batch, so the test's push is now one batch. The test also asserts
+that exactly one eviction line was reported. With the change it passed 200 in 200 alone
+and 600 in 600 under the same load.
 
 **B-156** `done` — **The removal end-to-end test counted a node that may or may not run.**
 Seen 2026-10-11: `RemovalEndToEndTests.test_removingTheFixtureRunsOnlyTheFinderAndWritesNoEntry`
@@ -696,6 +995,36 @@ executables are byte-reproducible. actool's is not, so `AssetCatalogCompiler` pu
 each `Assets.car` in a canonical form that `assetutil` reads as the file actool wrote, and
 a signed bundle is byte-reproducible whole (B-89).
 
+**B-159** `done` — **A tree of library packages with an asset catalog had no actool
+settings.** Seen 2026-10-12 in the nightly roster on main at 0a501a0: the `icecubes` entry,
+IceCubes' five library roots for the simulator, failed every product with `missing
+settings: apple.assetCatalogCompiler.…`, on `resource: Colors.xcassets` (DesignSystem's
+`Resources`). The `icecubes-app` entry and both Backyard Birds entries passed.
+
+The cause was B-77 item 5 (#199). `SwiftFormulaConverter` 27 compiles a target's catalogs in
+one actool run, `assets<Target>()`, and the target's Swift compile reads the symbols it
+writes (`ImageResource.floor1`), which Backyard Birds' packages need. Before it, a package's
+catalogs were compiled only into its resource bundle, which only an app's formula reaches,
+so a tree whose roots are libraries never ran actool. `semel-swift prepare` on a tree of
+packages wrote the Swift namespaces, and clang's for a C-family target (B-110), and never
+actool's: a project's formula always selects it, a tree's never had. Reproduced with
+release binaries on a cold copy of `C1/icecubes/Packages`: `prepare --platform
+ios-simulator`, then `build` failed with the nightly's message.
+
+Fixed 2026-10-12 in `prepare`, not in the converter. A tree of packages now gets
+`apple.assetCatalogCompiler` when one of its targets, its own or vendored, has a catalog the
+converter compiles, for every platform, in the halves B-109 puts it in: the tool and
+`assetutilPath` in the machine file, the platform, deployment version and devices in
+`semel.config`. Which catalogs count is the converter's walk, `SemelSwift.compilesAssetCatalog`:
+an `.xcassets` folder reached through no hidden folder, whole-folder resource or `.docc`,
+not excluded, in the sources scope or a declared resource, or a declared catalog. The same
+copy then builds all five archives cold, and the `icecubes`, `icecubes-app` and both
+Backyard Birds roster entries pass with byte-identical builds and no exemption. No node's
+output changed, so no version moved.
+
+Not done: a tree whose package has a xib or a storyboard gets no ibtool block either. It
+does not fail today, since only a bundle, which only an app reaches, compiles one.
+
 **B-152** `done` — **ibtool and actool failed for every client on the machine: the pooled
 `ibtoold` kept the working directory of a sandbox Semel had removed.** Seen 2026-10-10
 and again 2026-10-11 (B-77 item 4, Sequel Ace). Every xib, storyboard and catalog of a
@@ -783,7 +1112,7 @@ each run already costs about 0.6 s more, since it starts a daemon of its own ins
 taking one from the pool. Still open: a document whose ambiguity the two runs happen to
 resolve alike passes, and is caught by the roster's comparison, not by the node.
 
-**B-155** `open` — **A large app made the server's memory grow without bound.** Seen
+**B-155** `done` — **A large app made the server's memory grow without bound.** Seen
 2026-10-11 building Sequel Ace (B-77 item 4). Six cold builds in a row were killed with
 SIGKILL about thirteen minutes in. Swap went from 10 GB to 40 GB in three and a half minutes,
 and the server's footprint reached 24 GB and was still growing. A sample of the server put
@@ -800,10 +1129,53 @@ entry's own `TreeFile` and `OutputFile` are given the two properties
 (`ProjectBuilder.fillingTopNode`). The specs are the same as before. The cold build then
 completed: 610 s with `SEMEL_JOBS=4`.
 
-Still open. The server's footprint reaches 7.5 GB about ninety seconds into the same build,
-just after the push of the clone's 41,392 files, and stays between 4 and 6 GB to the end.
-`heap` at one of those moments counted 155 MB live in 27,580 allocations against 4.2 GB of
-footprint, and calling `malloc_zone_pressure_relief` every five seconds changed nothing. So
-the pages are dirty and held, by something `heap` does not attribute. Next: run the push of
-a large tree under `MallocStackLogging` and read `malloc_history` for where the burst is
-allocated.
+Still open then: the server's footprint reached 7.5 GB about ninety seconds into the same
+build, just after the push of the clone's 41,392 files, and stayed between 4 and 6 GB to
+the end. `heap` at one of those moments counted 155 MB live against 4.2 GB of footprint,
+and `malloc_zone_pressure_relief` every five seconds changed nothing.
+
+Fixed 2026-10-12. The push was not the cause; the pass of the formula's builder that
+follows it was, and the push had a smaller cost of its own. Measured with release binaries
+over a fresh home, the footprint sampled every two seconds and `vmmap`, `heap` and `sample`
+taken as it passed 1, 2 and 4 GB (`BACKLOG.md`, Performance, 2026-10-12, for the figures).
+
+1. **The builder spelled its products out.** At 6.3 GB of footprint `heap` counted 5.8 GB
+   live in 18 million allocations, every compute thread in
+   `GraphSpecNode.adding(property:)` under `ProjectBuilder.process`. Filling the products
+   with the formula's folder and the project's root rebuilt every node it met, so a
+   subexpression reached many times — the settings under every compile, every compile
+   under the app and again under the bundle that signs it — came back once per occurrence,
+   each in storage of its own. `GraphSpecRewriter` rewrites each distinct subtree once and
+   shares the copy; one filler serves a builder's pass. The 155 MB against 4.2 GB was most
+   likely this burst after it: here the footprint stood at 4.3 GB after the pass with
+   70 MB resident, and fell to 110 MB over the next 30 s.
+2. **The formula resolver evaluated every function call afresh.** With the fill shared, a
+   burst of up to 1.4 GB remained; at 1.0 GB `heap` counted 0.96 GB live in 4.4 million
+   allocations, every compute thread in `FormulaResolver.evalFuncCall`, the generated
+   formula calling its settings and module functions from every target. A call's value is a
+   function of its arguments, so the resolver keeps each and a call made again is the first
+   call's value.
+3. **A pushed file was held four times over.** The frame's buffer, the body copied out of
+   it, the file copied out of the body (`subdata`) and copied again into an array to hash
+   and store. Files are now slices of the body and stored from where they lie
+   (`Data.intern()`).
+4. **The decoder kept the largest frame's room for the life of the connection**
+   (`removeFirst`), and a large body went through malloc twice. A body of 1 MB or more is
+   now received into a mapping of its own and handed over as the frame's `Data` without a
+   copy, unmapped when the frame goes (`FrameDecoder`, `MappedBody`).
+
+Not the database: the page cache is 64 MB (`cache_size=-65536`) and `vmmap` never showed
+more, there is no `mmap_size`, and the WAL is a file, not the server's memory, checkpointed
+by SQLite as it passes 1,000 pages, since each push request commits its own transaction.
+Nor the journal, whose rows are in the database. What grows with the tree in memory during
+a push is about 40 MB at 41,000 files — the journal's recorded paths and the settle's
+record of the ports written — all live.
+
+What remains is the allocator's, and it does not grow with the tree. libmalloc keeps up to
+64 freed large blocks dirty for reuse, and `vmmap` shows them as `MALLOC_LARGE (empty)`:
+364 MB of a 434 MB footprint at one moment of the push, against 41 MB live. With the cache
+switched off (`MallocLargeCache=0`) the same push, before items 3 and 4, peaked at 306 MB
+where it otherwise reached 780 MB. `malloc_zone_pressure_relief` after every request with a
+body of 1 MB or more released none of it: tried, measured at the same 765 MB, and removed.
+Fewer large allocations do help, which is what items 3 and 4 are: the frames, most of the
+churn, no longer go through malloc at all. Twice the files pushed peaks no higher.

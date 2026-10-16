@@ -56,9 +56,25 @@ let package = Package(
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
+                "SemelCacheClient",
                 "SemelTransport",
             ],
             path: "semel/Server"
+        ),
+        // An engine's way to a shared cache (B-153): `SemelCache`'s `RemoteCache` over the
+        // transport's TCP connection. Its own target because the cache cannot link the
+        // transport — the protocol links the cache for `CacheKey`, and the transport links
+        // the protocol — so the conformance that speaks frames sits above all three, and
+        // the engine's server installs it into an engine that never sees a frame.
+        .target(
+            name: "SemelCacheClient",
+            dependencies: [
+                .product(name: "SemelCache", package: "SemelCache"),
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+                "SemelTransport",
+            ],
+            path: "semel/CacheClient"
         ),
         // Frames over a socket, a Unix-domain one or TCP: the connection every client uses,
         // with correlation, streamed replies and pipelining, and the listener every server
@@ -103,6 +119,7 @@ let package = Package(
             // SwiftPM reporting the sibling directories — every one of which is another
             // target's `path:` — as fifty-one unhandled files on every plan.
             exclude: [
+                "CacheClient",
                 "CommandInterpreter",
                 "Server",
                 "ServerTests",
@@ -312,6 +329,7 @@ let package = Package(
         .testTarget(
             name: "SemelCacheServerTests",
             dependencies: [
+                "SemelCacheClient",
                 "SemelCacheServer",
                 "SemelTestSupport",
                 "SemelTransport",
@@ -378,6 +396,7 @@ let package = Package(
                 "semel-cmake",
                 "semel-watch",
                 "semel-monitor",
+                "semel-cache",
             ],
             path: "EndToEnd/Tests"
         ),

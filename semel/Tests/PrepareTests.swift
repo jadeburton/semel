@@ -253,6 +253,38 @@ final class PrepareTests: XCTestCase {
         XCTAssertEqual(roots.map(\.name), ["Explore", "Timeline"])
     }
 
+    /// swift-syntax's shape (B-80): the package at the top, and below it the tools and
+    /// examples that depend on it by `..` — or on nothing local at all, as `CodeGeneration`
+    /// depends on a released swift-syntax by URL. A nested package is never a root, and a
+    /// dependency pointing up at its ancestor does not make the ancestor anyone's
+    /// dependency: the one root is the package at the top.
+    func test_aNestedPackageIsNotARootAndItsDependencyOnItsAncestorDoesNotHideIt() {
+        let summaries = [
+            summary("swift-syntax"),
+            summary("swift-syntax/SwiftParserCLI", dependsOn: ["swift-syntax"]),
+            summary("swift-syntax/Examples", dependsOn: ["swift-syntax"]),
+            summary("swift-syntax/CodeGeneration"),
+        ]
+
+        let roots = PackageScan.roots(of: summaries)
+
+        XCTAssertEqual(roots.map(\.name), ["swift-syntax"])
+    }
+
+    /// A dependency is followed through a nested package: a sibling that names a package's
+    /// tool reaches the package the tool names above it, so the sibling is the root.
+    func test_aPackageReachedThroughAnotherPackagesNestedToolIsNotARoot() {
+        let summaries = [
+            summary("Lib"),
+            summary("Lib/Tool", dependsOn: ["Lib"]),
+            summary("App", dependsOn: ["Lib/Tool"]),
+        ]
+
+        let roots = PackageScan.roots(of: summaries)
+
+        XCTAssertEqual(roots.map(\.name), ["App"])
+    }
+
     // MARK: - The formula
 
     func test_theFormulaNamesEachRootThroughOneBuildRoot() {
@@ -381,6 +413,63 @@ final class PrepareTests: XCTestCase {
             XCTAssertTrue(config.contains("\(namespace).toolDescriptor.name="), "got:\n\(config)")
         }
         XCTAssertFalse(config.contains("clang.linker"), "got:\n\(config)")
+    }
+
+    /// B-159. A package target with an asset catalog compiles it in one actool run, whose
+    /// symbols its compile reads, so a tree of library packages — IceCubes' DesignSystem
+    /// holds `Resources/Colors.xcassets` — runs actool and its config carries both halves
+    /// of actool's block, for every platform: the tool and `assetutil` in the machine's,
+    /// the platform, the deployment version and the devices in the project's.
+    func test_theConfigCarriesTheAssetCatalogCompilerWhenATargetHasACatalog() throws {
+        for platform in Platform.allCases {
+            let tree = "\(platform.rawValue)/Packages"
+            try write("\(tree)/DesignSystem/Package.swift")
+            try write("\(tree)/DesignSystem/Sources/DesignSystem/Theme.swift", "struct Theme {}\n")
+            try write("\(tree)/DesignSystem/Sources/DesignSystem/Resources/Colors.xcassets/Contents.json", "{}\n")
+
+            try Preparation.run(folder: folder(tree), platform: platform, steps: steps())
+
+            let machine = try String(contentsOf: folder(tree).appendingPathComponent("semel.machine.config"), encoding: .utf8)
+            XCTAssertTrue(machine.contains("apple.assetCatalogCompiler.toolDescriptor.name=actool"), "\(platform): got:\n\(machine)")
+            XCTAssertTrue(machine.contains("apple.assetCatalogCompiler.assetutilPath=/usr/bin/assetutil"), "\(platform): got:\n\(machine)")
+            XCTAssertFalse(machine.contains("apple.stringCatalogCompiler"), "\(platform): got:\n\(machine)")
+            let project = lines(try String(contentsOf: folder(tree).appendingPathComponent("semel.config"), encoding: .utf8))
+            XCTAssertTrue(project.contains("apple.assetCatalogCompiler.platform=\(platform.sdkName)"), "\(platform): got:\n\(project)")
+            XCTAssertTrue(project.contains("apple.assetCatalogCompiler.minimumDeploymentTarget=26.5"), "\(platform): got:\n\(project)")
+            XCTAssertTrue(project.contains("apple.assetCatalogCompiler.targetDevices=\(platform.targetDevices)"),
+                          "\(platform): got:\n\(project)")
+        }
+    }
+
+    /// A catalog the converter's walk never reaches — in a hidden folder, or inside a
+    /// documentation catalog — is compiled by nothing, and brings no block.
+    func test_aCatalogTheConvertersWalkDoesNotReachBringsNoAssetCatalogCompiler() throws {
+        try write("Packages/Lib/Package.swift")
+        try write("Packages/Lib/Sources/Lib/Lib.swift", "struct Lib {}\n")
+        try write("Packages/Lib/Sources/Lib/.old/Colors.xcassets/Contents.json", "{}\n")
+        try write("Packages/Lib/Sources/Lib/Lib.docc/Resources/Images.xcassets/Contents.json", "{}\n")
+
+        try Preparation.run(folder: folder("Packages"), platform: .iosSimulator, steps: steps())
+
+        let machine = try String(contentsOf: folder("Packages").appendingPathComponent("semel.machine.config"), encoding: .utf8)
+        XCTAssertFalse(machine.contains("apple."), "got:\n\(machine)")
+    }
+
+    /// The converter's rule, as `prepare` asks it of the folders it reads from the disk.
+    func test_whetherATargetCompilesACatalogFollowsTheConvertersWalk() {
+        let paths = ["Lib.swift", "Resources", "Resources/Colors.xcassets"]
+
+        XCTAssertTrue(SemelSwift.compilesAssetCatalog(inTargetFolderHolding: paths))
+        XCTAssertFalse(SemelSwift.compilesAssetCatalog(inTargetFolderHolding: paths, exclude: ["Resources"]),
+                       "an excluded folder is not walked")
+        XCTAssertFalse(SemelSwift.compilesAssetCatalog(inTargetFolderHolding: paths, sources: ["Lib.swift"]),
+                       "outside the sources and declaring nothing, the catalog is not found by type")
+        XCTAssertTrue(SemelSwift.compilesAssetCatalog(inTargetFolderHolding: paths, sources: ["Lib.swift"], resources: ["Resources"]),
+                      "a declared folder is walked whatever the sources")
+        XCTAssertTrue(SemelSwift.compilesAssetCatalog(inTargetFolderHolding: [], resources: ["../Shared/Media.xcassets"]),
+                      "a declared catalog is one wherever it is")
+        XCTAssertFalse(SemelSwift.compilesAssetCatalog(inTargetFolderHolding: ["Data.bundle", "Data.bundle/Colors.xcassets"]),
+                       "a folder that is a resource whole is not entered")
     }
 
     /// B-109. A machine file `semel-clang` wrote there — for a formula that includes both
@@ -538,7 +627,7 @@ final class PrepareTests: XCTestCase {
     func test_everyNamespaceAConverterReadsIsDeclaredByAToolchain() {
         let declared = Set(everyNamespace)
 
-        for namespace in GeneratedFiles.packageTreeNamespaces(forCFamilyTargets: true)
+        for namespace in GeneratedFiles.packageTreeNamespaces(forCFamilyTargets: true, compilingAssetCatalogs: true)
                          + GeneratedFiles.projectNamespaces(forCFamilyTargets: true,
                                                             compiledSources: .init(hasCFamilySources: true,
                                                                                    hasInterfaceBuilderDocuments: true),

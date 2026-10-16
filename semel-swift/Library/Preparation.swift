@@ -4,7 +4,8 @@
 //
 //  `semel-swift prepare <folder> --platform <name>`: everything between cloning a tree of
 //  Swift packages and `semel 'build <folder>'`. Finds the packages, takes as roots the
-//  ones nothing depends on by path, vendors their closure into one `Dependencies`, and
+//  outermost ones no other reaches by path (`PackageScan.roots`), vendors their closure
+//  into one `Dependencies`, and
 //  writes the formula and the two config files beside them. Never overwrites the formula
 //  or the project's config: a project that ships its own has already decided, and a
 //  `--platform` they do not build for stops the run. Its part of the machine's config is
@@ -437,7 +438,8 @@ public enum Preparation {
             // and say nothing about the deployment version; they only add languages.
             let vendoredSummaries = try vendoredManifestFolders(in: dependencies).map(summarizeVendored)
             namespaces = GeneratedFiles.packageTreeNamespaces(
-                forCFamilyTargets: GeneratedFiles.hasCFamilyTargets(in: summaries + vendoredSummaries))
+                forCFamilyTargets:      GeneratedFiles.hasCFamilyTargets(in: summaries + vendoredSummaries),
+                compilingAssetCatalogs: GeneratedFiles.hasAssetCatalogs(in: summaries + vendoredSummaries))
             allSummaries = summaries + vendoredSummaries
         }
 

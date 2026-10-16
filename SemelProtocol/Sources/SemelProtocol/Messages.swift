@@ -197,9 +197,38 @@ public enum ErrorResponse: Codable, Equatable, Sendable {
     /// has been replayed, so `input:` is as it was before `begin`, and with no batch left
     /// open: a client that wants the change pushes it again with its lock. `paths` are the
     /// batch's at or below the folder whose content it changed, and the lock's own when the
-    /// batch changed that, all relative to `input:`; `found` is the folder's pushed content
-    /// root the batch would have left, nil when it left no folder there.
-    case batchRejected(folder: String, lock: String, expected: LockExpectation, found: String?, paths: [String])
+    /// batch changed that, all relative to `input:`, at most `batchRejectedPathsListed` of
+    /// them, and `pathsNotListed` counts the rest; `found` is the folder's pushed content
+    /// root the batch would have left, nil when it left no folder there. `listing` says
+    /// what that folder holds by name against the lock's tree, each of its lists bounded
+    /// as `paths` is (B-164).
+    case batchRejected(folder: String, lock: String, expected: LockExpectation, found: String?, paths: [String],
+                       pathsNotListed: Int, listing: LockListing)
     /// `restore` named a checkpoint that was never recorded; `known` are the ones that were.
     case checkpointNotFound(name: String, known: [String])
+}
+
+extension ErrorResponse {
+
+    /// How many of a refused batch's paths `batchRejected` names. A batch has no bound on
+    /// its size, and the rejection is one reply, so it carries a sample and a count: a
+    /// rejection naming every path of a vendored package pushed whole passes the frame's
+    /// limit, and the client then hears that a reply was too large in place of why its
+    /// batch was taken back. Fifty paths, each bounded by the file system's path length,
+    /// leave the reply far inside a frame, and are enough to see which files moved.
+    public static let batchRejectedPathsListed = 50
+
+    /// A `batchRejected` naming the first `batchRejectedPathsListed` of `changedPaths`, in
+    /// their order, and counting the rest; and as many of each of `listing`'s lists.
+    public static func rejectedBatch(folder: String, lock: String, expected: LockExpectation, found: String?,
+                                     changedPaths: [String], listing: LockListing) -> ErrorResponse {
+        let listed = Array(changedPaths.prefix(batchRejectedPathsListed))
+        return .batchRejected(folder:         folder,
+                              lock:           lock,
+                              expected:       expected,
+                              found:          found,
+                              paths:          listed,
+                              pathsNotListed: changedPaths.count - listed.count,
+                              listing:        listing.bounded(to: batchRejectedPathsListed))
+    }
 }

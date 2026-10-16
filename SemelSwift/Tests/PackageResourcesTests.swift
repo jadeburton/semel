@@ -212,10 +212,11 @@ final class PackageResourcesTests: SemelSwiftTestCase {
 
         XCTAssertTrue(formula.contains("resourceBundleName: 'pkg_Lib'"), formula)
         XCTAssertTrue(formula.contains("func bundleContents_Lib() =\n    TreeMerger(input: ["), formula)
-        XCTAssertTrue(formula.contains("func bundle_Lib() =\n    TreeMerger(under: 'pkg_Lib.bundle', input: ['contents': bundleContents_Lib().files]).files"),
+        XCTAssertTrue(formula.contains("func bundle_Lib() =\n    TreeMerger(under: 'pkg_Lib.bundle', input: [\n        'contents': bundleContents_Lib().files,"),
                       formula)
-        XCTAssertTrue(formula.contains("AssetCatalogCompiler(configuration: ['config': ConfigFilter(prefix: 'apple.assetCatalogCompiler'"), formula)
-        XCTAssertTrue(formula.contains("catalogs: ['Assets.xcassets': Folder(path: 'input:/pkg/Sources/Lib/Assets.xcassets').manifest]).files"), formula)
+        XCTAssertTrue(formula.contains("'assets': assetsLib().files"), formula)
+        XCTAssertTrue(formula.contains("func assetsLib() =\n    AssetCatalogCompiler(\n"), formula)
+        XCTAssertTrue(formula.contains("            'Assets.xcassets': Folder(path: 'input:/pkg/Sources/Lib/Assets.xcassets').manifest\n"), formula)
         XCTAssertTrue(formula.contains("FolderTreeBuilder(under: 'en.lproj', folder: ['folder': Folder(path: 'input:/pkg/Sources/Lib/Resources/en.lproj').manifest]).files"), formula)
         XCTAssertTrue(formula.contains("func bundles_pkg() =\n    TreeMerger(input: [\n        'Lib': bundle_Lib().files\n    ]).files"), formula)
     }
@@ -284,7 +285,7 @@ final class PackageResourcesTests: SemelSwiftTestCase {
         ]))
 
         let formula = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]).expectValue().resolveAsString()
-        XCTAssertTrue(formula.contains("catalogs: ['Assets.xcassets': Folder(path: 'input:/pkg/Sources/Lib/Assets.xcassets').manifest]"), formula)
+        XCTAssertTrue(formula.contains("'Assets.xcassets': Folder(path: 'input:/pkg/Sources/Lib/Assets.xcassets').manifest"), formula)
         XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]).rendered,
                        [targetFolder: "Folder(path: '\(targetFolder)').subtreeManifest"])
     }

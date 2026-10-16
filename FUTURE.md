@@ -625,10 +625,36 @@ first):
    to end by `swift-c-package`'s `ObjCKit`, whose header opens `@import Foundation;`,
    whose source `#error`s without `__has_feature(objc_arc)` and synthesizes a `weak`
    property, which only ARC can; its `App` says a weak reference clears when run.
-8. **No `SWIFTPM_MODULE_BUNDLE` for Objective-C.** SwiftPM generates a bundle accessor
-   for a C-family target with resources; the converter builds the bundle (done 8) but
-   generates no accessor, so a target that reads its bundle through the macro does not
-   compile. PLCrashReporter does not use it.
+8. ~~**No `SWIFTPM_MODULE_BUNDLE` for Objective-C.**~~ Done (2026-10-13). An owner's
+   Objective-C target read its resources through the macro and did not compile. SwiftPM
+   (6.3, checked on a scratch package) writes `resource_bundle_accessor.h` and `.m` into
+   the derived sources of a target with resources *and* a `.m` or `.mm` — a C or C++
+   target with resources gets its bundle and no accessor, since the accessor needs
+   Foundation — compiles the `.m` with the target and passes `-include` for the header to
+   every compile of it, C and C++ sources too, which the header's `#if __OBJC__` leaves
+   empty. `ResourceBundleAccessorWriter` (`SemelSwift`, kind 47) writes both, a source
+   node like `ModuleMapWriter` whose properties are the module's c99 name and the bundle's
+   (`FormulaIdentifier.resourceBundleName`). The header is SwiftPM's byte for byte, ended
+   by a newline; the source defines `<Module>_SWIFTPM_MODULE_BUNDLE` but looks where the
+   Swift accessor looks — beside the main bundle's executable, in its
+   `Contents/Resources`, beside the target's code — and raises naming the bundle, where
+   SwiftPM's falls back to the absolute path of its build folder. The converter gives the
+   header to the target's preprocessor as its `prefixHeader`, the port Xcode's
+   `GCC_PREFIX_HEADER` already used, so it is placed, `-include`d and a declared input
+   whose value is in the key and wakes the preprocessor when it changes; and compiles the
+   source as one more object of the target through `preprocessBundleAccessor<Target>()`,
+   the target's preprocessor with the writer's source for its input. Both paths are under
+   `.DerivedSources` at the input root, at the target folder's path below it, outside
+   every target as SwiftPM's build folder is (v29, B-165: inside the target's folder, an
+   umbrella directory took the header into the module). SwiftFormulaConverter v28;
+   no clang node changed. Pinned by `ResourceBundleAccessorWriterTests` and
+   `SwiftFormulaConverterTests`; end to end by `swift-c-package`, whose `ObjCKit` reads
+   `greeting.txt` through the macro and whose `App` prints it when the exported
+   executable is run. A package's executable product has no bundle beside it in `output:`
+   — no product is a bundle, for a Swift target's `Bundle.module` as for this — so the
+   fixture's formula publishes ObjCKit's as a tree product. PLCrashReporter, whose target
+   has Objective-C and a processed privacy manifest, now compiles the accessor too, as
+   under SwiftPM. Items 9 and 10 are untouched by it.
 9. **A search path above the target.** `.headerSearchPath("../Shared")` names a folder
    the converter's walk of the target never reaches, and `PackageClangTarget` leaves it
    out as it would a missing one.
@@ -1361,15 +1387,166 @@ program. Delivered in four phases, each leaving the repository working.
      is not shared. `Hello` carries no identity yet; `--writers` is a switch, and a list
      of identities is a configuration change when a deployment needs one. A `--writers
      none` server cannot be purged through the protocol; stop it and purge the home.
-3. **The engine as a client.** `cache.server` and `cache.identity` in `semel.engine.config`,
-   set at the prompt; the remote path behind `loadCachedOutputs` and
-   `saveCacheForAllInputsAndOutputs`, a population queue off the processing path, the fetch
-   policy over `cost`; the audit of what a tool observes that no key names; `cache` showing
-   the remote's figures. Every remote failure is a miss.
-4. **The acceptance test.** Two homes on one Mac and `semel-cache` on localhost: the second
-   home, cold, builds a roster project byte for byte from the first one's entries, and
-   again with the server stopped halfway; in CI as a fixture run. Then sharing is on when a
-   server is named.
+3. ~~**The engine as a client.**~~ Done 2026-10-12.
+   - **Settings.** `semel.engine.config` gains `cache.server` (a `CacheAddress`, the type
+     `semel-cache --listen` parses, moved into `SemelProtocol` so both ends read one form)
+     and `cache.identity` (one word). `cache server <host:port>`, `cache server --none`,
+     `cache identity <name>` and `cache identity --none` write the file and put the change
+     in force through a request to the running server (`cacheServer`, `cacheIdentity`,
+     answered `sharedCache`), as `cache limit` does; `semelserv` reads them at start and
+     prints the address. With no server named nothing changes. `Hello` carries the
+     identity, with `wantsWrite` true; the server's grant decides whether the engine writes.
+   - **Where it lives.** `SharedCache`, in `SemelCache`, is the whole client over a
+     `RemoteCache` protocol declared there; the one conformance that speaks frames,
+     `SocketRemoteCache`, is a new root-package target, `SemelCacheClient`, over
+     `SemelTransport`'s TCP `SocketConnection`, installed by `SemelServer`. The brief put
+     the client in `SemelCache` linking the transport, which is a cycle — `SemelProtocol`
+     links `SemelCache` for `CacheKey`, and the transport links the protocol — so the cache
+     declares what it needs and the conformance sits above all three. The engine never
+     links the transport.
+   - **The lookup.** On a local miss `loadCachedOutputs` asks `getEntry`, whose `entry`
+     reply now carries every object the entry holds with its size (protocol version 30);
+     decodes the entry and refuses one its own material keys elsewhere; asks `hasObjects`
+     for the objects this machine lacks; weighs them against the recorded cost; fetches each,
+     hashing it before it is stored; writes the entry into the local cache with the
+     server's object list; and applies it as a hit. Unreachable, refused, a missing object,
+     a hash that does not verify, an entry that does not decode or is filed under the wrong
+     key: each is a miss, counted, never thrown. A type with no static input port, which
+     never writes an entry, never asks.
+   - **The population queue.** After a local write the entry's key, cost, objects and bytes
+     go to a queue written on a thread of its own: `hasObjects`, `putObject` for what the
+     server lacks, `putEntry`. A failure drops the item and counts it. The queue holds a
+     thousand entries or 64 MiB and drops its oldest past either; a read-only grant empties
+     it and takes nothing more. A settle never waits on it.
+   - **The fetch policy.** A fetch is estimated as a request's round trip per object — the
+     quickest of the last 32 fetches — plus the bytes over the rate the fetches of 64 KiB
+     and more moved at, 100 MB/s until one has: a gigabit LAN's payload, the slowest wired
+     link of the first deployment, at which a megabyte is 10 ms. A hit whose fetch would
+     take longer than its build cost is built instead. A rate taken over every fetch read a
+     localhost link as 4 MB/s, because a few kilobytes are a round trip whatever the
+     bandwidth, and declined fifteen tool builds of the C fixture; the two figures apart
+     decline none.
+   - **Reconnection and degradation.** The queue's thread connects, and reconnects with the
+     watcher's backoff (a quarter of a second, doubling to five) when a request finds the
+     connection gone. While it is down a lookup is a flag read and a miss — no connect on
+     the processing path. A request not answered in 15 s, plus a second per megabyte it
+     carries, closes the connection, so a server that stops answering costs a bounded wait.
+   - **`cache`** heads its list with the shared cache: the address and identity, the
+     connection (connecting, read and write, read only, down with why, refused with why),
+     hits, misses, failures, declined fetches, lookups while down, bytes fetched, the
+     measured round trip and rate, entries and bytes sent, the queue's depth, drops and
+     failed writes, and the last failure.
+   - **The audit** of what reaches a tool that its key does not name, every tool node walked
+     (the design's "As built (phase 3)"). Closed here: the system's build (`kern.osversion`)
+     in the keys of actool, ibtool, momc, xcstringstool and codesign, which work through the
+     system's frameworks, and the iOS simulator runtimes installed in actool's and ibtool's
+     for an iOS platform — each also a machine-file line (`hostOSBuild`,
+     `simulatorRuntimes`) — with those five nodes' versions bumped; the bytes of the
+     binaries a tool runs from beside itself in its descriptor's fingerprint (`ld` beside
+     clang; `swift-driver`, clang, `ld` and libtool beside swiftc; `swift-package` beside
+     swift); and `codesign_allocate`'s bytes in the signer's key. Left open: B-157.
+4. ~~**The acceptance test.**~~ Done 2026-10-12, as far as one Mac allows, in CI as a
+   fixture run (`SharedCacheEndToEndTests`). `semel-cache serve` on localhost and three
+   homes naming it: A builds the C and C++ fixtures cold and its queue writes 61 entries;
+   B, cold, builds the C fixture with 31 lookups, every one a hit — every ClangPreprocessor,
+   ClangCompiler and ClangLinker among them — none missed, failed or declined, and exports
+   the same bytes as A; C builds the C fixture from the shared cache (31 hits), the server
+   is stopped, and C builds the C++ fixture with one failed lookup and 29 asked of nothing,
+   30 entries waiting in its queue, and the same bytes as A. The roster's external
+   projects have not been run between two homes. Sharing is on whenever a home names a
+   server; there is no further switch.
+
+**B-157** `open` — **What reaches a tool that its key does not name, left after B-153's audit.**
+Found by the audit in B-153 phase 3 (the design's "As built (phase 3)"); none of these lets
+two machines share an entry one of them built differently from what the other would — the
+first two let one machine's builds depend on something its graph does not see, and the rest
+cost misses between machines that could share.
+- ~~**`DEVELOPER_DIR` never reaches a tool.**~~ Done 2026-10-12. `LocalFileSystemTool` gave a
+  tool a fresh environment, so a `/usr/bin` shim a tool runs — flex's `m4`, the `xcrun`
+  SwiftPM asks for the SDK it compiles a manifest against — resolved through `xcode-select`,
+  which may name another Xcode than the one discovery found. `MachineQuery.developerDirectory`
+  asks `xcode-select -p` once per process (it honours `DEVELOPER_DIR`, as the `xcrun --find`
+  of discovery does), `ToolDiscovery` hands it to every runner it registers, and every tool
+  runs with it as `DEVELOPER_DIR`; a runner made by hand (`assetutil`) gets the same. **The
+  folder enters no key.** A path in a key would only keep apart two machines with Xcode in two
+  places (item 4), and what a shim reaches is a binary of the discovered toolchain, which is
+  what the descriptor's fingerprint is for. Walking every tool for one whose output depends on
+  the folder beyond its fingerprint found one: lex. The toolchain's `lex` is a 230-byte script
+  that runs `flex` beside it, and flex expands its skeleton through `m4`, which resolves to the
+  toolchain's `m4` beside lex, itself a wrapper running `gm4` or `bm4`; the descriptor
+  fingerprinted the script alone. lex's fingerprint now carries the bytes of `flex`, `m4`,
+  `gm4` and `bm4` (`ClangToolDiscovery.lexHelpers`), which moves LexGenerator's key without a
+  bump. SwiftPackageReader is bumped to 5: the SDK its manifest compiles against is now the
+  discovered Xcode's, and it passes `--manifest-cache none`, as `swift package dump-package`
+  read and wrote SwiftPM's shared manifest cache in `~/Library/Caches/org.swift.swiftpm`,
+  which SwiftPM finds from the account, not from `HOME`, so a read could return what another
+  run wrote; a manifest now compiles on every read. Nothing else runs a shim — clang and
+  swiftc are given `-isysroot` and `-sdk` and run their helpers from beside themselves,
+  `codesign` is given `CODESIGN_ALLOCATE` — so no other version moves; on a machine whose
+  `xcode-select` names the Xcode discovery found, which is every machine whose shell does not
+  set `DEVELOPER_DIR`, no tool sees a different folder. It costs nothing measurable: cold
+  builds of the IceCubes app (621 nodes, release binaries, a fresh home each,
+  `SEMEL_JOBS=10`) took 68 s, 69 s and 64 s against `main`'s 64 s, 69 s and 68 s, alternated,
+  with byte-identical products. Left: `TOOLCHAINS` and `SDKROOT` reach discovery's `xcrun`
+  and no tool either; nothing here passes either, and a tool run under one would want the
+  same treatment.
+- ~~**swiftc's module cache is outside the sandbox.**~~ Done 2026-10-12. No
+  `-module-cache-path` was passed, so the compiler kept its implicit modules under the user's
+  cache folder, which `HOME` and `TMPDIR` do not move: a hole in the sandbox and a folder that
+  only grows. **The owner's decision: nothing may live outside the sandbox, because a cache
+  file outside it cannot be trusted not to be corrupted or misversioned, so the sandboxed cache
+  lands and its cost is accepted.** `SwiftCompiler` passes `-module-cache-path .semel-derived/swift-module-cache`
+  (`SwiftCompiler.moduleCachePath`), mirroring `ClangLanguageFeatures.moduleCachePath`, and
+  is bumped to 11 for the command line. The swift fixtures built before and after are the same
+  bytes in all four builds of each, and the user's `clang/ModuleCache` gained 93 files while
+  the first ran and none of the second's. But a compile then builds its Clang modules and the
+  SDK's Swift modules afresh in every sandbox — about 2 s more for one file importing SwiftUI
+  and AppKit than over a warm user cache. Cold builds of the IceCubes app (`icecubes-app`,
+  `prepare --platform ios-simulator`, 621 nodes computed, 177 files exported) with release
+  binaries, a fresh home each, `SEMEL_JOBS=10`, alternated on one M4 Mac at a load average
+  of 6–7, `main` at `0a501a0` against it (measured together with item 1, whose own cold
+  builds were 68 s, 69 s and 64 s against `main`'s 64 s, 69 s and 68 s, so the cost is this
+  item's):
+
+  | cold build, IceCubes app | `main` | sandboxed module cache |
+  |---|---|---|
+  | wall, three rounds | 70 s, 73 s, 73 s | 111 s, 112 s, 109 s |
+  | CPU of the server and its tools (user + sys) | 207 s, 216 s, 208 s | 348 s, 360 s, 360 s |
+
+  About 52% more wall time and 70% more CPU, for byte-identical products. What `main` saves
+  is a module cache shared by every compile on the machine and kept between builds, which the
+  graph does not see. The remedy, explicit module builds, is B-160. A `-g` a target's own
+  flags add would record each imported module at its `.pcm`'s absolute
+  path, which would then name the sandbox (an `ISSUE:` on `moduleCachePath`); nothing Semel
+  writes passes one.
+- **Toolchain trees beside the binaries** — clang's `lib/clang/<version>`, Swift's runtime and
+  compatibility libraries and prebuilt modules, ibtoold's plugins — are named by the tools'
+  versions and binaries, not by their own bytes. The same class of gap the SDK's
+  fingerprint accepts; a companion fingerprint per tree when one is seen to move alone.
+- **Sharing between machines that could.** The clang tools', ibtool's, momc's, actool's and
+  codesign's configurations carry absolute paths — `sdkPath`, `assetutilPath`,
+  `codesignAllocatePath` — so two machines with Xcode at two paths share none of those
+  entries; the SDK's and the plugins' fingerprints are taken of paths, sizes and times, so a
+  differently installed Xcode shares nothing either; and swiftc's plugin fingerprint covers
+  every platform installed. Measure between two real machines before deciding which to key
+  by content instead.
+
+**B-160** `open` — **Explicit module builds: the SDK's modules as nodes, built once.**
+Not urgent: the cost it recovers was accepted when B-157 item 2 put swiftc's module cache in
+the sandbox. Every compile builds the Clang modules and the SDK's Swift modules it imports
+afresh in its own sandbox, which made a cold build of the IceCubes app about 52% longer (70–73
+s to 109–112 s) and its CPU about 70% more (B-157 item 2 has the table). The remedy is to
+make those modules nodes of their own: one per module, SDK and target, built once from the
+SDK and its fingerprint, and handed to each compile that imports it as an input, through
+swiftc's explicit module build (`-explicit-module-build`, or the frontend's
+`-disable-implicit-swift-modules` with `-explicit-swift-module-map-file` and the Clang
+modules' `.pcm` files), so that nothing is built implicitly in a sandbox. As node outputs
+they are cached like any other, keyed by the SDK fingerprint, the compiler's and the target,
+and shared through `semel-cache`, so a second machine fetches them instead of building them.
+Which modules a compile needs is the dependency scan's answer (`swift-frontend
+-scan-dependencies`), which is itself a tool run and would be a node; how the scan's result
+becomes demands, and whether one node per module or one per SDK and target is the right
+grain, are the design's first questions.
 
 **B-137** `done` — **A reply too large for one frame was refused.**
 Done 2026-10-01. Found when the owner removed a large tree with `rm` and was answered
@@ -3715,10 +3892,119 @@ application target, simulator only, all library code in packages. In suggested o
    alone. A framework target that defines a module and names no map gets none, and a
    framework's resources that a compiler takes are copied, not built (item 9's ISSUE),
    neither of which Sequel Ace's two frameworks need.
-5. *Mastodon iOS (official)* — IceCubes's domain with different structure: a Core Data
+5. *apple/sample-backyard-birds* — done for the Mac and the simulator (2026-10-12), in the
+   roster as `backyard-birds-mac` and `backyard-birds-ios`, from a fresh clone with nothing
+   laid over it; B-80's first acceptance test. Pinned at
+   `1843d5655bf884b501e2889ad9862ec58978fdbe` (main, 2023-12-06, "Updated for Xcode 15.1").
+   Both exports pass every hermeticity build byte-identical with no exemption, the Mac app
+   verifies with `codesign --verify --deep --strict`, launched by `open` it stays up, and
+   the iOS app installed in a simulator shows its backyards, their art from the packages'
+   catalogs and their names in English.
+
+   *What the project is.* One project in the older form, every target listing its files
+   through groups: the multiplatform app `Backyard Birds` (`SDKROOT = auto`,
+   `SUPPORTED_PLATFORMS = iphoneos iphonesimulator macosx`), the WidgetKit extension
+   `Widgets` (the same, and watchOS), and the watchOS app `Backyard Birds (Watch)`, which
+   the iOS app embeds under `Watch/`. Every configuration is based on
+   `Configuration/SampleCode.xcconfig`, one line,
+   `SAMPLE_CODE_DISAMBIGUATOR=${DEVELOPMENT_TEAM}`, which the bundle identifiers and the
+   entitlements' app group name. Generated plists over the project's own files (the
+   app's is an empty dictionary, the widget's names the extension point),
+   `ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME` on both, the widget's
+   `…_WIDGET_BACKGROUND_COLOR_NAME`, `INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone`
+   and `_iPad`, iOS keys behind `[sdk=iphoneos*]` and `[sdk=iphonesimulator*]`
+   conditions, the hardened runtime, Swift 5. Three local packages, `BackyardBirdsData`,
+   `BackyardBirdsUI` and `LayeredArtworkLibrary`, each one `.dynamic` library product
+   and one target at its package's root (`path: "."`), with `defaultLocalization: "en"`
+   on two; `BackyardBirdsData` holds the nine SwiftData `@Model` classes and the string
+   catalogs of their names. No remote package. `prepare --platform macos` takes 13 s,
+   `--platform ios-simulator` 9 s.
+
+   *What stops it*, in the order met (`SwiftFormulaConverter` 27, `XcodeProjectConverter`
+   24; `AssetCatalogCompiler` gains two literals and no version, since no command line
+   it wrote before changes):
+
+   1. ~~**The manifest is compiled.**~~ Done. A target at its package's root saw
+      `Package.swift` among its sources, and the compile failed on `no such module
+      'PackageDescription'`. SwiftPM leaves a package's manifests out of such a target, and
+      so does the converter now: `Package.swift` and every `Package@swift-….swift` the
+      folder holds join the target's `exclude:` (`SPMManifest.excludingManifestFiles`).
+      PLCrashReporter, the other target at its root, names its sources and never met it.
+   2. ~~**The packages' catalog symbols.**~~ Done. `LayeredArtworkLibrary` names
+      `ImageResource.floor1` and `BackyardBirdsUI` `ColorResource.premiumBirdFood`, the
+      Swift Xcode generates for a package target's catalogs, which the app's own compile
+      already took (CodeEdit's item 10). A target's catalogs are now compiled in one actool
+      run, `assets<Target>()`, as Xcode compiles them into one `Assets.car` — one run per
+      catalog would have written two for a target with two, which the bundle's merge
+      refuses — with Xcode's arguments for a package as its build log gives them: the
+      target's identifier (`backyardbirdsdata.BackyardBirdsData`), which no line of the
+      text holds, since it reads the bundle through `Bundle.module` under `SWIFT_PACKAGE`,
+      and `--generate-swift-asset-symbol-extensions NO`. The extensions off is what lets
+      `BackyardBirdsUI` declare `Color.premiumBirdFood` itself. The target compiles the
+      text as `GeneratedAssetSymbols.swift`. A C target's run asks for no symbols.
+   3. ~~**The plists against Xcode's.**~~ Done. With both building, the exports were set
+      beside `xcodebuild`'s for the same commit, Mac and simulator. The app had a
+      `UISupportedInterfaceOrientations_iPhone` string where Xcode writes the
+      `~iphone` list; it had no `NSAccentColorName`, and the widget no
+      `NSWidgetBackgroundColorName`, which actool writes when it is told the colors; and
+      the widget had an empty `NSHumanReadableCopyright` Xcode leaves out. The emitter
+      now passes both colors as literals the asset catalog compiler hands actool
+      (`--accent-color`, `--widget-background-color`; a name no catalog has is actool's
+      warning and no key, checked by hand), writes `…_iPhone` as `~iphone`, and leaves
+      out an `INFOPLIST_KEY_*` setting defined empty. Not reproduced, said here: Xcode's
+      Mac plist also carries `UIStatusBarStyle = ""` and
+      `UIApplicationSupportsIndirectInputEvents = false`, from the iOS-only settings whose
+      `[sdk=…]` conditions do not hold, keys a Mac app does not read.
+   4. ~~**The simulator app speaks Hebrew.**~~ Done. Installed in a simulator, the iOS
+      app showed the backyards' names — `BackyardBirdsData`'s `Backyards.xcstrings` — in
+      Hebrew. The development language's strings are in the source, so the bundle holds
+      `ar.lproj` to `zh-Hans.lproj` and no `en.lproj`, and the flat bundle had no
+      Info.plist to say it is developed in English, so `Bundle` resolved the lookup through
+      one of the others. Xcode's flat bundle has one. The flat bundle now has an Info.plist
+      too, platform-blind, and both layouts state the package's `defaultLocalization`
+      (`en` when it names none, as Xcode does), where the Mac's said `en` whatever the
+      package said. With it the app shows `Bird Springs`.
+   5. **SwiftData's `@Model`** — nothing to do. The nine models expand through the
+      platform's plugins on PR #178's footing, and the app's data generation, in memory as
+      the sample ships it, runs at launch.
+   6. **The widget extension** — nothing to do. A second app-extension kind beside the
+      Share and Finder Sync extensions (`com.apple.widgetkit-extension`, from the
+      project's plist), embedded under `PlugIns`, and on the Mac signed with its own
+      sandbox and app group before the app is, as Food Truck's widget is.
+   7. **The StoreKit configuration file** — nothing to do. `Misc/Store.storekit` is a file
+      reference in a group, in no build phase, and no shared scheme names it; Xcode's
+      bundle leaves it out too.
+   8. **The packages' products are `.dynamic`** — open, as everywhere (CodeEdit's item
+      12). Xcode builds `BackyardBirdsData.framework` and the other two and embeds all
+      three in the app and again in the widget; Semel links every package product
+      statically, so each executable carries the code and each bundle its own copy of the
+      three resource bundles, as Xcode's does too. Nothing at run time tells the two apart
+      here.
+   9. **The widget's App Intents metadata** — open. Xcode runs
+      `appintentsmetadataprocessor` over the widget's executable, its Swift sources and the
+      const values `swiftc` extracts, and writes
+      `Widgets.appex/Contents/Resources/Metadata.appintents` (`extract.actionsdata`, the
+      configuration intent `BackyardWidgetIntent`, and `version.json`); over the three
+      packages it extracts nothing and writes nothing. Semel writes none, so the widget's
+      configuration intent is undescribed to the system. Wanted: the compiler's
+      `-emit-const-values` output on a port, and a node running the processor; whether
+      its output is a function of its input is not checked.
+   10. **The watchOS app** — open. Xcode's simulator build embeds `Backyard Birds
+      (Watch)`, with its own widget, under `Watch/`: a target for another platform inside
+      one build, which `prepare --platform` does not describe. The iOS app runs without it.
+   11. Not Semel's business: Xcode's debug builds put the code in `….debug.dylib` beside a
+      stub executable and `__preview.dylib` (`ENABLE_DEBUG_DYLIB`, for previews). A
+      package bundle's plist lacks Xcode's `LSMinimumSystemVersion` or `MinimumOSVersion`
+      and `UIDeviceFamily`, which no lookup reads.
+
+   *Times*, release binaries on an M4 busy with other agents: a cold build of the Mac
+   app 31 to 62 s (361 nodes), of the simulator app 42 to 54 s (340 nodes). The roster's
+   runs, four builds each with debug binaries, `prepare` included, took 132 s for the Mac
+   and 173 s for the simulator, so `buildTimeout` is 10 minutes a step.
+6. *Mastodon iOS (official)* — IceCubes's domain with different structure: a Core Data
    `.xcdatamodeld` (`CoreDataModelCompiler` since Sequel Ace's 1), several extensions, generated-code build phases,
    a big local SDK package.
-6. *Wikipedia iOS* — heavy Objective-C and Swift mixing, bridging headers, generated
+7. *Wikipedia iOS* — heavy Objective-C and Swift mixing, bridging headers, generated
    `-Swift.h`. An app target's Objective-C and its bridging header are built since
    NetNewsWire's 6, and the `-Swift.h` its Objective-C imports since Sequel Ace's 4.
 
@@ -3726,7 +4012,9 @@ Expected to surface: script build phases, framework and dynamic-library targets,
 Data models. Non-synchronized groups surfaced with item 1 and are read; Objective-C in
 the application target, and storyboards and xibs (`ibtool`), with item 2 (its 6 and 8),
 and are built; framework targets of a referenced project with item 4 (its 9), and are
-built, and a Core Data model and lex scanners with item 4 (its 1), and are built.
+built, and a Core Data model and lex scanners with item 4 (its 1), and are built. A
+target for another platform embedded in the app (a watchOS app) and App Intents metadata
+surfaced with item 5 (its 9 and 10), and are open.
 
 **B-78** `open` — **More Swift packages.**
 
@@ -3850,7 +4138,8 @@ plugins a target uses as not run, where it dropped them unsaid. Since 2026-10-10
 macros (items 1 and 3 below); build-tool plugins are still not run, as B-77 decided. These
 are the acceptance tests, in rising cost:
 
-1. *apple/sample-backyard-birds* — SwiftData's `@Model` comes from plugins shipped in the
+1. *apple/sample-backyard-birds* — done (2026-10-12), in the roster as `backyard-birds-mac`
+   and `backyard-birds-ios` (B-77 item 5). SwiftData's `@Model` comes from plugins shipped in the
    toolchain, so macro expansion is tested without building swift-syntax. Also widgets, a
    StoreKit configuration file, local packages.
 
@@ -3867,9 +4156,43 @@ are the acceptance tests, in rising cost:
    `semelserv` listens: hashing the 85 MB by content (0.6 s from a cold copy on an M4,
    longer on a slow disk) kept a hosted runner's server from answering before the client
    that started it gave up; the walk takes 0.01 s. Accepted by the `swift-macro-app` fixture, whose
-   app uses `@Observable` and `@Model`; the sample itself is not in the roster.
+   app uses `@Observable` and `@Model`.
+
+   *The sample, done 2026-10-12* (B-77 item 5): in the roster as `backyard-birds-mac` and
+   `backyard-birds-ios`, from a fresh clone. Its nine `@Model` classes asked nothing new;
+   what stopped it was the manifest compiled into a target at its package's root and the
+   packages' catalog symbols, and once it built, three plist differences from Xcode's and
+   a bundle with no development region, which made the simulator app speak Hebrew. The
+   widget's App Intents metadata and the embedded watchOS app are open there.
 2. *swift-syntax* alone — no macro support needed to build it; a large pure-Swift build and
    a useful performance benchmark in its own right.
+
+   *Done 2026-10-12.* swift-syntax 603.0.2 converts and builds from its own root, and is in
+   the roster as `swift-syntax`, its nineteen library products as archives. Three things
+   stood in the way. `prepare` took the nested `SwiftParserCLI` for a root, since it
+   depends on `..` and nothing depends on it: a package nested in another package's folder
+   is now never a root — SwiftPM builds a package without the packages below it, its
+   tools, examples and fixtures — and of the rest a package is a root unless another
+   reaches it through any chain of path dependencies, an upward one included
+   (`PackageScan.roots`); `SwiftParserCLI`, `Examples`, `CodeGeneration` and
+   `SwiftSyntaxDevUtils` are built by nothing. The reader laid a manifest at the sandbox's
+   root, where `..` was the sandbox's parent under the sandbox's name: it now lays it at
+   its path in the input file system, as every tool's inputs are, and points
+   `dump-package` at that folder, so `..` is the folder it names, under its own name, and
+   is published as `..`, which the converter resolves against the package. And
+   `SwiftSyntaxMacrosTestSupport` imports XCTest: a package's target compiled for the Mac
+   is given the platform's `Developer/Library/Frameworks` and `Developer/usr/lib`, as
+   `swift build` gives every target there, and what they hold is in the compiler's
+   fingerprint beside its plugins.
+
+   The reader also reads the manifest SwiftPM would. It is wired to the package's folder as
+   well as its `Package.swift`, asks for every `Package@swift-<version>.swift` the folder
+   holds and lays them beside it, and `dump-package` chooses as it does on disk. The choice
+   is not made from the names: SwiftPM takes the one naming the toolchain's version
+   exactly, and failing that the newest older one only when its `swift-tools-version` is
+   newer than `Package.swift`'s, so a `Package@swift-5.7.swift` kept for older toolchains
+   is not read by 6.3. A version-specific manifest is an ordinary file of its folder, in
+   the lock's fold like any other.
 3. *swift-dependencies* or *swift-composable-architecture* — package-defined macros built
    from swift-syntax and run as compiler plugins.
 

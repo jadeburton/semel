@@ -57,6 +57,19 @@ final class HandleCommandResultTests: XCTestCase {
 
     // MARK: - What a failure says
 
+    /// Every error the interpreter prints starts with the client's mark, and only an error
+    /// does: one place adds it, whichever command failed (B-161).
+    func test_anErrorLineStartsWithTheMarkAndAMessageDoesNot() {
+        var lines: [String] = []
+        interpreter.output = { lines.append($0) }
+
+        XCTAssertEqual(interpreter.handleCommand("commit"), .failed)
+        XCTAssertEqual(interpreter.handleCommand("pwd"), .success)
+
+        XCTAssertEqual(lines.first, "❌ commit: no batch is open")
+        XCTAssertEqual(lines.filter { $0.hasPrefix(ErrorMark.glyph) }.count, 1, "\(lines)")
+    }
+
     /// B-94. A command that throws is reported through the same path whatever it threw, and
     /// counted once.
     func test_aCommandWhoseConnectionFailsReportsItOnce() {

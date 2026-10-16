@@ -77,6 +77,16 @@ public struct DependencyLock: Equatable {
         "\(folderPath).\(fileExtension)"
     }
 
+    /// The inverse: the folder a lock at `lockPath` locks, nil when the path is not a
+    /// lock's.
+    public static func dependencyPath(lockedBy lockPath: Path) -> Path? {
+        let suffix = ".\(fileExtension)"
+        guard let name = lockPath.lastComponent, name.hasSuffix(suffix), name.count > suffix.count else {
+            return nil
+        }
+        return Path(segments: lockPath.segments.dropLast()) / String(name.dropLast(suffix.count))
+    }
+
     /// The same, on disk.
     public static func lockFile(forDependencyAt folder: URL) -> URL {
         folder.deletingLastPathComponent().appendingPathComponent("\(folder.lastPathComponent).\(fileExtension)")

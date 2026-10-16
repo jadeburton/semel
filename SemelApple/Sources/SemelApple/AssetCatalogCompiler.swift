@@ -30,6 +30,13 @@ struct AssetCatalogCompilerConfiguration {
     /// The app icon set to compile and to name in the partial Info.plist, if any. A
     /// formula literal rather than a config setting: it says what the product *is*.
     let appIcon: String?
+    /// The color set the app's controls take as their accent, and the one a widget is drawn
+    /// over: Xcode's `ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME` and
+    /// `…_WIDGET_BACKGROUND_COLOR_NAME`, which actool checks against the catalogs and names
+    /// in the partial Info.plist (`NSAccentColorName`, `NSWidgetBackgroundColorName`).
+    /// Literals, as `appIcon` is; a name no catalog has is actool's warning and no key.
+    let accentColor: String?
+    let widgetBackgroundColor: String?
     /// The `assetutil` that checks the canonical `Assets.car` reads as the one actool wrote
     /// (B-89): a fact about the machine, written by `semel-swift prepare`.
     let assetutilPath: String
@@ -48,6 +55,8 @@ struct AssetCatalogCompilerConfiguration {
 
         targetDevices = devices.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         appIcon = properties["appIcon"]
+        accentColor = properties["accentColor"]
+        widgetBackgroundColor = properties["widgetBackgroundColor"]
         swiftAssetSymbols = AssetSymbolSettings(literals: properties)
     }
 
@@ -152,7 +161,10 @@ public struct AssetCatalogCompiler: Node {
     /// (B-141).
     /// 6: a failure is published as an `ErrorDocument`, the typed value a client renders,
     /// where it was a sentence (B-145).
-    public static let implementationVersion = 6
+    /// 7: the operating system's build is in the key, since actool compiles through the
+    /// system's CoreUI, and for a platform other than the Mac's the simulator runtimes
+    /// installed for it, whose frameworks compile its catalogs (B-153).
+    public static let implementationVersion = 7
 
     // MARK: Ports
 
@@ -193,9 +205,18 @@ public struct AssetCatalogCompiler: Node {
 
     /// The binary behind the tool version the configuration names: two builds of one
     /// version compile a catalog differently, and only a fingerprint of the binary tells
-    /// them apart (B-17).
+    /// them apart (B-17). And the system's build: actool hands the compile to ibtoold, which
+    /// writes `Assets.car` through CoreUI, a framework of the system rather than of Xcode —
+    /// for iOS, the simulator runtime's, so for a platform other than the Mac's the runtimes
+    /// installed for it as well (B-153).
     public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
-        try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
+        guard case .value(let hash)? = try input.onlyWire(onOptionalPort: Self.configuration)?.value else {
+            return nil
+        }
+        let properties = [String: String](plainText: try hash.resolveAsString())
+        let runtimes = SimulatorRuntimes.cacheKeyMaterial(family: properties["platform"].flatMap(SimulatorRuntimes.family(ofPlatformName:)))
+        let lines = [appleToolCacheKeyMaterial(toolBinaryCacheKeyMaterial(configuration: properties)), runtimes].compactMap { $0 }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
@@ -253,6 +274,12 @@ public struct AssetCatalogCompiler: Node {
         var arguments = common
         if let appIcon = configuration.appIcon {
             arguments += ["--app-icon", appIcon]
+        }
+        if let accentColor = configuration.accentColor {
+            arguments += ["--accent-color", accentColor]
+        }
+        if let widgetBackgroundColor = configuration.widgetBackgroundColor {
+            arguments += ["--widget-background-color", widgetBackgroundColor]
         }
         arguments += ["--output-partial-info-plist", Self.partialInfoPlistFile]
         arguments += ["--output-format", "human-readable-text"]

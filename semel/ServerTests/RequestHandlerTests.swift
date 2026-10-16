@@ -181,7 +181,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
 
         let text = try String(contentsOf: engineConfigurationFile, encoding: .utf8)
         XCTAssertTrue(text.hasPrefix("# "), "the file says what it is")
-        XCTAssertTrue(text.contains("\ncache.limit  20G\n"), text)
+        XCTAssertTrue(text.contains("\ncache.limit     20G\n"), text)
 
         engine.applyCacheLimit(nil)
         XCTAssertEqual(try daemon(.cacheLimit(limit: nil)).0,

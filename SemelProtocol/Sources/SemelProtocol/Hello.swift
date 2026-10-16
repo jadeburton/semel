@@ -79,7 +79,16 @@ public enum ProtocolVersion {
     /// `wantsWrite` and the cache's answer to it, and `cacheStoreFailed`.
     /// Version 29 gives the `artifacts` event the folder of the tree product each path is
     /// an entry of (B-150).
-    public static let current = 29
+    /// Version 30 gives a hello the `identity` a client names itself by to a cache, a cache's
+    /// `entry` the objects it holds with their sizes, and the engine's requests and replies
+    /// for its shared cache: `cacheServer`, `cacheIdentity`, `sharedCache`, and `cache`'s
+    /// summary of the shared cache (B-153).
+    /// Version 31 bounds `batchRejected`: it names at most fifty of the batch's paths and
+    /// counts the rest in `pathsNotListed`, so the rejection always fits a frame (B-161).
+    /// Version 32 gives `batchRejected` its `listing`: the names the locked folder lacks
+    /// against its lock's tree and those it holds that the tree does not, each bounded as
+    /// the paths are (B-164).
+    public static let current = 32
 }
 
 public struct Hello: Codable, Equatable, Sendable {
@@ -89,15 +98,26 @@ public struct Hello: Codable, Equatable, Sendable {
     /// is read-only to a client by default, and the server decides from its configuration
     /// whether a client that asks may; the engine's server reads nothing from it.
     public let wantsWrite:      Bool
+    /// The name the client gives itself to a cache, `cache.identity` in an engine's home:
+    /// asserted, not authenticated, over a LAN or a VPN (the August design). Nil when the
+    /// home names none. Carried so that a server granting writes to named clients, and
+    /// authentication after it, is a change to the server and not to the protocol; the
+    /// engine's server reads nothing from it.
+    public let identity:        String?
 
-    public init(protocolVersion: Int, role: Role, wantsWrite: Bool) {
+    public init(protocolVersion: Int, role: Role, wantsWrite: Bool, identity: String?) {
         self.protocolVersion = protocolVersion
         self.role            = role
         self.wantsWrite      = wantsWrite
+        self.identity        = identity
+    }
+
+    public init(protocolVersion: Int, role: Role, wantsWrite: Bool) {
+        self.init(protocolVersion: protocolVersion, role: role, wantsWrite: wantsWrite, identity: nil)
     }
 
     public init(protocolVersion: Int, role: Role) {
-        self.init(protocolVersion: protocolVersion, role: role, wantsWrite: false)
+        self.init(protocolVersion: protocolVersion, role: role, wantsWrite: false, identity: nil)
     }
 
     /// A hello that speaks whatever version this module holds.
@@ -111,22 +131,29 @@ public struct Hello: Codable, Equatable, Sendable {
     /// initializer body stays in this module, so every caller reads the constant at the
     /// moment it asks for it (B-84).
     public init(role: Role) {
-        self.init(protocolVersion: ProtocolVersion.current, role: role, wantsWrite: false)
+        self.init(protocolVersion: ProtocolVersion.current, role: role, wantsWrite: false, identity: nil)
     }
 
     /// A hello that speaks this module's version and says whether it means to write. An
     /// overload for the same reason as `init(role:)`.
     public init(role: Role, wantsWrite: Bool) {
-        self.init(protocolVersion: ProtocolVersion.current, role: role, wantsWrite: wantsWrite)
+        self.init(protocolVersion: ProtocolVersion.current, role: role, wantsWrite: wantsWrite, identity: nil)
+    }
+
+    /// A hello that speaks this module's version, says whether it means to write and names
+    /// the client. An overload for the same reason as `init(role:)`.
+    public init(role: Role, wantsWrite: Bool, identity: String?) {
+        self.init(protocolVersion: ProtocolVersion.current, role: role, wantsWrite: wantsWrite, identity: identity)
     }
 
     private enum CodingKeys: String, CodingKey {
         case protocolVersion
         case role
         case wantsWrite
+        case identity
     }
 
-    /// `wantsWrite` absent reads as false. A hello is the one message that has to decode
+    /// `wantsWrite` absent reads as false, and `identity` absent as none. A hello is the one message that has to decode
     /// across versions: a peer speaking an older message set must still be told so, with
     /// both numbers, and a hello that failed to decode for want of a field would be refused
     /// as malformed instead.
@@ -135,6 +162,7 @@ public struct Hello: Codable, Equatable, Sendable {
         protocolVersion = try container.decode(Int.self, forKey: .protocolVersion)
         role            = try container.decode(Role.self, forKey: .role)
         wantsWrite      = try container.decodeIfPresent(Bool.self, forKey: .wantsWrite) ?? false
+        identity        = try container.decodeIfPresent(String.self, forKey: .identity)
     }
 }
 

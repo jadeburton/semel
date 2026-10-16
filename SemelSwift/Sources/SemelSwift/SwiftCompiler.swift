@@ -259,7 +259,26 @@ struct SwiftCompiler: Node {
     /// new `objectiveCHeader` port (B-77 item 4).
     /// 9: a listed or excluded path with a slash behind or a `.` segment is the folder it
     /// names, where it named nothing (B-77 item 4).
-    public static let implementationVersion = 9
+    /// 10: a package's target compiled for the Mac finds the platform's testing modules,
+    /// XCTest and Testing, on the search paths `swift build` gives it (B-80).
+    /// 11: the implicit module cache is a folder of the sandbox, `-module-cache-path`, where
+    /// swiftc kept it in the user's cache folder (B-157). The bytes it writes are the same;
+    /// the command line is not.
+    public static let implementationVersion = 11
+
+    /// The implicit module cache, a folder of the sandbox, as clang's is
+    /// (`ClangLanguageFeatures.moduleCachePath`): the Clang modules and the SDK's modules a
+    /// compile builds are derived from the SDK and the inputs, so they live and die with the
+    /// run and are never an output. Without it swiftc keeps them in the user's cache
+    /// folder, which `HOME` and `TMPDIR` do not move — a writable folder every compile
+    /// reads, outside the sandbox, that only grows. Relative, like every path on the command
+    /// line. The compiler validates what the cache holds, so where it is changes no byte of
+    /// the object or the module: the module serializes no debugging options, and nothing
+    /// here asks for debug information.
+    /// ISSUE: a `-g` a target's own flags add records each module it imported at the `.pcm`'s
+    /// absolute path, which names the sandbox; in the user's cache folder it named a folder
+    /// of this machine instead.
+    static let moduleCachePath = "\(ToolSandbox.derivedStateFolderName)/swift-module-cache"
 
     // MARK: Ports
 
@@ -599,6 +618,26 @@ struct SwiftCompiler: Node {
         return result
     }
 
+    /// The platform's testing modules as search paths, `-F <platform>/Developer/Library/
+    /// Frameworks` and `-I <platform>/Developer/usr/lib`, for the platform holding the SDK
+    /// at `sdkPath`; those of the two folders that exist.
+    ///
+    /// Given to a package's target on the Mac, as `swift build` gives them to every target
+    /// it compiles there: a library may import XCTest or Testing — swift-syntax's
+    /// `SwiftSyntaxMacrosTestSupport` imports both — and without the paths it fails with
+    /// `no such module 'XCTest'` where SwiftPM builds it. An app's target is not given them,
+    /// as Xcode does not give them to one unless its settings enable testing search paths,
+    /// and neither is a target for another platform, which `swift build` does not build.
+    /// What the folders hold is part of the compiler's fingerprint (`SwiftCompilerPlugins`).
+    static func testingSearchPaths(sdkPath: String) -> [(flag: String, folder: String)] {
+        let developer = URL(fileURLWithPath: sdkPath)
+            .deletingLastPathComponent()   // SDKs
+            .deletingLastPathComponent()   // Developer
+        let candidates = [("-F", developer.appendingPathComponent("Library/Frameworks").path),
+                          ("-I", developer.appendingPathComponent("usr/lib").path)]
+        return candidates.filter { FileManager.default.fileExists(atPath: $0.1) }.map { (flag: $0.0, folder: $0.1) }
+    }
+
     private func compile(inputs: SwiftCompilerInputs,
                          inputSourceFilesSpecs: [String: GraphSpecNode],
                          inputFolderTreesSpecs: [String: GraphSpecNode],
@@ -638,6 +677,11 @@ struct SwiftCompiler: Node {
         }
         arguments.append("-sdk");                            arguments.append(sdkPath)
         settings.append(.swiftSDK(key: "\(namespace).sdk", value: sdk))
+        if inputs.configuration.packageName != nil, sdk == defaultSDKName {
+            for searchPath in Self.testingSearchPaths(sdkPath: sdkPath) {
+                arguments.append(searchPath.flag);           arguments.append(searchPath.folder)
+            }
+        }
 
         if let target = inputs.configuration.target {
             arguments.append("-target");                     arguments.append(target)
@@ -693,6 +737,7 @@ struct SwiftCompiler: Node {
         // frontend flag with no driver spelling.
         arguments.append("-file-compilation-dir");           arguments.append(ToolSandbox.canonicalRootName)
         arguments.append("-Xfrontend");                      arguments.append("-no-serialize-debugging-options")
+        arguments.append("-module-cache-path");              arguments.append(Self.moduleCachePath)
 
         if !inputs.moduleFiles.isEmpty {
             arguments.append("-I"); arguments.append(".")

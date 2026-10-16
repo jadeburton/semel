@@ -39,7 +39,7 @@ enum PushInterner {
         var interned = [Result<DataObjectHash, Error>?](repeating: nil, count: contents.count)
         interned.withUnsafeMutableBufferPointer { slots in
             DispatchQueue.concurrentPerform(iterations: contents.count) { index in
-                slots[index] = Result { try [UInt8](contents[index]).intern() }
+                slots[index] = Result { try contents[index].intern() }
             }
         }
 

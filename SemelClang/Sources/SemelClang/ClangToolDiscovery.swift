@@ -9,10 +9,16 @@ import SemelNodeKit
 
 enum ClangToolDiscovery {
 
-    /// The compiler, linker and preprocessor are all the clang binary.
+    /// The compiler, linker and preprocessor are all the clang binary. A link runs `ld`
+    /// beside it, whose bytes the descriptor's fingerprint carries too: the linker ships
+    /// beside the compiler and can be updated without it.
     static var finder: ToolFinder {
-        ToolFinder(name: "clang", locate: { locate("clang") }, version: version(ofToolAt:))
+        ToolFinder(name: "clang", locate: { locate("clang") }, version: version(ofToolAt:),
+                   companionFingerprint: { siblingBinariesFingerprint(besideToolAt: $0, named: helpers) })
     }
+
+    /// What clang runs from beside itself.
+    static let helpers = ["ld"]
 
     /// The archiver runs libtool: clang writes no static archive itself (B-79).
     static var libtoolFinder: ToolFinder {
@@ -22,8 +28,17 @@ enum ClangToolDiscovery {
     /// The lexer generator a target's `.l` files are run through (B-77 item 4): flex, which
     /// the toolchain ships as `lex`.
     static var lexFinder: ToolFinder {
-        ToolFinder(name: "lex", locate: { locate("lex") }, version: lexVersion(ofToolAt:))
+        ToolFinder(name: "lex", locate: { locate("lex") }, version: lexVersion(ofToolAt:),
+                   companionFingerprint: { siblingBinariesFingerprint(besideToolAt: $0, named: lexHelpers) })
     }
+
+    /// What lex runs from beside itself. The toolchain's `lex` is a script that runs
+    /// `flex` beside it, so the script's bytes say nothing of the scanner generator. flex
+    /// expands its skeleton through `m4`, found on `PATH` as the `/usr/bin` shim, which
+    /// resolves through the tool's `DEVELOPER_DIR` to the toolchain's `m4` beside lex — a
+    /// wrapper that runs `gm4` or `bm4` beside itself. The m4 that expands the skeleton
+    /// writes the scanner, so all of them are keyed by their bytes.
+    static let lexHelpers = ["bm4", "flex", "gm4", "m4"]
 
     /// Absolute path to `toolName` in the active toolchain, via `xcrun --find`, or nil if
     /// there is no such tool. Every question this package asks the machine goes through

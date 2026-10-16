@@ -49,9 +49,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsTwentyNine() {
-        XCTAssertEqual(ProtocolVersion.current, 29)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 29,
+    func test_currentProtocolVersionIsThirtyTwo() {
+        XCTAssertEqual(ProtocolVersion.current, 32)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 32,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -173,6 +173,10 @@ final class MessageJSONTests: XCTestCase {
             .cache,
             .cacheLimit(limit: nil),
             .cacheLimit(limit: ByteCount.gibibytes(20)),
+            .cacheServer(address: CacheAddress(host: "192.168.1.20", port: 7070)),
+            .cacheServer(address: nil),
+            .cacheIdentity(identity: "ci"),
+            .cacheIdentity(identity: nil),
             .tools(platform: "macos"),
             .reset(clearCache: false),
             .reset(clearCache: true),
@@ -313,9 +317,14 @@ final class MessageJSONTests: XCTestCase {
             .check(scheduledNodes: 12),
             .collected(removed: 3, removedBytes: 4096, kept: 12),
             .cache(summary: CacheSummary(entries: 432, bytes: ByteCount(bytes: 30_000_000), limit: ByteCount.gibibytes(10),
-                                         limitIsDefault: true, lastTrim: nil)),
+                                         limitIsDefault: true, lastTrim: nil, shared: Self.noSharedCache)),
             .cache(summary: CacheSummary(entries: 2, bytes: ByteCount(bytes: 100), limit: ByteCount(bytes: 150),
-                                         limitIsDefault: false, lastTrim: Self.sampleTrim)),
+                                         limitIsDefault: false, lastTrim: Self.sampleTrim, shared: Self.sampleSharedCache)),
+            .sharedCache(summary: Self.sampleSharedCache),
+            .sharedCache(summary: SharedCacheSummary(server: CacheAddress(host: "::1", port: 7070), identity: nil,
+                                                     connection: .down(reason: "connection refused"), figures: nil)),
+            .sharedCache(summary: SharedCacheSummary(server: CacheAddress(host: "cache", port: 1), identity: nil,
+                                                     connection: .rejected(reason: "protocol"), figures: nil)),
             .cacheLimit(limit: ByteCount.gibibytes(10), isDefault: true, trim: nil),
             .cacheLimit(limit: ByteCount(bytes: 150), isDefault: false, trim: Self.sampleTrim),
             .explain(explanation: nil),
@@ -329,6 +338,17 @@ final class MessageJSONTests: XCTestCase {
             XCTAssertEqual(try roundTrip(Response.daemon(response)), .daemon(response))
         }
     }
+
+    /// B-153. A home that names no shared cache, and one connected to its cache.
+    private static let noSharedCache = SharedCacheSummary(server: nil, identity: nil, connection: nil, figures: nil)
+
+    private static let sampleSharedCache = SharedCacheSummary(
+        server: CacheAddress(host: "192.168.1.20", port: 7070), identity: "ci", connection: .readWrite,
+        figures: SharedCacheFigures(hits: 40, misses: 2, failures: 1, declined: 0, unavailable: 3,
+                                    bytesFetched: ByteCount(bytes: 4_096), entriesSent: 7, bytesSent: ByteCount(bytes: 512),
+                                    queued: 1, dropped: 0, writeFailures: 0, measuredBytesPerSecond: 90_000_000,
+                                    measuredMicrosecondsPerRequest: 180,
+                                    lastFailure: "the connection was lost: reset"))
 
     /// B-148. A trim that evicted three entries of two types.
     private static let sampleTrim = CacheTrimRecord(evicted: 3, freed: ByteCount(bytes: 4_096), bytesAfter: ByteCount(bytes: 100),
@@ -427,12 +447,18 @@ final class MessageJSONTests: XCTestCase {
             .unrecoverable(message: "object store is read-only"),
             .cacheStoreFailed(description: "the volume is full"),
             .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
-                           expected: .contentRoot("4d5d"), found: "9e1f", paths: ["Dependencies/Pkg/a.swift"]),
+                           expected: .contentRoot("4d5d"), found: "9e1f", paths: ["Dependencies/Pkg/a.swift"], pathsNotListed: 12,
+                           listing: .compared(notPushed: ["Dependencies/Pkg/LICENSE"], notPushedNotListed: 3,
+                                              notInTheLock: ["Dependencies/Pkg/Extra/"], notInTheLockNotListed: 0)),
             .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
-                           expected: .unreadable(problem: .emptyValue(key: "content", line: 2)), found: nil, paths: []),
+                           expected: .unreadable(problem: .emptyValue(key: "content", line: 2)), found: nil, paths: [], pathsNotListed: 0,
+                           listing: .notComparable),
             .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
                            expected: .otherFold(fold: "semel-folder-content-root 3", contentRoot: "4d5d"),
-                           found: "9e1f", paths: []),
+                           found: "9e1f", paths: [], pathsNotListed: 0, listing: .notComparable),
+            .batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
+                           expected: .contentRoot("4d5d"), found: "9e1f", paths: [], pathsNotListed: 0,
+                           listing: .lockTreeNotHeld),
             .checkpointNotFound(name: "nope", known: ["latest"]),
         ]
         for error in errors {

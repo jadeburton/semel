@@ -6,6 +6,7 @@
 // The engine has no idea these types exist. A composition root — the CLI, or a test —
 // calls `register()` and from then on the graph can build Swift packages.
 
+import Foundation
 import SemelNodeKit
 
 public enum SemelSwift {
@@ -21,6 +22,7 @@ public enum SemelSwift {
             SwiftPackageReader.self,
             SwiftFormulaConverter.self,
             ModuleMapWriter.self,
+            ResourceBundleAccessorWriter.self,
         ])
         // A Package.swift is not discovered as a project of its own. A formula names the
         // package it builds — `include SwiftFormulaConverter(path: <.>).formula` — and the
@@ -66,11 +68,53 @@ public enum SemelSwift {
 
     // MARK: - What a converted package reads
 
-    /// The namespaces the converter's formula for a tree selects from: the Swift ones, and
-    /// the clang ones only when a target is compiled through clang (B-110).
-    public static func converterConfigNamespaces(forCFamilyTargets hasCFamilyTargets: Bool) -> [String] {
-        SwiftFormulaConverter.swiftConfigNamespaces + (hasCFamilyTargets ? SwiftFormulaConverter.clangConfigNamespaces : [])
+    /// The namespaces the converter's formula for a tree selects from: the Swift ones, the
+    /// clang ones only when a target is compiled through clang (B-110), and the asset
+    /// catalog compiler's only when a target has a catalog. A Swift target's compile reads
+    /// the symbols its catalogs' run generates, so a tree whose roots are libraries runs
+    /// actool as surely as an app does (B-159).
+    public static func converterConfigNamespaces(forCFamilyTargets hasCFamilyTargets: Bool,
+                                                 compilingAssetCatalogs: Bool) -> [String] {
+        SwiftFormulaConverter.swiftConfigNamespaces
+            + (hasCFamilyTargets ? SwiftFormulaConverter.clangConfigNamespaces : [])
+            + (compilingAssetCatalogs ? [SwiftFormulaConverter.assetCatalogCompilerNamespace] : [])
     }
+
+    /// Whether a target folder holding these entries — every file and folder at any depth,
+    /// as paths relative to it — has an asset catalog the converter compiles, by the rule
+    /// `PackageResources.detect` reads its folder with: an `.xcassets` folder the walk
+    /// reaches, which enters no hidden folder, no folder that is a resource whole and no
+    /// documentation catalog, outside `exclude`, and within the `sources:` scope or a
+    /// declared resource; or a declared resource that is a catalog itself. A `.copy` of a
+    /// catalog counts too, though it is copied rather than compiled: a block written for
+    /// it costs a report of unused keys, one missing costs the build.
+    public static func compilesAssetCatalog(inTargetFolderHolding relativePaths: [String],
+                                            sources: [String] = [],
+                                            exclude: [String] = [],
+                                            resources: [String] = []) -> Bool {
+        let scopes     = sources.map(PackageClangTarget.normalized)
+        let exclusions = exclude.map(PackageClangTarget.normalized)
+        let declared   = resources.map(PackageClangTarget.normalized)
+        func isCatalog(_ name: Substring) -> Bool {
+            (String(name) as NSString).pathExtension.lowercased() == assetCatalogExtension
+        }
+        if declared.contains(where: { $0.split(separator: "/").last.map(isCatalog) ?? false }) {
+            return true
+        }
+        return relativePaths.contains { path in
+            let segments = path.split(separator: "/")
+            guard let name = segments.last, isCatalog(name),
+                  segments.dropLast().allSatisfy({ PackageResources.isWalked(folderName: String($0)) }),
+                  !exclusions.contains(where: { PackageResources.isAtOrUnder(path, $0) }) else {
+                return false
+            }
+            return scopes.isEmpty
+                || scopes.contains { PackageResources.isAtOrUnder(path, $0) }
+                || declared.contains { PackageResources.isAtOrUnder(path, $0) }
+        }
+    }
+
+    static let assetCatalogExtension = "xcassets"
 
     /// Whether a target folder holding these files — every one at any depth, as paths
     /// relative to it — is one the converter compiles through clang: C-family sources and

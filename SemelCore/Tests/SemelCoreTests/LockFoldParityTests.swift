@@ -557,6 +557,41 @@ final class LockFoldParityTests: SemelCoreTestCase {
         }
     }
 
+    // MARK: - A copy re-vendored over the one the graph holds
+
+    /// A release that renamed and dropped files (Charts 4.1.0 to 5.1.0: a header, a
+    /// podspec, schemes and a folder of snapshots named `__Snapshots__\u{F8FF}Silicon__`),
+    /// vendored again into a tree whose copy the graph already holds (B-162). A push only
+    /// adds, so the old copy's files stay below the new one and the pushed root folds them;
+    /// the push that brings the new lock removes them, and the folds agree again.
+    func test_aCopyReVendoredWithFewerFilesOverTheOneTheGraphHolds() throws {
+        try write("Source/Supporting Files/Charts.h", "old header\n")
+        try write("Charts.podspec", "old podspec\n")
+        try write("Tests/__Snapshots__\u{F8FF}Silicon__/Bar/one.png", "one\n")
+        try write("Source/Charts/Kept.swift", "kept\n")
+        try push()
+
+        try FileManager.default.removeItem(atPath: absolutePath("Source/Supporting Files/Charts.h"))
+        try FileManager.default.removeItem(atPath: absolutePath("Charts.podspec"))
+        try FileManager.default.removeItem(atPath: absolutePath("Tests/__Snapshots__\u{F8FF}Silicon__"))
+        try write("Source/Supporting Files/DGCharts.h", "new header\n")
+        try write("Tests/__Snapshots__AppleSilicon__/Bar/one.png", "one\n")
+
+        let recorded = try FolderContentRoot.root(ofFolderAt: packageURL)
+        try push()
+        let node = try XCTUnwrap(try engine.inputFileSystem.childNode(path: Path(package)))
+        XCTAssertNotEqual(try node.readFromOutputPort(Folder.pushedContentRootOutputPort).expectValue(), recorded,
+                          "the old copy's files are still folded")
+
+        // The removed paths hold their `deleted` state until the collector takes them.
+        try assertTheFoldsAgree("re-vendored with fewer files", onlyThePush: false) {
+            for path in ["Source/Supporting Files/Charts.h", "Charts.podspec", "Tests/__Snapshots__\u{F8FF}Silicon__"] {
+                let held = try XCTUnwrap(try Folder.inputFileSystem.childNode(path: Path(package) / Path(path)))
+                try XCTUnwrap(try held.nodeAsAny() as? UserDeletable).deleteInInputFileSystem()
+            }
+        }
+    }
+
     // MARK: - Metadata a fold does not read
 
     func test_aFileWithExtendedAttributesAndTheImmutableFlag() throws {

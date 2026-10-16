@@ -210,15 +210,23 @@ public final class CacheServerStore {
     // MARK: - Entries
 
     private func getEntry(_ key: CacheKey) throws -> CacheAnswer {
-        let found: (cost: Int, pending: Data?)? = indexLock.withLock {
+        let found: (cost: Int, objects: [CachedObject], pending: Data?)? = indexLock.withLock {
             defer { countEntryRequest() }
-            guard let entry = entries[key.hash], entry.objects.allSatisfy({ objectBytes[$0] != nil }) else {
+            guard let entry = entries[key.hash] else {
                 misses += 1
                 return nil
             }
+            var objects: [CachedObject] = []
+            for hash in entry.objects {
+                guard let bytes = objectBytes[hash] else {
+                    misses += 1
+                    return nil
+                }
+                objects.append(CachedObject(hash: hash, bytes: bytes))
+            }
             stampUse(key.hash)
             hits += 1
-            return (entry.cost, pendingContent[key.hash]?.content)
+            return (entry.cost, objects, pendingContent[key.hash]?.content)
         }
         guard let found else {
             return CacheAnswer(.miss)
@@ -231,7 +239,7 @@ public final class CacheServerStore {
             }
             return CacheAnswer(.miss)
         }
-        return CacheAnswer(.entry(cost: found.cost), body: content)
+        return CacheAnswer(.entry(cost: found.cost, objects: found.objects), body: content)
     }
 
     private func putEntry(_ key: CacheKey, cost: Int, objects: [DataObjectHash], length: Int, body: Data) throws -> CacheAnswer {

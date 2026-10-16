@@ -2106,6 +2106,28 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertEqual(try externalSpecs(output).keys.sorted(), ["input:/repo/Models"])
     }
 
+    /// swift-syntax's `SwiftParserCLI` (B-80): a nested package depends on `..`, which the
+    /// reader publishes as `..` under the identity of the folder it names. The dependency
+    /// is the package one folder up, read by a reader of its `Package.swift` wired to its
+    /// folder as well, whose listing says which version-specific manifests sit beside it.
+    func test_aDependencyOnTheParentFolderIsThePackageThere() throws {
+        let output = try convert(packageFolder: "input:/repo/swift-syntax/SwiftParserCLI", json: """
+            {
+              "name": "SwiftParserCLI",
+              "dependencies": [{"fileSystem": [{"identity": "swift-syntax", "path": ".."}]}],
+              "products": [{"name": "swift-parser-cli", "targets": ["swift-parser-cli"], "type": {"executable": null}}],
+              "targets": [{"name": "swift-parser-cli", "type": "executable",
+                           "dependencies": [{"product": ["SwiftParser", "swift-syntax", null, null]}]}]
+            }
+            """)
+
+        let reader = try XCTUnwrap(try externalSpecs(output)["input:/repo/swift-syntax"])
+        XCTAssertTrue(reader.contains(#"packageFile: ["input:/repo/swift-syntax/Package.swift": "#
+                                      + "StaticFile(path: 'input:/repo/swift-syntax/Package.swift').output]"), reader)
+        XCTAssertTrue(reader.contains(#"packageFolder: ["input:/repo/swift-syntax": "#
+                                      + "Folder(path: 'input:/repo/swift-syntax').manifest]"), reader)
+    }
+
     // MARK: - C targets (B-54)
 
     // swift-cmark, reached through EmojiText and swift-markdown, is 34 C files in two
@@ -2464,6 +2486,96 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertFalse(result.contains("modules: 'true'"), "got:\n\(result)")
     }
 
+    // MARK: - The Objective-C bundle accessor (B-55 item 8)
+
+    private var resourceCLibJSON: String {
+        cLibJSON("\"resources\": [{\"path\": \"Resources\", \"rule\": {\"process\": {}}}]")
+    }
+
+    private func resourceCLibTree(sources: [FolderManifestEntry]) -> [String: [FolderManifestEntry]] {
+        ["input:/pkg/src":           sources + [folder("include"), folder("Resources")],
+         "input:/pkg/src/include":   [file("CLib.h")],
+         "input:/pkg/src/Resources": [file("greeting.txt")],
+         "input:/pkg/extensions":    [file("table.c")]]
+    }
+
+    /// SwiftPM's `-include <DerivedSources>/resource_bundle_accessor.h` on every compile of
+    /// an Objective-C target with resources: here the header is the preprocessor's
+    /// `prefixHeader`, written by the accessor's writer under the target's path in the
+    /// input root's `.DerivedSources`, so `SWIFTPM_MODULE_BUNDLE` is defined in every source of it.
+    func test_anObjectiveCTargetWithResourcesIsPreprocessedWithTheAccessorsHeader() throws {
+        let result = try formula(json: resourceCLibJSON, folderContents: resourceCLibTree(sources: [file("Lib.m"), file("plain.c")]))
+
+        let writer = "ResourceBundleAccessorWriter(bundleName: 'App_CLib', moduleName: 'CLib')"
+        let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") },
+                                         "got:\n\(result)")
+        XCTAssertTrue(preprocessor.contains("        input: [path: StaticFile(path: path)],\n"), preprocessor)
+        XCTAssertTrue(preprocessor.contains("prefixHeader: ['input:/.DerivedSources/pkg/src/resource_bundle_accessor.h': \(writer).header]"),
+                      preprocessor)
+    }
+
+    /// And SwiftPM's `resource_bundle_accessor.m` is one more object of the target: the
+    /// writer's source, preprocessed as the target's own sources are — with the header
+    /// forced in and the same settings — and compiled as they are.
+    func test_anObjectiveCTargetWithResourcesCompilesTheAccessorsSource() throws {
+        let result = try formula(json: resourceCLibJSON, folderContents: resourceCLibTree(sources: [file("Lib.m")]))
+
+        let writer = "ResourceBundleAccessorWriter(bundleName: 'App_CLib', moduleName: 'CLib')"
+        let ownPreprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") })
+        let accessorPreprocessor = try funcDefinition("preprocessBundleAccessorCLib", in: result)
+        XCTAssertEqual(accessorPreprocessor,
+                       ownPreprocessor
+                           .replacingOccurrences(of: "func preprocessCLib(path) =", with: "func preprocessBundleAccessorCLib() =")
+                           .replacingOccurrences(of: "input: [path: StaticFile(path: path)]",
+                                                 with: "input: ['input:/.DerivedSources/pkg/src/resource_bundle_accessor.m': \(writer).source]"))
+
+        let product = try productBlock("App", in: result)
+        let accessorEntry = try XCTUnwrap(product.components(separatedBy: "\n").first { $0.contains("preprocessBundleAccessorCLib") },
+                                          "got:\n\(product)")
+        XCTAssertTrue(accessorEntry.hasPrefix("        'input:/.DerivedSources/pkg/src/resource_bundle_accessor.m.o': ClangCompiler("),
+                      accessorEntry)
+        XCTAssertTrue(accessorEntry.contains("input: ['input:/.DerivedSources/pkg/src/resource_bundle_accessor.m.p': "
+                                             + "preprocessBundleAccessorCLib()]"), accessorEntry)
+        XCTAssertTrue(accessorEntry.contains("SettingsLiteral(defines: 'SWIFT_PACKAGE=1', modules: 'true', objectiveCARC: 'true')"),
+                      accessorEntry)
+    }
+
+    /// SwiftPM generates the accessor only where it can compile: it needs Foundation, so a
+    /// C or C++ target with resources has its bundle and no accessor, and an Objective-C
+    /// target without resources has neither. An Objective-C++ source is enough.
+    func test_onlyAnObjectiveCTargetWithResourcesHasTheAccessor() throws {
+        let objectiveCxx = try formula(json: resourceCLibJSON, folderContents: resourceCLibTree(sources: [file("more.cpp"), file("Lib.mm")]))
+        XCTAssertTrue(objectiveCxx.contains("prefixHeader: ['input:/.DerivedSources/pkg/src/resource_bundle_accessor.h'"),
+                      "got:\n\(objectiveCxx)")
+
+        let plainC = try formula(json: resourceCLibJSON, folderContents: resourceCLibTree(sources: [file("plain.c"), file("more.cpp")]))
+        XCTAssertTrue(plainC.contains("func bundle_CLib()"), "the bundle is built, got:\n\(plainC)")
+        XCTAssertFalse(plainC.contains("ResourceBundleAccessorWriter"), "got:\n\(plainC)")
+        XCTAssertFalse(plainC.contains("prefixHeader"), "got:\n\(plainC)")
+
+        var tree = resourceCLibTree(sources: [file("Lib.m")])
+        tree["input:/pkg/src"] = [file("Lib.m"), folder("include")]
+        let noResources = try formula(json: appOverCLib, folderContents: tree)
+        XCTAssertFalse(noResources.contains("ResourceBundleAccessorWriter"), "got:\n\(noResources)")
+        XCTAssertFalse(noResources.contains("prefixHeader"), "got:\n\(noResources)")
+    }
+
+    /// FirebaseCoreExtension's `publicHeadersPath: "."` makes its whole folder the umbrella
+    /// directory of its module, so an accessor placed anywhere below it is a header of that
+    /// module: forced in with `-include`, `clang -E` closes the module around it without
+    /// opening it, and every source of the target fails to compile. SwiftPM keeps derived
+    /// sources out of the target, and so does the converter: the two files are under the
+    /// input root's `.DerivedSources`, at the target folder's path below it.
+    func test_theAccessorsFilesAreOutsideTheTargetsFolder() throws {
+        let json = cLibJSON("\"publicHeadersPath\": \".\", \"resources\": [{\"path\": \"Resources\", \"rule\": {\"process\": {}}}]")
+        let result = try formula(json: json, folderContents: resourceCLibTree(sources: [file("Lib.m")]))
+
+        XCTAssertTrue(result.contains("prefixHeader: ['input:/.DerivedSources/pkg/src/resource_bundle_accessor.h': "),
+                      "got:\n\(result)")
+        XCTAssertTrue(result.contains("input: ['input:/.DerivedSources/pkg/src/resource_bundle_accessor.m': "), "got:\n\(result)")
+        XCTAssertFalse(result.contains("input:/pkg/src/.DerivedSources"), "got:\n\(result)")
+    }
+
     /// cmark-gfm-extensions includes cmark-gfm's headers by search path; SwiftPM puts the
     /// dependency's public headers on it, and so does the generated preprocessor.
     func test_aCTargetsHeaderFoldersIncludeThePublicHeadersOfTheCTargetsItDependsOn() throws {
@@ -2820,8 +2932,15 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                       "got:\n\(contents)")
         XCTAssertFalse(contents.contains("Info.plist"), "only what the manifest names, got:\n\(contents)")
         XCTAssertEqual(try funcDefinition("bundle_CrashReporter", in: result),
-                       "func bundle_CrashReporter() =\n    TreeMerger(under: 'PLCrashReporter_CrashReporter.bundle', "
-                     + "input: ['contents': bundleContents_CrashReporter().files]).files")
+                       "func bundle_CrashReporter() =\n    TreeMerger(under: 'PLCrashReporter_CrashReporter.bundle', input: [\n"
+                     + "        'contents': bundleContents_CrashReporter().files,\n"
+                     + "        'plist': TreeBuilder(input: ['Info.plist': InfoPlistBuilder(keys: '{"
+                     + "\"CFBundleDevelopmentRegion\":\"en\","
+                     + "\"CFBundleIdentifier\":\"pkg.CrashReporter.resources\","
+                     + "\"CFBundleInfoDictionaryVersion\":\"6.0\","
+                     + "\"CFBundleName\":\"PLCrashReporter_CrashReporter\","
+                     + "\"CFBundlePackageType\":\"BNDL\"}').plist]).files\n"
+                     + "    ]).files")
         XCTAssertTrue(try funcDefinition("bundles_CrashReporter", in: result).contains("'CrashReporter': bundle_CrashReporter().files"),
                       "got:\n\(result)")
     }
@@ -2848,6 +2967,94 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                       "got:\n\(macBundle)")
         XCTAssertTrue(try funcDefinition("macBundles_CrashReporter", in: result).contains("'CrashReporter': macBundle_CrashReporter().files"),
                       "got:\n\(result)")
+    }
+
+    // MARK: - Backyard Birds' packages (B-77)
+
+    /// `BackyardBirdsData` as Apple's sample declares it: one target at the package's root,
+    /// `path: "."`, so its folder holds the manifests beside its sources, a `.dynamic`
+    /// library product, a `defaultLocalization`, asset catalogs and a string catalog. A
+    /// second catalog stands for a target with several, which Xcode compiles in one run.
+    private let backyardBirdsDataManifest = """
+        {
+          "name": "BackyardBirdsData",
+          "defaultLocalization": "fr",
+          "dependencies": [],
+          "products": [{"name": "BackyardBirdsData", "targets": ["BackyardBirdsData"], "type": {"library": ["dynamic"]}}],
+          "targets": [
+            {"name": "BackyardBirdsData", "type": "regular", "path": ".", "dependencies": []}
+          ]
+        }
+        """
+
+    private var backyardBirdsDataTree: [String: [FolderManifestEntry]] {
+        ["input:/pkg":       [file("Package.swift"), file("Package@swift-5.9.swift"), file("DataGeneration.swift"),
+                              folder("Assets.xcassets"), folder("Shop.xcassets"), folder("Birds"), folder(".swiftpm")],
+         "input:/pkg/Birds": [file("Bird.swift"), file("Birds.xcstrings")]]
+    }
+
+    /// SwiftPM leaves a package's manifests out of a target at its root: compiled, the
+    /// manifest's `import PackageDescription` failed the target (`no such module`).
+    func test_aTargetAtThePackageRootLeavesTheManifestsOutOfItsSources() throws {
+        let result = try formula(json: backyardBirdsDataManifest, folderContents: backyardBirdsDataTree)
+
+        let compiler = try funcDefinition("compilerBackyardBirdsData", in: result)
+        XCTAssertTrue(compiler.contains("excludedPaths: 'Package.swift,Package@swift-5.9.swift'"), "got:\n\(compiler)")
+    }
+
+    /// A target in a folder of its own never sees the manifests, and its `exclude:` is as
+    /// written.
+    func test_aTargetInItsOwnFolderExcludesNoManifest() throws {
+        let json = backyardBirdsDataManifest.replacingOccurrences(of: "\"path\": \".\"", with: "\"path\": \"Birds\"")
+        let result = try formula(json: json, folderContents: backyardBirdsDataTree)
+
+        XCTAssertFalse(try funcDefinition("compilerBackyardBirdsData", in: result).contains("excludedPaths"), "got:\n\(result)")
+    }
+
+    /// Every catalog of a target in one actool run, which also writes the Swift Xcode
+    /// generates for their images and colors — `ImageResource.floor1` — with the target's
+    /// identifier and no extensions on SwiftUI's types, as Xcode 26.6 runs it for a
+    /// package; the target compiles that Swift, and the bundle holds the run's files.
+    func test_aTargetsAssetCatalogsAreCompiledInOneRunAndItsCompileTakesTheirSymbols() throws {
+        let result = try formula(json: backyardBirdsDataManifest, folderContents: backyardBirdsDataTree)
+
+        let assets = try funcDefinition("assetsBackyardBirdsData", in: result)
+        XCTAssertTrue(assets.contains("'Assets.xcassets': Folder(path: 'input:/pkg/Assets.xcassets').manifest"), "got:\n\(assets)")
+        XCTAssertTrue(assets.contains("'Shop.xcassets': Folder(path: 'input:/pkg/Shop.xcassets').manifest"), "got:\n\(assets)")
+        XCTAssertTrue(assets.contains("assetSymbolBundleIdentifier: 'pkg.BackyardBirdsData'"), "got:\n\(assets)")
+        XCTAssertTrue(assets.contains("swiftAssetSymbolExtensions: 'NO'"), "got:\n\(assets)")
+        XCTAssertTrue(assets.contains("swiftAssetSymbols: 'YES'"), "got:\n\(assets)")
+
+        let contents = try funcDefinition("bundleContents_BackyardBirdsData", in: result)
+        XCTAssertTrue(contents.contains("'assets': assetsBackyardBirdsData().files"), "got:\n\(contents)")
+        XCTAssertFalse(contents.contains("AssetCatalogCompiler("), "one run, not one per catalog, got:\n\(contents)")
+
+        let compiler = try funcDefinition("compilerBackyardBirdsData", in: result)
+        XCTAssertTrue(compiler.contains("extraSourceFiles: [\n            'GeneratedAssetSymbols.swift': assetsBackyardBirdsData().swiftAssetSymbols"),
+                      "got:\n\(compiler)")
+    }
+
+    /// A target with no catalog has no `assets` func and compiles no symbols.
+    func test_aTargetWithoutACatalogCompilesNoSymbols() throws {
+        var tree = backyardBirdsDataTree
+        tree["input:/pkg"] = [file("Package.swift"), file("DataGeneration.swift"), folder("Birds")]
+        let result = try formula(json: backyardBirdsDataManifest, folderContents: tree)
+
+        XCTAssertFalse(result.contains("assetsBackyardBirdsData"), "got:\n\(result)")
+        XCTAssertFalse(try funcDefinition("compilerBackyardBirdsData", in: result).contains("extraSourceFiles"), "got:\n\(result)")
+    }
+
+    /// Both layouts of the bundle carry an Info.plist developed in the package's
+    /// `defaultLocalization`: without one, the iOS app looked its backyard names up in
+    /// whichever `.lproj` Foundation preferred, and showed them in Hebrew.
+    func test_aBundleIsDevelopedInThePackagesDefaultLocalizationInBothLayouts() throws {
+        let result = try formula(json: backyardBirdsDataManifest, folderContents: backyardBirdsDataTree)
+
+        let flat = try funcDefinition("bundle_BackyardBirdsData", in: result)
+        XCTAssertTrue(flat.contains("'Info.plist': InfoPlistBuilder(keys: '{\"CFBundleDevelopmentRegion\":\"fr\","), "got:\n\(flat)")
+        XCTAssertFalse(flat.contains("CFBundleSupportedPlatforms"), "the flat bundle is platform-blind, got:\n\(flat)")
+        let mac = try funcDefinition("macBundle_BackyardBirdsData", in: result)
+        XCTAssertTrue(mac.contains("{\"CFBundleDevelopmentRegion\":\"fr\","), "got:\n\(mac)")
     }
 
     // MARK: - What a product needs from the linker (B-55)

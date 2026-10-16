@@ -38,6 +38,9 @@ public struct BatchRejection: Error, Equatable {
     /// The batch's paths at or below the folder, and the lock's own when the batch changed
     /// it, whose content the batch changed — in path order.
     public let paths: [Path]
+    /// What the folder the batch would leave holds by name against the tree the lock
+    /// records, relative to `input:` and unbounded: the reply bounds it.
+    public let listing: LockListing
 }
 
 public enum LockBarrier {
@@ -206,10 +209,32 @@ public enum LockBarrier {
         return try rejection(folder: folder, lock: lock, expected: expected, found: found, journal: journal)
     }
 
+    /// Called inside the savepoint, before the refused batch is taken back, so the
+    /// documents `found` names are the batch's.
     private static func rejection(folder: Path, lock: Path, expected: BatchRejection.Expectation,
                                   found: DataObjectHash?, journal: BatchJournal) throws -> BatchRejection {
         BatchRejection(folder: folder, lock: lock, expected: expected, found: found,
-                       paths: try changedPaths(below: folder, lock: lock, journal: journal))
+                       paths: try changedPaths(below: folder, lock: lock, journal: journal),
+                       listing: try listing(of: folder, expected: expected, found: found))
+    }
+
+    /// The names the folder lacks against the lock's tree and those it holds that the tree
+    /// does not (B-164), from the two trees' documents: the lock's are in the store when
+    /// the engine has folded that tree before, and the found ones were folded by the
+    /// flush this commit made.
+    private static func listing(of folder: Path, expected: BatchRejection.Expectation,
+                                found: DataObjectHash?) throws -> LockListing {
+        guard case .contentRoot(let lockRoot) = expected else {
+            return .notComparable
+        }
+        guard let names = try FolderContentRoot.namesDiffering(expected: lockRoot, found: found) else {
+            return .lockTreeNotHeld
+        }
+        let prefix = folder.string + "/"
+        return .compared(notPushed:             names.onlyExpected.map { prefix + $0 },
+                         notPushedNotListed:    0,
+                         notInTheLock:          names.onlyFound.map { prefix + $0 },
+                         notInTheLockNotListed: 0)
     }
 
     /// The folder's pushed root as the flush just folded it; nil when no folder is there.

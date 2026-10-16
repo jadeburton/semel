@@ -124,7 +124,7 @@ public enum CacheAdministration {
         guard let listen = configuration.listen else {
             throw CacheServerError.noListenAddress(file: home.configurationFile.path)
         }
-        let address = CacheListenAddress(host: listen.localHost, port: listen.port)
+        let address = CacheAddress(host: listen.localHost, port: listen.port)
         let connection: SocketConnection
         do {
             connection = try SocketConnection.connect(to: .tcp(host: address.host, port: address.port), timeout: 5)

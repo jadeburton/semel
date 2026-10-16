@@ -7,6 +7,7 @@
 //
 
 @testable import SemelCLI
+import SemelNodeKit
 import SemelProtocol
 import XCTest
 
@@ -41,7 +42,7 @@ final class SessionPluginTests: XCTestCase {
 
         XCTAssertEqual(connection.daemonRequests, [.beginBatch, .endBatch, .wait])
         XCTAssertEqual(context.openBatchDepth, 0)
-        XCTAssertEqual(context.messages, ["Settled."])
+        XCTAssertEqual(context.messages, ["Committed.", "Settled."])
         XCTAssertEqual(context.errors, [])
     }
 
@@ -75,7 +76,7 @@ final class SessionPluginTests: XCTestCase {
 
         XCTAssertEqual(context.openBatchDepth, 0)
         XCTAssertEqual(connection.daemonRequests, [.beginBatch, .beginBatch, .endBatch, .endBatch, .wait])
-        XCTAssertEqual(context.messages, ["Settled."])
+        XCTAssertEqual(context.messages, ["Committed.", "Settled."])
     }
 
     /// A commit with nothing open is a script bug worth hearing about, and it sends
@@ -85,6 +86,36 @@ final class SessionPluginTests: XCTestCase {
 
         XCTAssertEqual(connection.daemonRequests, [])
         XCTAssertEqual(context.errors, ["commit: no batch is open"])
+    }
+
+    /// The server closes the batch before it answers the outermost `endBatch`, whatever the
+    /// answer, so a failed commit leaves nothing open here either: a reply too large to
+    /// send is a failure the client did not expect, and still ends the batch (B-161).
+    func test_anOutermostCommitThatFailsForAnyReasonLeavesNoBatchOpen() throws {
+        try run("begin")
+        connection.responses.append((.error(.replyTooLarge(request: "endBatch", bytes: 2_000_000, limit: 1_048_576)), nil))
+
+        XCTAssertThrowsError(try run("commit"))
+        XCTAssertEqual(context.openBatchDepth, 0)
+
+        try run("commit")
+        XCTAssertEqual(context.errors, ["commit: no batch is open"])
+        XCTAssertEqual(connection.daemonRequests, [.beginBatch, .endBatch])
+    }
+
+    /// A refusal at the lock barrier closes every level of the batch, nested or not: the
+    /// server took it back whole.
+    func test_aRefusedCommitLeavesNoBatchOpenAtAnyDepth() throws {
+        try run("begin")
+        try run("begin")
+        try run("commit")
+        connection.responses.append((.error(.batchRejected(folder: "Dependencies/Pkg", lock: "Dependencies/Pkg.semel-lock",
+                                                           expected: .contentRoot("aaa"), found: "bbb",
+                                                           paths: ["Dependencies/Pkg/a.swift"], pathsNotListed: 0,
+                                                           listing: .lockTreeNotHeld)), nil))
+
+        XCTAssertThrowsError(try run("commit"))
+        XCTAssertEqual(context.openBatchDepth, 0)
     }
 
     /// `discard` is not a verb: a batch cannot be undone once its pushes are in the input

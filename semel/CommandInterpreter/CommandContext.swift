@@ -74,8 +74,27 @@ protocol CommandContext: AnyObject {
 /// it prints any command failure.
 struct ServerError: Error, CustomStringConvertible {
     let response: ErrorResponse
+    /// What the command had done when the server refused it, said first: a push refused at
+    /// its commit says what it sent before the refusal says why none of it stands.
+    let lead: String?
+
+    init(response: ErrorResponse) {
+        self.init(response: response, lead: nil)
+    }
+
+    init(response: ErrorResponse, lead: String?) {
+        self.response = response
+        self.lead     = lead
+    }
 
     var description: String {
+        guard let lead else {
+            return responseDescription
+        }
+        return "\(lead)\n\(responseDescription)"
+    }
+
+    private var responseDescription: String {
         switch response {
         case .pathNotFound(let path):          return "\(path): no such file or directory"
         case .notAFolder(let path):            return "\(path): not a directory"
@@ -90,8 +109,9 @@ struct ServerError: Error, CustomStringConvertible {
         case .unrecoverable(let message):      return "the server stopped: \(message)"
         case .cacheStoreFailed(let description): return "the cache could not use its store: \(description)"
         // Locked folders and checkpoints (B-146).
-        case .batchRejected(let folder, let lock, let expected, let found, let paths):
-            let condition = ErrorCondition.batchRejected(folder: folder, lock: lock, expected: expected, found: found, paths: paths)
+        case .batchRejected(let folder, let lock, let expected, let found, let paths, let pathsNotListed, let listing):
+            let condition = ErrorCondition.batchRejected(folder: folder, lock: lock, expected: expected, found: found,
+                                                         paths: paths, pathsNotListed: pathsNotListed, listing: listing)
             return ErrorReportRenderer.lines(for: condition).joined(separator: "\n")
         case .checkpointNotFound(let name, let known):
             return "there is no checkpoint named '\(name)'; "

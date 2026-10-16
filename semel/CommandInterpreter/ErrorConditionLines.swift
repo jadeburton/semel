@@ -300,13 +300,17 @@ struct ConditionLines {
                                    Detail(label: "this Semel folds as", value: currentFold)])
         case .lockUnreadable(_, let lockPath, let problem):
             return Drawn(path: path(lockPath), headline: " is not a lock: \(sentence(problem))")
-        case .batchRejected(let folder, let lock, let expected, let found, let paths):
+        case .batchRejected(let folder, let lock, let expected, let found, let paths, let pathsNotListed, let listing):
             var details = [Detail(label: "lock", value: path(lock)),
                            Detail(label: "expected", value: described(expected)),
                            Detail(label: "found", value: found.map { DependencyLock.contentScheme + $0 } ?? "no folder")]
+            details.append(contentsOf: described(listing))
             if !paths.isEmpty {
-                details.append(Detail(label: "paths", value: capped(paths.map(path))))
+                details.append(Detail(label: "paths", value: capped(paths.map(path), plus: pathsNotListed)))
             }
+            // A refused batch has been taken back whole, so what a listing shows next is what
+            // was there before it: said here, or an `ls` after the refusal reads as a push lost.
+            details.append(Detail(label: "input", value: "as it was before the batch; nothing the batch pushed or removed is there"))
             return Drawn(path: path(folder),
                          headline: " is locked, and the batch changes it without a lock it matches: "
                                  + "nothing of the batch is committed",
@@ -398,8 +402,14 @@ struct ConditionLines {
 
     /// Up to `pathsNamed` items, then how many more.
     private func capped(_ items: [String]) -> String {
+        capped(items, plus: 0)
+    }
+
+    /// `capped`, for a list the server already cut short: `uncarried` more were left out
+    /// before it arrived, and are counted with those not named here.
+    private func capped(_ items: [String], plus uncarried: Int) -> String {
         let shown = items.prefix(ErrorReportRenderer.pathsNamed).joined(separator: ", ")
-        let rest  = items.count - ErrorReportRenderer.pathsNamed
+        let rest  = max(items.count - ErrorReportRenderer.pathsNamed, 0) + uncarried
         return rest > 0 ? "\(shown) and \(rest) more" : shown
     }
 
@@ -414,6 +424,27 @@ struct ConditionLines {
     private func described(_ lock: LockFacts) -> String {
         let recorded = [lock.version.map { "version \($0)" }, lock.origin.map { "from \($0)" }].compactMap { $0 }
         return recorded.isEmpty ? path(lock.lockPath) : "\(path(lock.lockPath)) (\(recorded.joined(separator: ", ")))"
+    }
+
+    /// What a refused locked folder holds by name against its lock's tree: a line for each
+    /// side that has names, or a line saying why none can be named.
+    private func described(_ listing: LockListing) -> [Detail] {
+        switch listing {
+        case .compared(let notPushed, let notPushedNotListed, let notInTheLock, let notInTheLockNotListed):
+            var details: [Detail] = []
+            if !notPushed.isEmpty {
+                details.append(Detail(label: "not pushed", value: capped(notPushed.map(path), plus: notPushedNotListed)))
+            }
+            if !notInTheLock.isEmpty {
+                details.append(Detail(label: "not in the lock", value: capped(notInTheLock.map(path), plus: notInTheLockNotListed)))
+            }
+            return details
+        case .lockTreeNotHeld:
+            return [Detail(label: "not compared", value: "the engine holds no copy of the tree the lock records, "
+                                                       + "so the names that differ are not listed")]
+        case .notComparable:
+            return []
+        }
     }
 
     private func described(_ expected: LockExpectation) -> String {
@@ -467,6 +498,7 @@ struct ConditionLines {
         case .locks:                  noun = "locks of vendored packages"
         case .headerFolders:          noun = "header folders"
         case .includeFiles:           noun = "include files"
+        case .versionSpecificManifests: noun = "version-specific package manifests"
         }
         return paths.isEmpty ? "\(noun) have no value" : "\(noun) without a value: \(capped(paths))"
     }

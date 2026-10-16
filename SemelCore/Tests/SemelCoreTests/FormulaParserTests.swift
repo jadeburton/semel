@@ -274,6 +274,48 @@ final class FormulaParserTests: SemelCoreTestCase {
         XCTAssertEqual(wires.first?.node.properties.first?.value, "input:/hello/src/main.c")
     }
 
+    // MARK: - A call made again (B-155)
+
+    /// Whether two nodes hold their inputs in one array's storage: what copies of one value
+    /// do, and what two values evaluated apart never do.
+    private func shareStorage(_ lhs: GraphSpecNode?, _ rhs: GraphSpecNode?) throws -> Bool {
+        let lhs = try XCTUnwrap(lhs)
+        let rhs = try XCTUnwrap(rhs)
+        return lhs.inputs.withUnsafeBufferPointer { left in
+            rhs.inputs.withUnsafeBufferPointer { right in left.baseAddress == right.baseAddress }
+        }
+    }
+
+    /// A function called again with the same arguments is the value its first call made,
+    /// its storage shared: a generated formula calls one settings function from every
+    /// compile, and evaluating each call afresh spelled an app's products out, a gigabyte
+    /// of nodes for Sequel Ace.
+    func test_aCallMadeAgainWithTheSameArgumentsIsOneValue() throws {
+        let result = try parse("""
+            func settings(role) = Merger(input: [StaticFile(path: 'semel.config').output, Literal(role: role).output]).output
+            product "A" = Tool(configuration: [settings(role: 'compile')]).output
+            product "B" = Tool(configuration: [settings(role: 'compile')]).output
+            product "C" = Tool(configuration: [settings(role: 'link')]).output
+            """)
+
+        let settingsOf = { (product: String) in result[product]?.inputs.first?.wires.first?.node }
+        XCTAssertTrue(try shareStorage(settingsOf("A"), settingsOf("B")))
+        XCTAssertFalse(try shareStorage(settingsOf("A"), settingsOf("C")))
+        XCTAssertNotEqual(settingsOf("A"), settingsOf("C"))
+    }
+
+    /// A call's value depends on its arguments' values, not on how the caller spelled them:
+    /// a node argument made twice is the same argument.
+    func test_aCallWithAnEqualNodeArgumentIsOneValue() throws {
+        let result = try parse("""
+            func compile(config) = Compiler(configuration: [config], input: [StaticFile(path: 'a.c').output]).output
+            product "A" = compile(config: Literal(role: 'compile').output)
+            product "B" = compile(config: Literal(role: 'compile').output)
+            """)
+
+        XCTAssertTrue(try shareStorage(result["A"], result["B"]))
+    }
+
     // MARK: - For-each except (B-123)
 
     /// A stand-in for `ProjectBuilder`'s expander over one folder, `input:/lib`: a pattern

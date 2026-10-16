@@ -182,4 +182,27 @@ final class ToolBinaryFingerprintTests: XCTestCase {
         XCTAssertNil(ToolDescriptor.Identity(properties: ["toolDescriptor.name": "faketool"]))
         XCTAssertNil(ToolDescriptor.Identity(properties: [:]))
     }
+
+    // MARK: - What a tool runs beside itself (B-153's audit)
+
+    /// A toolchain whose compiler is the same bytes and whose linker is not: the helpers'
+    /// fingerprint tells the two apart, by name, and leaves out a helper the toolchain does
+    /// not ship.
+    func test_theBinariesBesideAToolAreFingerprintedByName() throws {
+        func toolchain(_ name: String, linker: String) throws -> String {
+            let bin = folder.appendingPathComponent(name, isDirectory: true)
+            try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+            try Data("the same compiler".utf8).write(to: bin.appendingPathComponent("clang"))
+            try Data(linker.utf8).write(to: bin.appendingPathComponent("ld"))
+            return bin.appendingPathComponent("clang").path
+        }
+        let first  = try toolchain("first", linker: "one linker")
+        let second = try toolchain("second", linker: "another linker")
+
+        let firstHelpers = try XCTUnwrap(siblingBinariesFingerprint(besideToolAt: first, named: ["ld", "absent"]))
+        XCTAssertTrue(firstHelpers.hasPrefix("ld="), firstHelpers)
+        XCTAssertFalse(firstHelpers.contains("absent"), "a helper the toolchain does not ship is left out")
+        XCTAssertNotEqual(firstHelpers, siblingBinariesFingerprint(besideToolAt: second, named: ["ld"]))
+        XCTAssertNil(siblingBinariesFingerprint(besideToolAt: first, named: ["absent"]))
+    }
 }

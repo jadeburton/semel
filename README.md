@@ -80,7 +80,7 @@ cd -i sources/
 
 | Command | Description |
 |---------|-------------|
-| `push <path> ...` | Push files or directories from disk into the input file system: several paths are one push and one report. A push only adds — a file gone from disk stays in `input:` until `rm` removes it; wrap the two in `begin` … `commit` to settle once. A push is a batch of its own, so one that changes a locked folder without its lock is refused whole — see [locked folders](#locked-folders) |
+| `push <path> ...` | Push files or directories from disk into the input file system: several paths are one push and one report. A push only adds — a file gone from disk stays in `input:` until `rm` removes it; wrap the two in `begin` … `commit` to settle once. A push is a batch of its own, so one that changes a locked folder without its lock is refused whole, and a path or pattern reaching into a locked folder, or naming its lock, pushes that folder whole — see [locked folders](#locked-folders) |
 | `rm <path> ...` (`remove`) | Remove files or directories from the input file system: the one way a source leaves it. One batch and one settle, however many files: nothing that reads a removed file runs a tool over it — a node a formula still names says the file `has been removed` — and what only the removed files held is deleted in that settle |
 | `cp [-i\|-o] <src> [dest]` (`copy`) | Copy a file out of the internal file system to disk |
 | `export <folder> --into <dir>` | Copy every product under `<folder>` of the output file system into `<dir>`, keeping the tree below it |
@@ -107,8 +107,10 @@ rm build/**
 | `explain <path>` (`why`) | Say why the last settle did what it did to a product (`output:/hello/hello`, `-o hello/hello`, or relative to the current directory): the nodes upstream of it that ran and the ones the cache answered, each with the wires whose values changed for it, down to the pushed files that changed. The record is the last settle's only, kept in memory: a restart forgets it, and `explain` says so |
 | `check` | Walk the graph and report every invariant that does not hold — a wire whose endpoint is gone, a product nothing produces, a manifest disagreeing with its folder. Repairs nothing; `reset` is the repair. Ask it of a settled graph (`wait`, or after `build`): a node the engine is still wiring has no wires yet, and the reply says how many nodes were still scheduled |
 | `collect` | Delete every object in the store that nothing refers to — no port, no cached build, no artifact snapshot, no archived graph, and no tree or content-root document that a referenced object is — and say how many went and how many stayed. The engine runs the same collection itself at idle, once after launch and then whenever the store has grown by 64 MB; an object younger than a minute is never collected |
-| `cache` | List every cached build, largest first: the bytes it alone holds in the store — an object another entry or a pushed file also holds is not its to give back — its cost, its node type and its key, and whether a node of the graph holds values from it or the last settle used it; above them, what the cache holds against its limit, and below them what the last trim evicted |
+| `cache` | List every cached build, largest first: the bytes it alone holds in the store — an object another entry or a pushed file also holds is not its to give back — its cost, its node type and its key, and whether a node of the graph holds values from it or the last settle used it; above them, what the cache holds against its limit and, when the home names a shared cache, where it is, how the connection stands and what it has done (see [A shared cache](#a-shared-cache)); below them, what the last trim evicted |
 | `cache limit [<size>]` | Show the cache limit, or set it: a number of bytes, or one with `K`, `M` or `G` after it (`512M`, `20G`), binary units. A setting of this home, kept in `semel.engine.config` beside the graph and read by `semelserv` when it starts — a setting of the engine, so it enters no build's input and no cache key; 10 GB until one is set. After every settle the engine evicts, until the cache is under its limit, the entries with the lowest cost per byte among those the last settle did not use, then among those it did, and never an entry a node of the graph holds values from; it says what it evicted, and the collector gives the bytes back. A limit below what the cache holds evicts at once |
+| `cache server <host:port>` / `cache server --none` | Name the shared cache (`semel-cache serve`) this engine reads from and writes to, or none. Kept in `semel.engine.config` as `cache.server` and put in force at once: the engine connects on a thread of its own, and until it has, or while the server is unreachable, every lookup is a local miss. With none the engine is its local cache alone |
+| `cache identity <name>` / `cache identity --none` | The name this engine gives the shared cache when it connects, `cache.identity` in `semel.engine.config`: asserted, not authenticated. Changing it connects again under the new name |
 | `t` / `tools [prefix] [--platform <p>]` | List the installed tools as config settings, one block per namespace, as this server's plugins found them; a prefix narrows it to namespaces starting with it (`tools clang`). A report only: the machine's half of the configuration is written outside Semel, by `semel-clang` or `semel-swift prepare` |
 | `reset [--cache]` | Discard everything derived and rebuild it from the input file system, copying the discarded graph aside first; the cached builds are kept, so the rebuild is a pass of cache lookups, and `--cache` discards those too |
 
@@ -207,8 +209,7 @@ person would make, writing the window it would open after `window:` or `live:`.
 `semel-cache` keeps cache entries and the objects they reference under a home folder of
 its own and answers them over TCP, so that machines building the same sources share their
 builds. It is a separate program that links the cache, the transport and the protocol, and
-never the engine. The engine does not use it yet (B-153 phase 3); today it can be run,
-filled and inspected:
+never the engine. Run it on a machine every engine can reach:
 
 ```sh
 .build/release/semel-cache serve  --home /srv/semel-cache --listen 0.0.0.0:7070 --limit 50G --writers all
@@ -224,6 +225,47 @@ requests used is kept, then the cheapest build per byte goes first. `status` pri
 entries and bytes against the limit, and the hits and misses since the server started;
 `purge` removes a poisoned entry by its key, or everything, through the running server when
 there is one.
+
+Point an engine at it from the prompt — the setting is the home's, kept in
+`semel.engine.config` beside the graph, and applied at once:
+
+```
+cache server 192.168.1.20:7070
+cache identity ci-runner
+```
+
+or by writing the file before `semelserv` starts, as a CI machine would:
+
+```
+cache.server    192.168.1.20:7070
+cache.identity  ci-runner
+```
+
+On a local miss the engine asks the shared cache for the entry, fetches the objects it lacks
+into its own store — each hashed before it is kept — writes the entry into its local cache
+and uses it. Every build it runs itself is queued for the server and written on a thread of
+its own, so a slow or stopped server never holds up a settle: the queue keeps at most a
+thousand entries or 64 MB of them and drops its oldest past that. Any failure on the way —
+the server unreachable, an object gone, a hash that does not verify — is a local miss and
+the build runs. A hit whose objects would take longer to fetch than the build took (its
+recorded cost against the link's measured round trip and rate, 100 MB/s assumed until a
+large object has been fetched) is built instead. While the server is unreachable the engine
+asks it nothing, and connects again on its own, a quarter of a second after the first
+failure and up to every five seconds after. A server run with `--writers none` serves this
+engine's lookups and takes none of its builds.
+
+`cache` heads its list with the shared cache:
+
+```
+Shared cache: 192.168.1.20:7070 as ci-runner, connected, read and write.
+  Lookups: 412 hits, 3 misses, 0 failed, 12 declined, 0 while down; 58.2 MB fetched (0.4 ms a request).
+  Writes: 37 entries sent (4.1 MB), 0 queued, 0 dropped, 0 failed.
+```
+
+`hits` were answered by the shared cache, `misses` it had nothing for, `failed` broke on the
+way, `declined` were cheaper to build than to fetch, and `while down` were asked of a
+connection that was not up. `queued` is what waits to be written, `dropped` what the full
+queue let go, and the last failure, when there was one, is said on a line of its own.
 
 ### Formulae
 
@@ -301,7 +343,7 @@ An `.xcodeproj` is converted the way a package is: a formula names it, and the c
 include XcodeProjectConverter(path: <IceCubesApp.xcodeproj>, root: <.>, configuration: 'Debug', sdk: 'iphonesimulator').formula
 ```
 
-A target's sources are its synchronized folders or the files its sources phase lists; Swift is compiled as one module, and Objective-C, C and C++ through clang a file at a time, each finding headers the way Xcode's header map finds them — every header the project references, by name and as `<Product/Header.h>` — with `GCC_PREFIX_HEADER` forced in, the Swift's `SWIFT_OBJC_INTERFACE_HEADER_NAME` beside them, `HEADER_SEARCH_PATHS`, `USER_HEADER_SEARCH_PATHS` (a `/**` entry recursive) and `FRAMEWORK_SEARCH_PATHS` read as folders of the project, and a file's own `COMPILER_FLAGS` after the target's. The frameworks phase's SDK frameworks and libraries are linked by name, a framework or library in the project's tree as the files it is, and a framework target of a referenced project (`PBXReferenceProxy`) is built from that project — its `MODULEMAP_FILE`, `SWIFT_INCLUDE_PATHS`, install name and versions read — and embedded as a versioned framework where a copy-files phase puts it. A lexer description (`.l`) in a sources phase is run through `lex` and its scanner compiled with the target's sources, a Core Data model compiled by `momc` into the bundle's resources, and a command-line tool of the project that a Mac app's copy-files phase copies is built, signed by itself and copied there. FUTURE.md's B-77 lists what each roster project asked for and what is still not read.
+A target's sources are its synchronized folders or the files its sources phase lists; Swift is compiled as one module, and Objective-C, C and C++ through clang a file at a time, each finding headers the way Xcode's header map finds them — every header the project references, by name and as `<Product/Header.h>` — with `GCC_PREFIX_HEADER` forced in, the Swift's `SWIFT_OBJC_INTERFACE_HEADER_NAME` beside them, `HEADER_SEARCH_PATHS`, `USER_HEADER_SEARCH_PATHS` (a `/**` entry recursive) and `FRAMEWORK_SEARCH_PATHS` read as folders of the project, and a file's own `COMPILER_FLAGS` after the target's. The frameworks phase's SDK frameworks and libraries are linked by name, a framework or library in the project's tree as the files it is, and a framework target of a referenced project (`PBXReferenceProxy`) is built from that project — its `MODULEMAP_FILE`, `SWIFT_INCLUDE_PATHS`, install name and versions read — and embedded as a versioned framework where a copy-files phase puts it. A lexer description (`.l`) in a sources phase is run through `lex` and its scanner compiled with the target's sources, a Core Data model compiled by `momc` into the bundle's resources, and a command-line tool of the project that a Mac app's copy-files phase copies is built, signed by itself and copied there. The asset catalogs are compiled with `ASSETCATALOG_COMPILER_APPICON_NAME`, `…_GLOBAL_ACCENT_COLOR_NAME` and `…_WIDGET_BACKGROUND_COLOR_NAME`, which actool names in the plist, and a generated plist takes every `INFOPLIST_KEY_*` setting that is not empty, `…_iPad` and `…_iPhone` as their `~ipad` and `~iphone` keys. FUTURE.md's B-77 lists what each roster project asked for and what is still not read.
 
 ### Building a CMake project
 
@@ -338,17 +380,31 @@ Beside each copy, `prepare` writes a lock — `Dependencies/GRDB.swift.semel-loc
 A folder is locked when a lock is in `input:` beside it — `Dependencies/GRDB.swift.semel-lock` beside `Dependencies/GRDB.swift`, the rule a build finds a lock by — and the lock is a write barrier. A batch that changes anything below a locked folder (a push, an `rm`, a link) lands only if it also brings the lock the folder then matches, or removes the lock; otherwise the outermost `commit` refuses it whole — every path it touched is put back, and nothing is built from it — and says why:
 
 ```
-Packages/Dependencies/GRDB.swift is locked, and the batch changes it without a lock it matches: nothing of the batch is committed
+❌ Packages/Dependencies/GRDB.swift is locked, and the batch changes it without a lock it matches: nothing of the batch is committed
   lock: Packages/Dependencies/GRDB.swift.semel-lock
   expected: sha256:9c1f…
   found: sha256:47d0…
   paths: Packages/Dependencies/GRDB.swift/GRDB/Core/Database.swift
+  input: as it was before the batch; nothing the batch pushed or removed is there
   re-lock with: semel-swift prepare
 ```
 
-`input:` is as it was before the batch, and no batch is open. `semel-swift prepare` vendors the folder again and writes its lock with it; removing the lock unlocks the folder.
+`input:` is as it was before the batch, and no batch is open. The refusal carries at most fifty of the paths and counts the rest, and the prompt names five and counts every other (`… and 20055 more`), so a whole package pushed against its lock is refused in one reply like any other. Every error the prompt prints starts with ❌.
 
-A push outside `begin` … `commit` is a batch of its own, so `push` and `build` are refused the same way, and `build` then stops with `Not built: the push was refused, and nothing was exported.` A lock that does not parse refuses the batch naming its line: a folder with a broken lock is locked shut, not open. `prepare` writes a copy and its lock together, so a `build` after it pushes both in one batch and lands. To change vendored code on purpose, take the lock out (`rm` it, and delete it from disk), which is a visible change to review; `prepare` puts the copy back as the lock describes it. `checkpoint` and `restore` go through the barrier too: a restore across a re-vendor brings the old lock back with the old copy.
+When the engine holds the tree the lock records — it has accepted the copy as its lock describes it, here or at another path — the refusal also names, after `found:`, what the folder lacks against that tree and what it holds that the tree does not, bounded and counted as the paths are, a folder on one side only named once with a trailing `/`:
+
+```
+  not pushed: Packages/Dependencies/Charts/LICENSE
+  not in the lock: Packages/Dependencies/Charts/Extra.swift
+```
+
+A lock's `content` is a hash `prepare` took of the disk, so a copy the engine has never held as its lock describes it cannot be compared name by name, and the refusal says `not compared: the engine holds no copy of the tree the lock records, …` instead.
+
+A push that reaches a locked folder pushes it whole, from the disk, as `push <folder>` does, and says so first: `push **/*.*` matches no name without a dot, such as Charts' `LICENSE`, and a part of a locked folder can only be refused, so the push prints `Pushing Packages/Dependencies/Charts whole: it is locked` and sends the folder. A file named below a locked folder, and the folder's lock pushed alone, widen the same way; nothing outside the locked folder is added.
+
+A push says what it did once its batch's fate is known. Outside `begin` … `commit` a long push ends `Pushed 20002 files and 1 folder` when its batch commits, and when the barrier refuses it the refusal above is led by `❌ push: 20002 files and 1 folder sent, and none of it committed`. Inside a batch it says `Sent 20002 files and 1 folder, pending the commit`, and `commit` says `Committed.` or prints the refusal. `semel-swift prepare` vendors the folder again and writes its lock with it; removing the lock unlocks the folder.
+
+A push outside `begin` … `commit` is a batch of its own, so `push` and `build` are refused the same way, and `build` then stops with `Not built: the push was refused, and nothing was exported.` A lock that does not parse refuses the batch naming its line: a folder with a broken lock is locked shut, not open. `prepare` writes a copy and its lock together, so a `build` after it pushes both in one batch and lands. That holds for a copy that lost files too — a release that renamed or dropped some: a push that brings a lock `input:` does not hold as the disk has it removes, in the same batch, what `input:` holds below that lock's folder and the disk does not, and says so (`Locked anew: Packages/Dependencies/Charts; with the push, taking out 5 files and 1 folder the copy no longer holds: …`), as `semel-watch` does on a change to a lock. The removal is part of the push's batch: if the barrier refuses it, the push says `sent, and none of it committed`, and the removal is taken back too. That is the one removal a push makes: a push that brings no new lock only adds, below a locked folder or anywhere else. To change vendored code on purpose, take the lock out (`rm` it, and delete it from disk), which is a visible change to review; `prepare` puts the copy back as the lock describes it. `checkpoint` and `restore` go through the barrier too: a restore across a re-vendor brings the old lock back with the old copy.
 
 A second `prepare` touches only what moved. SwiftPM resolves again, and each pin it chose is compared with the lock beside the copy: a copy whose lock records the same version, revision and origin, and whose folder still folds to the lock's `content`, is left as it is with its lock, so its root does not move and nothing built from it rebuilds. A pin that moved is copied and locked again, and so is a copy with no lock, a lock that does not parse, or a copy changed since its lock was written. The report says which, one line per package copied, then a count of the rest:
 
@@ -372,6 +428,9 @@ semel/           semel — the prompt; opens a connection to semelserv and nothi
   Transport/           SemelTransport: the wire for every client and server — frames over a
                        Unix socket or TCP, the client connection (correlation, streamed
                        replies, pipelining) and the listener with a connection per client
+  CacheClient/         SemelCacheClient: the engine's way to a shared cache — SemelCache's
+                       RemoteCache over the transport's TCP connection, which SemelServer
+                       installs from semel.engine.config
 semel-swift/     semel-swift — `prepare`: finds a tree's roots, vendors git dependencies,
                  writes semel.fmla and the two config files (SemelSwiftTool)
 semel-clang/     semel-clang — writes semel.machine.config for the clang tools
@@ -429,6 +488,9 @@ SemelCache/      What a build cache is, for the engine and a cache server alike 
   SQLiteCacheStore     The one implementation of the cache's tables, in the graph's database
                        and in a cache server's index (CacheIndexDatabase)
   CacheEviction        B-148's order — cost per byte, the last use's kept — and the trim
+  SharedCache          An engine's client of a shared cache over a RemoteCache: the fetch on a
+                       local miss, the population queue, the reconnection, the fetch policy
+                       (CacheFetchPolicy) and the figures `cache` shows
 SemelNodeKit/    Node-authoring API — no dependency on the engine
   Node                 Protocol for all build steps; wraps a NodeRecord
   NodeDescriptor       The ports a node type declares

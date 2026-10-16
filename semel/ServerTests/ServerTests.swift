@@ -341,9 +341,9 @@ final class ServerTests: RequestHandlerTestCase {
         _ = try interpreter.connect(subscribing: false)
         interpreter.handleCommand("push tree")
 
-        let refusals = lines.filter { $0.hasPrefix("push: ") }
+        let refusals = lines.filter { $0.hasPrefix("❌ push: ") }
         XCTAssertEqual(refusals.count, 1, "\(lines)")
-        XCTAssertTrue(refusals.first?.hasPrefix("push: tree/m/k/inner.c: ") == true, "\(refusals)")
+        XCTAssertTrue(refusals.first?.hasPrefix("❌ push: tree/m/k/inner.c: ") == true, "\(refusals)")
         // Every file but the refused one; how many folders the push names depends on which
         // the earlier push of `tree/m/k` left pinned, which is not what this pins.
         XCTAssertTrue(lines.contains { $0.hasPrefix("Pushed 200 files and ") }, "\(lines)")

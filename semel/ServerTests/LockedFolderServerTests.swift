@@ -88,7 +88,7 @@ final class LockedFolderServerTests: RequestHandlerTestCase {
         _ = try daemon(client, .pushFile(path: source, mode: 0o644), body: Data("public struct Pkg { let edited = 1 }\n".utf8))
         _ = try daemon(client, .pushFile(path: "App/main.swift", mode: 0o644), body: Data("print(1)\n".utf8))
 
-        guard case .error(.batchRejected(let folder, let lockPath, let expected, let found, let paths)) =
+        guard case .error(.batchRejected(let folder, let lockPath, let expected, let found, let paths, let pathsNotListed, _)) =
                 try daemon(client, .endBatch) else {
             return XCTFail("the commit was not refused")
         }
@@ -97,9 +97,31 @@ final class LockedFolderServerTests: RequestHandlerTestCase {
         XCTAssertEqual(expected, .contentRoot(try FolderContentRoot.root(ofFolderAt: disk.appendingPathComponent(package))))
         XCTAssertNotNil(found)
         XCTAssertEqual(paths, [source])
+        XCTAssertEqual(pathsNotListed, 0)
         XCTAssertEqual(held(source), "public struct Pkg {}\n", "the locked file is as it was")
         XCTAssertNil(held("App/main.swift"), "and so is every other path of the batch")
         client.close()
+    }
+
+    /// A refusal of more paths than the rejection names carries the first fifty, in path
+    /// order, and counts the rest, over a socket as a client receives it (B-161).
+    func test_aRefusalOfManyPathsCarriesFiftyAndCountsTheRest() throws {
+        let client = try SocketConnection.connect(to: socketPath)
+        defer { client.close() }
+        XCTAssertEqual(try daemon(client, .beginBatch), .daemon(.ok))
+        let pushed = (0..<1_000).map { "\(package)/Sources/Pkg/Many/File\(String(format: "%04d", $0)).swift" }
+        for path in pushed {
+            _ = try daemon(client, .pushFile(path: path, mode: 0o644), body: Data("let edited = 1\n".utf8))
+        }
+
+        guard case .error(.batchRejected(_, _, _, _, let paths, let pathsNotListed, _)) = try daemon(client, .endBatch) else {
+            return XCTFail("the commit was not refused")
+        }
+        // The files and the one folder they made: the batch's rows below the locked folder.
+        let changed = pushed.count + 1
+        XCTAssertEqual(paths.count, ErrorResponse.batchRejectedPathsListed)
+        XCTAssertEqual(paths, paths.sorted())
+        XCTAssertEqual(paths.count + pathsNotListed, changed, "\(paths)")
     }
 
     func test_aRefusedCommitLeavesNoBatchOpenAndTheNextOneIsItsOwn() throws {
@@ -118,7 +140,7 @@ final class LockedFolderServerTests: RequestHandlerTestCase {
     // MARK: - Batches of one, nested batches
 
     func test_aPushOutsideABatchIsCheckedAsABatchOfOne() throws {
-        guard case .batchRejected(let folder, _, _, _, let paths)? =
+        guard case .batchRejected(let folder, _, _, _, let paths, _, _)? =
                 daemonError(.pushFile(path: source, mode: 0o644), body: Data("edited\n".utf8)) else {
             return XCTFail("the push was not refused")
         }
@@ -159,6 +181,99 @@ final class LockedFolderServerTests: RequestHandlerTestCase {
         try daemon(.pushFile(path: lock, mode: 0o644), body: Data(try lockText().utf8))
         XCTAssertEqual(try daemon(.endBatch).0, .ok)
         XCTAssertEqual(held(source), "public struct Pkg { let version = 2 }\n")
+    }
+
+    // MARK: - What the refused folder lacks, by name (B-164)
+
+    /// A vendored copy holding a `LICENSE` with no extension, as Charts does, on disk at
+    /// `folder`, and its lock's text.
+    private func vendorLicensedCopy(at folder: String) throws -> String {
+        let files = ["Package.swift": "// swift-tools-version: 5.9\n", "LICENSE": "Apache License\n",
+                     "Sources/Lic/Lic.swift": "public struct Lic {}\n"]
+        for (path, text) in files {
+            let url = disk.appendingPathComponent(folder).appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+        return DependencyLock(contentRoot: try FolderContentRoot.root(ofFolderAt: disk.appendingPathComponent(folder)),
+                              fold: FolderContentRoot.formatTag).text
+    }
+
+    /// Pushes the copy at `folder` and its lock in one batch: `LICENSE` only when asked,
+    /// as a push of `**/*.*` leaves it out.
+    private func pushLicensedCopy(at folder: String, lockText: String, withLicense: Bool) -> Response {
+        _ = try? daemon(.beginBatch)
+        _ = try? daemon(.pushFile(path: "\(folder)/Package.swift", mode: 0o644), body: Data("// swift-tools-version: 5.9\n".utf8))
+        _ = try? daemon(.pushFile(path: "\(folder)/Sources/Lic/Lic.swift", mode: 0o644), body: Data("public struct Lic {}\n".utf8))
+        if withLicense {
+            _ = try? daemon(.pushFile(path: "\(folder)/LICENSE", mode: 0o644), body: Data("Apache License\n".utf8))
+        }
+        _ = try? daemon(.pushFile(path: "\(folder).semel-lock", mode: 0o644), body: Data(lockText.utf8))
+        return handler.handle(.daemon(.endBatch), body: nil, session: session).0
+    }
+
+    /// A push of a locked copy that leaves out its `LICENSE` is refused naming the file,
+    /// and the client prints it: here a second copy of a dependency whose tree the engine
+    /// holds at another path, as a tree with two packages vendoring one release has.
+    func test_aPartialPushIsRefusedNamingTheLicenseItLeftOut() throws {
+        let first  = "One/Dependencies/Lic"
+        let second = "Two/Dependencies/Lic"
+        let firstLock  = try vendorLicensedCopy(at: first)
+        let secondLock = try vendorLicensedCopy(at: second)
+        XCTAssertEqual(pushLicensedCopy(at: first, lockText: firstLock, withLicense: true), .daemon(.ok))
+
+        guard case .error(let rejection) = pushLicensedCopy(at: second, lockText: secondLock, withLicense: false),
+              case .batchRejected(let folder, _, _, _, _, _, let listing) = rejection else {
+            return XCTFail("the partial push was not refused")
+        }
+        XCTAssertEqual(folder, second)
+        XCTAssertEqual(listing, .compared(notPushed: ["\(second)/LICENSE"], notPushedNotListed: 0,
+                                          notInTheLock: [], notInTheLockNotListed: 0))
+        let printed = ServerError(response: rejection).description.components(separatedBy: "\n")
+        XCTAssertTrue(printed.contains("  not pushed: \(second)/LICENSE"), printed.joined(separator: "\n"))
+    }
+
+    /// A batch that takes a locked file out leaves the folder without it, which the
+    /// refusal names as the lock's and not pushed.
+    func test_aRemovalBelowALockedFolderIsRefusedNamingTheFileAsNotPushed() throws {
+        let folder   = "Dependencies/Lic"
+        let lockText = try vendorLicensedCopy(at: folder)
+        XCTAssertEqual(pushLicensedCopy(at: folder, lockText: lockText, withLicense: true), .daemon(.ok))
+
+        guard case .batchRejected(_, _, _, _, let paths, _, let listing)? = daemonError(.remove(pattern: "\(folder)/LICENSE")) else {
+            return XCTFail("the removal was not refused")
+        }
+        XCTAssertEqual(paths, ["\(folder)/LICENSE"])
+        XCTAssertEqual(listing, .compared(notPushed: ["\(folder)/LICENSE"], notPushedNotListed: 0,
+                                          notInTheLock: [], notInTheLockNotListed: 0))
+    }
+
+    /// A file the lock's tree does not hold is named as not in the lock, and a folder of
+    /// them once, by the folder.
+    func test_whatTheLockDoesNotCoverIsNamedNotInTheLock() throws {
+        try daemon(.beginBatch)
+        try daemon(.pushFile(path: "\(package)/Extra.swift", mode: 0o644), body: Data("let extra = 1\n".utf8))
+        try daemon(.pushFile(path: "\(package)/Added/One.swift", mode: 0o644), body: Data("let one = 1\n".utf8))
+        try daemon(.pushFile(path: "\(package)/Added/Deeper/Two.swift", mode: 0o644), body: Data("let two = 2\n".utf8))
+        guard case .batchRejected(_, _, _, _, _, _, let listing)? = daemonError(.endBatch) else {
+            return XCTFail("the commit was not refused")
+        }
+        XCTAssertEqual(listing, .compared(notPushed: [], notPushedNotListed: 0,
+                                          notInTheLock: ["\(package)/Added/", "\(package)/Extra.swift"],
+                                          notInTheLockNotListed: 0))
+    }
+
+    /// A locked copy the engine has never held as its lock describes it cannot be compared
+    /// name by name: the lock's root is a hash of the disk, and its documents are not in the
+    /// engine's store. The refusal says so.
+    func test_aLockWhoseTreeTheEngineNeverHeldIsNotComparedByName() throws {
+        let folder   = "Dependencies/Lic"
+        let lockText = try vendorLicensedCopy(at: folder)
+        guard case .error(.batchRejected(_, _, _, _, _, _, let listing)) =
+                pushLicensedCopy(at: folder, lockText: lockText, withLicense: false) else {
+            return XCTFail("the partial push was not refused")
+        }
+        XCTAssertEqual(listing, .lockTreeNotHeld)
     }
 
     // MARK: - Waking

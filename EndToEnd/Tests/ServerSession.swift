@@ -35,6 +35,9 @@ final class ServerSession {
 
     var logTail: String { process?.outputTail() ?? "" }
 
+    /// Everything the server printed: a debug build's log names what each lookup came to.
+    var log: String { process?.output ?? "" }
+
     func start() throws {
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         let process = ManagedProcess(executable: EndToEndRun.binary("semelserv"), arguments: [],

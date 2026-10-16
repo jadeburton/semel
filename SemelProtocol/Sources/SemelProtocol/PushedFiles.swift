@@ -64,6 +64,11 @@ public enum PushedFiles {
     /// Each file's bytes, cut from `body` by the headers' lengths. A body the headers do not
     /// account for exactly is refused whole: a length one short would shift every file
     /// after it, and storing those is worse than storing none.
+    ///
+    /// Each is a slice of `body`, sharing its storage, not a copy: a batch of pushed files
+    /// is up to its whole length again otherwise, held while the files are stored. A slice
+    /// keeps the body's indices, so it is read through its own `startIndex`, as `Data`
+    /// always is.
     public static func contents(of body: Data, by headers: [PushedFileHeader]) throws -> [Data] {
         var declared = 0
         for header in headers {
@@ -81,7 +86,7 @@ public enum PushedFiles {
         var start = body.startIndex
         for header in headers {
             let end = start + header.length
-            contents.append(body.subdata(in: start..<end))
+            contents.append(body[start..<end])
             start = end
         }
         return contents

@@ -85,6 +85,16 @@ struct SwiftFormulaConverter: Node {
     /// Apple package pins its namespaces under `apple.` rather than deriving them, so the
     /// names are spelled here and `SemelApple`'s tests hold them to these (B-77).
     static let assetCatalogCompilerNamespace  = "apple.assetCatalogCompiler"
+    /// The asset catalog compiler's literals asking for the catalogs' Swift symbols, as
+    /// `AssetSymbolSettings` in `SemelApple` reads them; spelled here because a toolchain
+    /// package does not import another.
+    static let assetSymbolsLiteral            = "swiftAssetSymbols"
+    static let assetSymbolBundleLiteral       = "assetSymbolBundleIdentifier"
+    static let assetSymbolExtensionsLiteral   = "swiftAssetSymbolExtensions"
+    /// Xcode's name for the file of symbols, which the compiler keys it by, and the port
+    /// the asset catalog compiler publishes it on.
+    static let assetSymbolsFile               = "GeneratedAssetSymbols.swift"
+    static let assetSymbolsPort               = "swiftAssetSymbols"
     static let stringCatalogCompilerNamespace = "apple.stringCatalogCompiler"
     static let ibToolCompilerNamespace        = "apple.ibToolCompiler"
 
@@ -146,13 +156,28 @@ struct SwiftFormulaConverter: Node {
     /// 25: an Objective-C target's preprocessor is given the module maps SwiftPM writes for
     /// the C targets it reaches, and both stages the Objective-C interface of each Swift
     /// target it reaches, which a product now compiles and links (B-77 item 4).
-    public static let implementationVersion = 25
+    /// 26: the reader it demands for a package is wired to the package's folder as well as
+    /// its `Package.swift`, and lays the version-specific manifests the folder holds (B-80).
+    /// 27: a target at its package's root leaves the manifest files out of its sources; a
+    /// target's asset catalogs are compiled in one run, `assets<Target>()`, and a Swift
+    /// target compiles the Swift that run writes for their symbols; the flat resource
+    /// bundle has an Info.plist, and both state the package's `defaultLocalization` (B-77,
+    /// Backyard Birds).
+    /// 28: a C target with resources and Objective-C sources compiles the bundle accessor
+    /// SwiftPM generates for it, `ResourceBundleAccessorWriter`'s source, and every source
+    /// of it is preprocessed with the accessor's header as its `prefixHeader`, so
+    /// `SWIFTPM_MODULE_BUNDLE` is defined (B-55 item 8).
+    /// 29: the accessor's two files are under the input root's `.DerivedSources`, outside
+    /// every target's folder, so no umbrella directory takes the header into a module (B-165).
+    public static let implementationVersion = 29
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
     /// reported as unused keys on every build. A package's objects go into an archive
-    /// or the Swift linker's product, so `clang.linker` is not among them.
-    static let configNamespaces: [String] = swiftConfigNamespaces + clangConfigNamespaces
+    /// or the Swift linker's product, so `clang.linker` is not among them. A target's
+    /// asset catalogs are compiled whenever the target is, for the symbols its compile
+    /// reads, so their compiler is.
+    static let configNamespaces: [String] = swiftConfigNamespaces + clangConfigNamespaces + [assetCatalogCompilerNamespace]
 
     /// What every package's formula selects from.
     static let swiftConfigNamespaces: [String] = [
@@ -453,6 +478,12 @@ struct SwiftFormulaConverter: Node {
                 PackageResources.isWalked(folderName: Path(subfolder).lastComponent ?? subfolder)
             }
             folderManifests.merge(reached) { existing, _ in existing }
+        }
+        rootManifest = rootManifest.excludingManifestFiles(packageFolder: rootPackageFolder,
+                                                           listing: folderManifests[rootPackageFolder])
+        for folder in availableManifests.keys.sorted() {
+            availableManifests[folder] = availableManifests[folder]?.excludingManifestFiles(packageFolder: folder,
+                                                                                            listing: folderManifests[folder])
         }
 
         // The platform is the SDK the product's linker links against, by its own default
@@ -877,13 +908,20 @@ struct SwiftFormulaConverter: Node {
     /// folder holding `packageFilePath`: configuration is a property of the build, not of the
     /// package being read, and a consuming project cannot write a config file inside a
     /// vendored dependency it does not own.
+    ///
+    /// The reader takes the package's folder too: which `Package@swift-<version>.swift`
+    /// files sit beside `Package.swift` is in its listing, and which of them SwiftPM reads
+    /// is the tool's to decide (`SwiftPackageReader.isVersionSpecificManifest`). The folder
+    /// is the one the converter waits for when the package has not arrived, one node.
     static func packageReaderSpec(packageFilePath: String,
-                                         rootPackageFolder: String) -> GraphSpecNode {
-        GraphSpecNode(SwiftPackageReader.self, inputs: [
+                                  rootPackageFolder: String) -> GraphSpecNode {
+        let packageFolder = Path(packageFilePath).deletingLastComponent.map { $0.string } ?? packageFilePath
+        return GraphSpecNode(SwiftPackageReader.self, inputs: [
             SwiftPackageReader.configuration: ["config": configurationTree(namespace: SwiftPackageReaderConfiguration.settingNamespace,
                                                                           packageFolder: rootPackageFolder,
                                                                           literals: [:])],
-            SwiftPackageReader.packageFile: [packageFilePath: .staticFile(at: packageFilePath)],
+            SwiftPackageReader.packageFile:   [packageFilePath: .staticFile(at: packageFilePath)],
+            SwiftPackageReader.packageFolder: [packageFolder: .folderManifest(at: packageFolder)],
         ]).port(SwiftPackageReader.packageJSON)
     }
 
@@ -912,6 +950,9 @@ struct SwiftFormulaConverter: Node {
         /// `swift-tools-version:6.0`, 5 from 5.x. nil when neither says, which passes no
         /// `-swift-version` and leaves swiftc its default.
         let languageMode: String?
+        /// `defaultLocalization:`, the language a resource bundle of the package is developed
+        /// in; nil when the manifest names none.
+        let defaultLocalization: String?
 
         /// The manifest with each target that names no folder given the one found for it,
         /// relative to the package, by target name (`DefaultTargetFolders`).
@@ -923,8 +964,30 @@ struct SwiftFormulaConverter: Node {
             return placed
         }
 
+        /// The manifest with the package's own manifest files excluded from every target
+        /// whose folder is the package's (`path: "."`, Backyard Birds' three packages), as
+        /// SwiftPM leaves `Package.swift` and every `Package@swift-….swift` beside it out of
+        /// a target's sources. Read from the folder's listing, so a version-specific manifest
+        /// is excluded by the name it has; a target in a folder of its own is left alone,
+        /// since only the package's folder holds a manifest.
+        func excludingManifestFiles(packageFolder: String, listing: FolderManifest?) -> SPMManifest {
+            let manifestFiles = (listing?.entries ?? [])
+                .filter { !$0.isFolder && SwiftFormulaConverter.isManifestFileName($0.name) }
+                .map(\.name)
+                .sorted()
+            guard !manifestFiles.isEmpty else {
+                return self
+            }
+            var excluding = self
+            for index in excluding.targets.indices where excluding.targets[index].folder(in: packageFolder) == packageFolder {
+                let exclude = excluding.targets[index].exclude
+                excluding.targets[index].exclude = exclude + manifestFiles.filter { !exclude.contains($0) }
+            }
+            return excluding
+        }
+
         enum CodingKeys: String, CodingKey {
-            case name, targets, products, dependencies, toolsVersion, swiftLanguageVersions, traits
+            case name, targets, products, dependencies, toolsVersion, swiftLanguageVersions, traits, defaultLocalization
         }
 
         /// `{"_version": "6.2.0"}`.
@@ -953,6 +1016,7 @@ struct SwiftFormulaConverter: Node {
             let declaredModes = (try? c.decodeIfPresent([String].self, forKey: .swiftLanguageVersions)) ?? nil
             languageMode = SwiftFormulaConverter.packageLanguageMode(toolsVersion: toolsVersion?.version,
                                                                      declaredModes: declaredModes)
+            defaultLocalization = (try? c.decodeIfPresent(String.self, forKey: .defaultLocalization)) ?? nil
         }
 
         static func decode(_ json: String) throws -> SPMManifest {
@@ -1168,8 +1232,9 @@ struct SwiftFormulaConverter: Node {
         /// Explicit `sources:` list, relative to the target's path.  Empty means the whole
         /// directory, which is the usual case.
         let sources: [String]
-        /// `exclude:` list, relative to the target's path.
-        let exclude: [String]
+        /// `exclude:` list, relative to the target's path, with the package's manifest
+        /// files for a target at the package's root (`SPMManifest.excludingManifestFiles`).
+        var exclude: [String]
         /// The target's `swiftSettings` a compile carries, in manifest order, each with the
         /// platforms it is conditional on (B-77): upcoming and experimental features,
         /// `.define`, `.unsafeFlags` and `.swiftLanguageMode`. Decided for the platform being
@@ -1211,6 +1276,10 @@ struct SwiftFormulaConverter: Node {
         /// Non-decoded. The name of the package the target belongs to, for its bundle.
         var packageName: String?
 
+        /// Non-decoded. The `defaultLocalization` of the package the target belongs to,
+        /// which its resource bundle is developed in.
+        var packageDefaultLocalization: String?
+
         /// Non-decoded. The language mode of the package the target belongs to, which the
         /// target compiles in unless it declares its own (`SPMManifest.languageMode`).
         var packageLanguageMode: String?
@@ -1236,6 +1305,10 @@ struct SwiftFormulaConverter: Node {
         }
 
         var isClangTarget: Bool { clangInfo != nil }
+
+        /// Whether the target's resources hold an asset catalog, all of which one
+        /// `assets<Target>()` compiles.
+        var hasAssetCatalog: Bool { resources.contains { $0.kind == .assetCatalog } }
 
         /// Whether a linker or Swift setting holds on some platforms only, so the conversion
         /// has to know which platform is being built.
@@ -1855,6 +1928,7 @@ struct SwiftFormulaConverter: Node {
             let manifest = packageFolder.flatMap { externalManifests[$0] } ?? rootManifest
             placed.packageName = manifest.name
             placed.packageLanguageMode = manifest.languageMode
+            placed.packageDefaultLocalization = manifest.defaultLocalization
             // A dependency conditional on platforms is one only where it holds, as SwiftPM
             // builds it; the package is vendored whatever the platform, as SwiftPM
             // resolves it (`referencedDependencies`).
@@ -2059,6 +2133,10 @@ struct SwiftFormulaConverter: Node {
                 if emittedFuncs.insert(fn).inserted {
                     blocks += resourceBundleFuncDefs(target: target, rootPackageFolder: rootPackageFolder)
                 }
+                if emittedFuncs.insert(assetCatalogFuncName(for: target.name)).inserted,
+                   let assets = assetCatalogFuncDef(target: target, rootPackageFolder: rootPackageFolder) {
+                    blocks.append(assets)
+                }
                 bundleWires.append("        '\(target.name)': \(fn)().files")
                 macBundleWires.append("        '\(target.name)': \(FormulaIdentifier.macBundleFunc(forTarget: target.name))().files")
             }
@@ -2071,9 +2149,9 @@ struct SwiftFormulaConverter: Node {
             for target in clangTargets {
                 let fn = preprocessorFuncName(for: target.name)
                 guard !emittedFuncs.contains(fn) else { continue }
-                blocks.append(buildPreprocessorFuncDef(target: target,
-                                                       packageFolder: rootPackageFolder,
-                                                       lookupAll: allTargetsNamed))
+                blocks += buildPreprocessorFuncDef(target: target,
+                                                   packageFolder: rootPackageFolder,
+                                                   lookupAll: allTargetsNamed)
                 emittedFuncs.insert(fn)
             }
 
@@ -2535,8 +2613,13 @@ struct SwiftFormulaConverter: Node {
         for target in swiftTargets where emittedFuncs.insert(compilerFuncName(for: target.name)).inserted {
             blocks.append(try buildFuncDef(target: target, packageFolder: packageFolder, platform: platform, lookupAll: lookupAll))
         }
+        for target in swiftTargets where emittedFuncs.insert(assetCatalogFuncName(for: target.name)).inserted {
+            if let assets = assetCatalogFuncDef(target: target, rootPackageFolder: packageFolder) {
+                blocks.append(assets)
+            }
+        }
         for target in clangTargets where emittedFuncs.insert(preprocessorFuncName(for: target.name)).inserted {
-            blocks.append(buildPreprocessorFuncDef(target: target, packageFolder: packageFolder, lookupAll: lookupAll))
+            blocks += buildPreprocessorFuncDef(target: target, packageFolder: packageFolder, lookupAll: lookupAll)
         }
 
         let linkerConfig = Self.configurationExpression(
@@ -2578,6 +2661,12 @@ struct SwiftFormulaConverter: Node {
         let target:  String
     }
 
+    /// Whether a file in a package's folder is one of its manifests, as SwiftPM tells them:
+    /// `Package.swift`, or a version-specific `Package@swift-5.9.swift`.
+    static func isManifestFileName(_ name: String) -> Bool {
+        name == "Package.swift" || (name.hasPrefix("Package@") && name.hasSuffix(".swift"))
+    }
+
     /// SwiftPM's `c99name`: `semel-clang` is the module `semel_clang`, `3d-kit` is `_3d_kit`.
     static func c99Identifier(_ name: String) -> String {
         var identifier = String(name.map { character -> Character in
@@ -2600,6 +2689,15 @@ struct SwiftFormulaConverter: Node {
 
     private func preprocessorFuncName(for targetName: String) -> String {
         "preprocess\(sanitizedIdentifier(targetName))"
+    }
+
+    /// The preprocessor of the bundle accessor SwiftPM generates for a target (B-55 item 8).
+    private func accessorPreprocessorFuncName(for targetName: String) -> String {
+        "preprocessBundleAccessor\(sanitizedIdentifier(targetName))"
+    }
+
+    private func assetCatalogFuncName(for targetName: String) -> String {
+        "assets\(sanitizedIdentifier(targetName))"
     }
 
     private func headerTreeFuncName(for targetName: String) -> String {
@@ -2777,7 +2875,7 @@ struct SwiftFormulaConverter: Node {
     /// ends the formula's string — the limit `sourcePaths` has on the Swift side.
     private func buildPreprocessorFuncDef(target: SPMTarget,
                                           packageFolder: String,
-                                          lookupAll: (String) -> [SPMTarget]) -> String {
+                                          lookupAll: (String) -> [SPMTarget]) -> [String] {
         let folder = target.folder(in: target.overridePackageFolder ?? packageFolder)
         var folders = [folder]
         let ownHeaders = headerFolder(of: target, packageFolder: packageFolder)
@@ -2824,14 +2922,57 @@ struct SwiftFormulaConverter: Node {
         let configExpr = Self.configurationExpression(namespace: Self.clangPreprocessorNamespace,
                                                       packageFolder: buildRoot(defaultingTo: packageFolder),
                                                       literals: literals)
-        return "func \(preprocessorFuncName(for: target.name))(path) =\n" +
-               "    ClangPreprocessor(\n" +
-               "        configuration: ['config': \(configExpr)],\n" +
-               "        input: [path: StaticFile(path: path)],\n" +
-               "        headerFolders: [\n" + folderWires.joined(separator: ",\n") + "\n        ]" +
-               (headerTrees.isEmpty ? "" : ",\n        headerTrees: [\n" + headerTrees.joined(separator: ",\n") + "\n        ]") +
-               "\n    )"
+        let accessor = resourceBundleAccessor(of: target, packageFolder: packageFolder)
+        func preprocessor(input: String) -> String {
+            "    ClangPreprocessor(\n" +
+            "        configuration: ['config': \(configExpr)],\n" +
+            "        input: [\(input)],\n" +
+            "        headerFolders: [\n" + folderWires.joined(separator: ",\n") + "\n        ]" +
+            (accessor.map { ",\n        prefixHeader: ['\($0.headerPath)': \($0.writer).\(ResourceBundleAccessorWriter.headerPort)]" } ?? "") +
+            (headerTrees.isEmpty ? "" : ",\n        headerTrees: [\n" + headerTrees.joined(separator: ",\n") + "\n        ]") +
+            "\n    )"
+        }
+        var blocks = ["func \(preprocessorFuncName(for: target.name))(path) =\n" + preprocessor(input: "path: StaticFile(path: path)")]
+        if let accessor {
+            blocks.append("func \(accessorPreprocessorFuncName(for: target.name))() =\n"
+                          + preprocessor(input: "'\(accessor.sourcePath)': \(accessor.writer).\(ResourceBundleAccessorWriter.sourcePort)"))
+        }
+        return blocks
     }
+
+    /// The bundle accessor SwiftPM generates for a C-family target with resources and
+    /// Objective-C sources, nil for any other target (B-55 item 8): the writer of its two
+    /// files, and the paths they are given among the target's inputs.
+    ///
+    /// The paths are under `.DerivedSources` at the input root, after SwiftPM's
+    /// `DerivedSources`, at the target folder's path below it, so each target's are its own.
+    /// Never inside the target's folder: a target whose public headers are its folder
+    /// (`publicHeadersPath: "."`, FirebaseCoreExtension) has that folder as its module's
+    /// umbrella directory, which takes in every header below it, hidden folders included.
+    /// An accessor header in the module, forced in with `-include`, is one `clang -E` closes
+    /// without opening, and no compile of that text succeeds (B-165). SwiftPM keeps its
+    /// derived sources in its build folder, outside every target, which has the same effect.
+    /// Nothing pushes the paths, the writer's outputs being the only values the wires carry.
+    /// The header is the preprocessor's `prefixHeader` for every source of the target, the
+    /// accessor's own among them, so a change to it is a changed input of each.
+    private func resourceBundleAccessor(of target: SPMTarget,
+                                        packageFolder: String) -> (writer: String, headerPath: String, sourcePath: String)? {
+        guard target.clangInfo?.hasObjectiveC == true, !target.resources.isEmpty else {
+            return nil
+        }
+        let targetFolder = Path(target.folder(in: target.overridePackageFolder ?? packageFolder))
+        let belowRoot    = targetFolder.firstComponent == FileSystemName.input ? Array(targetFolder.segments.dropFirst())
+                                                                               : targetFolder.segments
+        let derived      = Path(segments: [FileSystemName.input, Self.derivedSourcesFolderName] + belowRoot)
+        let writer = "ResourceBundleAccessorWriter(bundleName: '\(target.resourceBundleName)', moduleName: '\(target.moduleName)')"
+        return (writer,
+                derived.appending(ResourceBundleAccessorWriter.headerFileName).string,
+                derived.appending(ResourceBundleAccessorWriter.sourceFileName).string)
+    }
+
+    /// The folder at the input root the files SwiftPM derives for a C target are placed
+    /// under, at the target folder's path.
+    static let derivedSourcesFolderName = ".DerivedSources"
 
     /// The linker's object entries for one C target: one for-each over the target's
     /// sources at any depth — a `**/*.<ext>` per extension its tree holds — less what its
@@ -2888,6 +3029,12 @@ struct SwiftFormulaConverter: Node {
             entries.append("        {f: \(items(clangInfo.assemblyPatterns))} \"%%f%%.o\": ClangCompiler(" +
                            "configuration: ['config': \(configExpr)], " +
                            "input: [\"%%f%%\": StaticFile(path: f)])")
+        }
+        // The bundle accessor SwiftPM generates is one more Objective-C source of the target.
+        if let accessor = resourceBundleAccessor(of: target, packageFolder: packageFolder) {
+            entries.append("        '\(accessor.sourcePath).o': ClangCompiler(" +
+                           "configuration: ['config': \(configExpr)], " +
+                           "input: ['\(accessor.sourcePath).p': \(accessorPreprocessorFuncName(for: target.name))()]\(moduleTrees))")
         }
         return entries
     }
@@ -3034,6 +3181,12 @@ struct SwiftFormulaConverter: Node {
         if !macroWires.isEmpty {
             args += ",\n    macroExecutables: [\n" + macroWires.joined(separator: ",\n") + "\n    ]"
         }
+        // The Swift actool writes for the target's catalogs, compiled with its sources as
+        // Xcode compiles a package target's `GeneratedAssetSymbols.swift`.
+        if target.hasAssetCatalog {
+            args += ",\n    \(SwiftCompiler.inputExtraSourceFiles): [\n" +
+                    "            '\(Self.assetSymbolsFile)': \(assetCatalogFuncName(for: target.name))().\(Self.assetSymbolsPort)\n    ]"
+        }
         return "func \(compilerFuncName(for: target.name))() =\n    SwiftCompiler(\n\(args)\n    )"
     }
 
@@ -3043,8 +3196,9 @@ struct SwiftFormulaConverter: Node {
     /// a copied folder as the folder it is,
     /// and every copied file in one tree. The Apple compilers select their settings from
     /// the root's config, as the Swift tools do. Three funcs: what the bundle holds, the
-    /// bundle as SwiftPM lays it out — flat — and as Xcode lays it out on the Mac, its
-    /// resources in `Contents/Resources/` beside `Contents/Info.plist`; a consumer names the
+    /// bundle laid out flat, its `Info.plist` beside the resources, as Xcode lays it out on
+    /// iOS, and as Xcode lays it out on the Mac, its resources in `Contents/Resources/`
+    /// beside `Contents/Info.plist`; a consumer names the
     /// one its platform wants and the other is never made.
     private func resourceBundleFuncDefs(target: SPMTarget, rootPackageFolder: String) -> [String] {
         let pkgRoot      = target.overridePackageFolder ?? rootPackageFolder
@@ -3052,15 +3206,16 @@ struct SwiftFormulaConverter: Node {
         let configRoot   = buildRoot(defaultingTo: rootPackageFolder)
         var wires: [String] = []
         var copiedFiles: [String] = []
+        if target.hasAssetCatalog {
+            wires.append("        'assets': \(assetCatalogFuncName(for: target.name))().files")
+        }
         for (index, resource) in target.resources.enumerated() {
             let fullPath = PackageResources.fullPath(targetFolder: targetFolder, relative: resource.path)
             let name     = (resource.path as NSString).lastPathComponent
             switch resource.kind {
             case .assetCatalog:
-                let configuration = Self.configurationExpression(namespace: Self.assetCatalogCompilerNamespace,
-                                                                 packageFolder: configRoot, literals: [:])
-                wires.append("        'r\(index)': AssetCatalogCompiler(configuration: ['config': \(configuration)], "
-                           + "catalogs: ['\(name)': Folder(path: '\(fullPath)').manifest]).files")
+                // Every catalog in one run, `assetCatalogFuncDef`.
+                continue
             case .stringCatalog:
                 let configuration = Self.configurationExpression(namespace: Self.stringCatalogCompilerNamespace,
                                                                  packageFolder: configRoot, literals: [:])
@@ -3093,29 +3248,84 @@ struct SwiftFormulaConverter: Node {
                 wires.joined(separator: ",\n") + "\n" +
                 "    ]).files",
                 "func \(FormulaIdentifier.bundleFunc(forTarget: target.name))() =\n" +
-                "    TreeMerger(under: '\(bundleName).bundle', input: ['contents': \(contents)]).files",
+                "    TreeMerger(under: '\(bundleName).bundle', input: [\n" +
+                "        'contents': \(contents),\n" +
+                "        'plist': TreeBuilder(input: ['Info.plist': InfoPlistBuilder(keys: '\(Self.bundleInfoPlistKeys(target: target, packageFolder: pkgRoot, platforms: nil))').plist]).files\n" +
+                "    ]).files",
                 "func \(FormulaIdentifier.macBundleFunc(forTarget: target.name))() =\n" +
                 "    TreeMerger(under: '\(bundleName).bundle/Contents', input: [\n" +
                 "        'resources': TreeMerger(under: 'Resources', input: ['contents': \(contents)]).files,\n" +
-                "        'plist': TreeBuilder(input: ['Info.plist': InfoPlistBuilder(keys: '\(Self.macBundleInfoPlistKeys(target: target, packageFolder: pkgRoot))').plist]).files\n" +
+                "        'plist': TreeBuilder(input: ['Info.plist': InfoPlistBuilder(keys: '\(Self.bundleInfoPlistKeys(target: target, packageFolder: pkgRoot, platforms: ["MacOSX"]))').plist]).files\n" +
                 "    ]).files"]
     }
 
-    /// The Info.plist Xcode writes into a package's resource bundle on the Mac, less the
-    /// build machine's and SDK's `DT…` keys: its identifier is the package's identity — its
-    /// folder's name in lower case, as SwiftPM's identity of a git or local package is —
-    /// then the target and `resources` (`grdb.swift.GRDB.resources`). A JSON dictionary,
-    /// sorted, with no apostrophe to end the formula literal it is written in.
-    private static func macBundleInfoPlistKeys(target: SPMTarget, packageFolder: String) -> String {
+    /// The func compiling every asset catalog of one target in one actool run, as Xcode
+    /// compiles a target's catalogs into one `Assets.car`: two runs would each write one,
+    /// and the bundle's merge would refuse the pair. A Swift target's run also writes the
+    /// Swift Xcode generates for the catalogs' colors and images, `ImageResource.floor1`,
+    /// which its compile takes as `GeneratedAssetSymbols.swift` (`buildFuncDef`). The
+    /// arguments are Xcode's for a package target (Xcode 26.6, Backyard Birds): the
+    /// target's identifier, `backyardbirdsdata.BackyardBirdsData`, which no line of the
+    /// text holds — it reads the bundle through `Bundle.module` under `SWIFT_PACKAGE`,
+    /// which every package compile defines — and the symbol types alone, no extensions on
+    /// SwiftUI's and the platform's own types. A package declaring
+    /// `Color.premiumBirdFood` itself over its `ColorResource.premiumBirdFood` compiles
+    /// because of the second. Nil for a target with no catalog.
+    private func assetCatalogFuncDef(target: SPMTarget, rootPackageFolder: String) -> String? {
+        let pkgRoot      = target.overridePackageFolder ?? rootPackageFolder
+        let targetFolder = target.folder(in: pkgRoot)
+        let catalogs = target.resources.filter { $0.kind == .assetCatalog }.map { resource in
+            let fullPath = PackageResources.fullPath(targetFolder: targetFolder, relative: resource.path)
+            return "            '\((resource.path as NSString).lastPathComponent)': Folder(path: '\(fullPath)').manifest"
+        }
+        guard !catalogs.isEmpty else {
+            return nil
+        }
+        var literals: [String: String] = [:]
+        if !target.isClangTarget {
+            literals = [Self.assetSymbolsLiteral:          "YES",
+                        Self.assetSymbolBundleLiteral:     Self.targetIdentifier(target: target, packageFolder: pkgRoot),
+                        Self.assetSymbolExtensionsLiteral: "NO"]
+        }
+        let configuration = Self.configurationExpression(namespace: Self.assetCatalogCompilerNamespace,
+                                                         packageFolder: buildRoot(defaultingTo: rootPackageFolder),
+                                                         literals: literals)
+        return "func \(assetCatalogFuncName(for: target.name))() =\n" +
+               "    AssetCatalogCompiler(\n" +
+               "        configuration: ['config': \(configuration)],\n" +
+               "        catalogs: [\n" + catalogs.joined(separator: ",\n") + "\n        ]\n" +
+               "    )"
+    }
+
+    /// The identifier Xcode gives a package target: the package's identity — its folder's
+    /// name in lower case, as SwiftPM's identity of a remote or local package is — then the
+    /// target (`grdb.swift.GRDB`).
+    private static func targetIdentifier(target: SPMTarget, packageFolder: String) -> String {
         let identity = (Path(packageFolder).lastComponent ?? packageFolder).lowercased()
-        let keys: [String: Any] = [
-            "CFBundleDevelopmentRegion":     "en",
-            "CFBundleIdentifier":            "\(identity).\(target.name).resources",
+        return "\(identity).\(target.name)"
+    }
+
+    /// The Info.plist Xcode writes into a package's resource bundle, less the build
+    /// machine's and SDK's `DT…` keys: its identifier is the target's, then `resources`
+    /// (`grdb.swift.GRDB.resources`), and its development region the package's
+    /// `defaultLocalization`, or `en`, Xcode's own. The flat bundle has one as the Mac's
+    /// does: without `CFBundleDevelopmentRegion`, a bundle whose development language's
+    /// strings live in the source alone and so has no `en.lproj` resolves a lookup through
+    /// whichever of its `.lproj` folders `Bundle` prefers, and the iOS app showed Backyard
+    /// Birds' backyard names in Hebrew. The flat bundle is platform-blind, so it states no
+    /// platform (`platforms` nil); the Mac's states `MacOSX`. A JSON dictionary, sorted,
+    /// with no apostrophe to end the formula literal it is written in.
+    private static func bundleInfoPlistKeys(target: SPMTarget, packageFolder: String, platforms: [String]?) -> String {
+        var keys: [String: Any] = [
+            "CFBundleDevelopmentRegion":     target.packageDefaultLocalization ?? "en",
+            "CFBundleIdentifier":            targetIdentifier(target: target, packageFolder: packageFolder) + ".resources",
             "CFBundleInfoDictionaryVersion": "6.0",
             "CFBundleName":                  target.resourceBundleName,
             "CFBundlePackageType":           "BNDL",
-            "CFBundleSupportedPlatforms":    ["MacOSX"],
         ]
+        if let platforms {
+            keys["CFBundleSupportedPlatforms"] = platforms
+        }
         let data = (try? JSONSerialization.data(withJSONObject: keys, options: [.sortedKeys])) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self).replacingOccurrences(of: "'", with: "\\u0027")
     }
