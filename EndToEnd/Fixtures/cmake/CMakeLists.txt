@@ -1,4 +1,4 @@
-# A CMake project as semel-cmake reads it (B-157): a static library in a subdirectory with
+# A CMake project as semel-cmake reads it (B-166): a static library in a subdirectory with
 # a public include folder and a private define, and an executable over it. No formula is
 # committed beside this file: the harness runs `semel-cmake` over the folder, which
 # writes semel.fmla and semel.config from this file and greet/CMakeLists.txt, and then

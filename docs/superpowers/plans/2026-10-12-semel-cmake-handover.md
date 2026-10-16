@@ -1,4 +1,4 @@
-# Handover: `semel-cmake` and the `SemelCMake` package (B-157)
+# Handover: `semel-cmake` and the `SemelCMake` package (B-166)
 
 Written 2026-10-12 by a cloud session that had no Swift toolchain, for the Mac session
 that takes the branch over. Everything below was verified through the repository's own
@@ -16,11 +16,11 @@ no pull request has been opened for it.
     passed in both attempts.
   - 38188664167 on `5f3b535` (main merged in): green, every step, the CMake fixture
     through all four hermeticity builds.
-- Backlog: the translator is **B-157** (`FUTURE.md`, section "CMake and makefile
+- Backlog: the translator is **B-166** (`FUTURE.md`, section "CMake and makefile
   conversion"); main took B-156 for the removal test. Every comment and the fixture say
-  B-157. The three earliest commit messages still say B-156, which cannot be changed.
+  B-166. The three earliest commit messages still say B-156, which cannot be changed.
 - What a reviewer should know first: `AGENTS.md` and `README.md` already describe the
-  tool; `FUTURE.md`'s B-157 entry records the design decision and the "As built" state.
+  tool; `FUTURE.md`'s B-166 entry records the design decision and the "As built" state.
 
 ## What was built, and the rules it was built under
 
