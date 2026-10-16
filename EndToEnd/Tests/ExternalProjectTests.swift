@@ -294,6 +294,6 @@ final class ExternalProjectTests: XCTestCase {
         XCTAssertEqual(Set(Projects.external.map(\.name)),
                        ["icecubes", "icecubes-app", "semel", "lua", "sqlite", "simdjson", "food-truck", "food-truck-mac",
                         "netnewswire-mac", "netnewswire-ios", "codeedit", "sequel-ace", "swift-dependencies", "swift-syntax",
-                        "backyard-birds-mac", "backyard-birds-ios"])
+                        "backyard-birds-mac", "backyard-birds-ios", "sqlite-cmake", "cjson", "libtommath", "tinyxml2", "pugixml"])
     }
 }
