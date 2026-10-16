@@ -935,21 +935,34 @@ a `Project.converter` names the tool the harness runs over the build folder afte
 machine file is written, as it runs `prepare`, and the four hermeticity builds build what
 the tool wrote.
 
-*Two real projects, 2026-10-16.* The roster's `sqlite` checkout (the amalgamation mirror)
-translates to its three targets with the project's defines, every refusal a
-configure-time check (`check_include_file`, `configure_file` and kin), and the formula
-builds untouched: the `sqlite3` shell links and reports its version. The roster's
-`simdjson` checkout translates its library, but the formula does not build, because the
-project adds its include folders through a function of its own, and a user-defined
-function is refused by design; one `headerFolders` line by hand mends it. So far the
-subset holds: the one refusal that blocked a target is one the design refuses on purpose.
+*Real projects, 2026-10-16.* Five CMake projects are in the roster as they are — no
+overlay, no formula of the roster's, `semel-cmake` over the checkout's own files and the
+four hermeticity builds over what it wrote: the SQLite amalgamation mirror (`sqlite-cmake`,
+three targets, sixteen defines, a shared library), cJSON 1.7.19 (a dozen options, a tests
+subdirectory linking the shared library), LibTomMath 1.3.0 (154 sources into one archive),
+TinyXML-2 11.0.0 and pugixml 1.16. Ten were tried; those five build with every refusal
+configure-time. Three of the tries found translator bugs, fixed the same day: a file with
+Windows line ends read as one unending line and translated nothing, silently (tinyxml2);
+a generator expression spread over three lines was a thrown error rather than a refusal
+(pugixml); and `CMAKE_VERSION` was undecidable, which skipped a `project()` call in both
+branches (miniz) — it is a fact now, and `VERSION_*` comparisons are decided except where
+a side names a compiler's or the system's version, which stays undecidable by name. The
+rest were blocked by design: a generated header (miniz's `generate_export_header`,
+cmark's `cmark_export.h`), `check_include_file` results the sources need (zlib's
+`HAVE_UNISTD_H`), a user-defined function adding the include folders (simdjson), and
+generator expressions on the include folders (libyaml's `$<BUILD_INTERFACE:…>`). The
+last is the most common blocker after user-defined functions, and the one subset addition
+the tries argue for: `BUILD_INTERFACE`, `INSTALL_INTERFACE`, `BOOL`, `NOT`, `AND`, `OR`,
+`CONFIG` and the compiler-identity tests are pure over the facts.
 
 Not yet: the makefile side, which shares the emitter and the flag-splitting rule and
 adds a rule resolver and a recipe classifier, and wants a decision first on whether it
-ends in `CMakeProject` or in a Semel-vocabulary description both feed; `configure_file`;
-Objective-C sources, which the clang nodes take but the emitter does not yet mark;
-`-install_name` and the rest a shared library's link line wants; a define holding a comma
-or a quote, which no setting can carry.
+ends in `CMakeProject` or in a Semel-vocabulary description both feed; the pure
+generator expressions above; `configure_file`; Objective-C sources, which the clang
+nodes take but the emitter does not yet mark; `-install_name` and the rest a shared
+library's link line wants — cJSON's test executables link `libcjson.dylib` and find it
+by the name the linker gave the output, so they build but do not launch beside it; a
+define holding a comma or a quote, which no setting can carry.
 
 ### Cache
 

@@ -290,6 +290,99 @@ enum Projects {
         expectedProducts: ["libsimdjson.a", "amalgamate_demo"],
         buildTimeout: 5 * 60)
 
+    // MARK: CMake projects, translated (B-166)
+
+    // Real CMake projects brought in as they are: no overlay, no formula of the roster's,
+    // `semel-cmake` over the checkout's own CMakeLists.txt, and the four hermeticity builds
+    // over what it wrote. What each refuses is configure-time — version checks, install
+    // rules, pkg-config files, `check_*` probes — and never a target. Each is seconds to
+    // build, so every hermeticity build runs.
+
+    /// The same SQLite mirror as `sqlite`, read from its CMakeLists.txt instead of the
+    /// overlaid formula: three targets — the archive, the shared library, and the shell
+    /// linked against the archive — with the project's sixteen `SQLITE_*` defines on each
+    /// and `SQLITE_NOHAVE_SYSTEM` on the shell. The `check_include_file` and
+    /// `check_function_exists` probes and the `configure_file` for `sqlite3_config.h` are
+    /// refused, and the sources compile without them, as they are written to.
+    static let sqliteCMake = Project(
+        name: "sqlite-cmake",
+        source: .git(url: "https://github.com/rhuijben/sqlite-amalgamation.git",
+                     commit: "fa2905e70a3d9659cd219162d7f1ebfb3715a206",
+                     subfolder: "."),
+        buildFolder: "sqlite-cmake",
+        platform: nil,
+        converter: "semel-cmake",
+        expectedProducts: ["libsqlite3.a", "libsqlite3.dylib", "sqlite3"],
+        buildTimeout: 5 * 60,
+        executables: ["sqlite3"])
+
+    /// cJSON 1.7.19, from the `DaveGamble/cJSON` repository at the commit its `v1.7.19`
+    /// tag names, MIT licensed (`LICENSE`). A dozen `option()`s decide the build:
+    /// `BUILD_SHARED_LIBS` is on, so the library is a shared one, and `ENABLE_CJSON_TEST`
+    /// reaches `add_subdirectory(tests)`, whose `unity` archive and the test executables
+    /// link the shared library. The `foreach` over the compiler flags is skipped whole;
+    /// the pkg-config `configure_file`s and the `uninstall` custom target are refused.
+    static let cJSON = Project(
+        name: "cjson",
+        source: .git(url: "https://github.com/DaveGamble/cJSON.git",
+                     commit: "c859b25da02955fef659d658b8f324b5cde87be3",
+                     subfolder: "."),
+        buildFolder: "cjson",
+        platform: nil,
+        converter: "semel-cmake",
+        expectedProducts: ["libcjson.dylib", "libunity.a", "cJSON_test", "fuzz_main"],
+        buildTimeout: 5 * 60,
+        executables: ["cJSON_test", "fuzz_main"])
+
+    /// LibTomMath 1.3.0, from the `libtom/libtommath` repository at the commit its `v1.3.0`
+    /// tag names, public domain (`LICENSE`, the Unlicense). One archive from 154 sources
+    /// listed in the file, each a translation unit of its own, with `target_compile_options`
+    /// laid over the compiler's slice: the most nodes of any project here. `find_program`
+    /// and the conditions on what it found are refused, and the archive needs none of them.
+    static let libtommath = Project(
+        name: "libtommath",
+        source: .git(url: "https://github.com/libtom/libtommath.git",
+                     commit: "95d80fd8229d05dd6cb4ec88bc8d4f5377ff00ef",
+                     subfolder: "."),
+        buildFolder: "libtommath",
+        platform: nil,
+        converter: "semel-cmake",
+        expectedProducts: ["libtommath.a"],
+        buildTimeout: 5 * 60)
+
+    /// TinyXML-2 11.0.0, from the `leethomason/tinyxml2` repository at the commit its
+    /// `11.0.0` tag names, zlib licensed (`LICENSE.txt`). A CMakeLists.txt with Windows
+    /// line ends, a `project()` naming no language, and a header among the library's
+    /// sources. Its defines are generator expressions, refused, and the sources need none;
+    /// `xmltest` is behind `BUILD_TESTING`, which `include(CTest)` would set and the
+    /// refusal of that module leaves unset, so the archive is the one product.
+    static let tinyxml2 = Project(
+        name: "tinyxml2",
+        source: .git(url: "https://github.com/leethomason/tinyxml2.git",
+                     commit: "9148bdf719e997d1f474be6bcc7943881046dba1",
+                     subfolder: "."),
+        buildFolder: "tinyxml2",
+        platform: nil,
+        converter: "semel-cmake",
+        expectedProducts: ["libtinyxml2.a"],
+        buildTimeout: 5 * 60)
+
+    /// pugixml 1.16, from the `zeux/pugixml` repository at the commit its `v1.16` tag
+    /// names, MIT licensed (`LICENSE.md`). A generator expression spread over three lines,
+    /// `cmake_dependent_option`s refused, `BUILD_SHARED_LIBS` off so the static target is
+    /// the one built, under the `OUTPUT_NAME` the file gives it, beside a header-only
+    /// `pugixml` target that builds nothing.
+    static let pugixml = Project(
+        name: "pugixml",
+        source: .git(url: "https://github.com/zeux/pugixml.git",
+                     commit: "c8033ce9d039e7f9d134877c363397b3cfe20816",
+                     subfolder: "."),
+        buildFolder: "pugixml",
+        platform: nil,
+        converter: "semel-cmake",
+        expectedProducts: ["libpugixml.a"],
+        buildTimeout: 5 * 60)
+
     /// Apple's Food Truck sample (B-77): an Xcode project in the older form — targets that
     /// list their files through groups, a localized `.strings` per language as a variant
     /// group — with a local package that carries resources of its own, and a widget
@@ -779,6 +872,7 @@ enum Projects {
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, cmakeHello, swiftMyApp, swiftCPackage, swiftHelloApp, swiftBinaryTargetApp,
                                       swiftMacroApp]
     static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, simdjson, foodTruck, foodTruckMac, netNewsWireMac, netNewsWireIOS,
-                                      codeEdit, sequelAce, swiftDependencies, swiftSyntax, backyardBirdsMac, backyardBirdsIOS]
+                                      codeEdit, sequelAce, swiftDependencies, swiftSyntax, backyardBirdsMac, backyardBirdsIOS,
+                                      sqliteCMake, cJSON, libtommath, tinyxml2, pugixml]
     static let all: [Project] = fixtures + external
 }
