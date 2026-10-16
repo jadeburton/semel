@@ -97,7 +97,6 @@ public enum CMakeSyntaxError: Error, Equatable {
     case unterminatedQuotedArgument(at: CMakeLocation)
     case unterminatedBracket(at: CMakeLocation)
     case unterminatedVariableReference(at: CMakeLocation)
-    case unterminatedGeneratorExpression(at: CMakeLocation)
 }
 
 // MARK: - Parser
@@ -108,8 +107,11 @@ struct CMakeParser {
     private var index = 0
     private var line  = 1
 
+    /// A file with Windows line ends reads as one with Unix ones: Swift makes `\r\n` a
+    /// single `Character`, which is neither the `\n` a comment or a line count ends at
+    /// nor whitespace, so a file written that way would parse as one unending line.
     init(text: String, path: String) {
-        characters = Array(text)
+        characters = Array(text.replacingOccurrences(of: "\r\n", with: "\n"))
         self.path  = path
     }
 
@@ -436,9 +438,9 @@ private struct PartScanner {
                             }
                         }
                     }
-                    guard depth == 0 else {
-                        throw CMakeSyntaxError.unterminatedGeneratorExpression(at: location)
-                    }
+                    // An unquoted argument ends at whitespace, so a `$<` whose `>` is on a
+                    // later line is a part that ends with the argument, as CMake reads it;
+                    // the evaluator refuses the command for the expression either way.
                     parts.append(.generatorExpression(text))
                     continue
                 }

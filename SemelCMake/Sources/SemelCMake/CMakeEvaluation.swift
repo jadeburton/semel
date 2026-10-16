@@ -96,11 +96,11 @@ private struct Evaluator {
 
     /// Variables whose value is the build tree's or the machine's: a translation that is a
     /// function of the sources cannot know them, so a command reading one is refused.
-    private static let unsupportedVariables: Set<String> = [
+    private static let unsupportedVariables: Set<String> = Set([
         "CMAKE_BINARY_DIR", "CMAKE_CURRENT_BINARY_DIR", "PROJECT_BINARY_DIR", "CMAKE_COMMAND",
         "CMAKE_ROOT", "CMAKE_C_COMPILER", "CMAKE_CXX_COMPILER", "CMAKE_INSTALL_PREFIX",
         "CMAKE_CFG_INTDIR", "CMAKE_MODULE_PATH",
-    ]
+    ]).union(CMakeFacts.machineVariables)
 
     // MARK: Running
 

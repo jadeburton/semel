@@ -2,10 +2,11 @@
 //  CMakeCondition.swift
 //  SemelCMake
 //
-//  `if(…)` as the declarative subset reads it: constants, variables, `DEFINED`, string and
-//  number comparisons, `IN_LIST`, `NOT`, `AND`, `OR` and parentheses. Anything else —
-//  `MATCHES`, `EXISTS`, `TARGET`, `COMMAND`, a version comparison — is undecidable here,
-//  and the block it guards is reported and skipped rather than guessed at.
+//  `if(…)` as the declarative subset reads it: constants, variables, `DEFINED`, string,
+//  number and version comparisons, `IN_LIST`, `NOT`, `AND`, `OR` and parentheses. Anything
+//  else — `MATCHES`, `EXISTS`, `TARGET`, `COMMAND`, a comparison reading a version the
+//  machine would supply — is undecidable here, and the block it guards is reported and
+//  skipped rather than guessed at.
 //
 
 /// One argument of the condition as the evaluator expanded it: a quoted argument names no
@@ -87,8 +88,7 @@ struct CMakeCondition {
 
     private static let undecidableTests: Set<String> = [
         "EXISTS", "IS_DIRECTORY", "IS_SYMLINK", "IS_ABSOLUTE", "IS_NEWER_THAN", "COMMAND", "POLICY",
-        "TARGET", "TEST", "MATCHES", "VERSION_LESS", "VERSION_GREATER", "VERSION_EQUAL",
-        "VERSION_LESS_EQUAL", "VERSION_GREATER_EQUAL", "PATH_EQUAL",
+        "TARGET", "TEST", "MATCHES", "PATH_EQUAL",
     ]
 
     private mutating func parseComparison() throws -> Bool {
@@ -121,7 +121,8 @@ struct CMakeCondition {
         }
         switch operatorToken.text {
         case "STREQUAL", "STRLESS", "STRGREATER", "STRLESS_EQUAL", "STRGREATER_EQUAL",
-             "EQUAL", "LESS", "GREATER", "LESS_EQUAL", "GREATER_EQUAL", "IN_LIST":
+             "EQUAL", "LESS", "GREATER", "LESS_EQUAL", "GREATER_EQUAL", "IN_LIST",
+             "VERSION_EQUAL", "VERSION_LESS", "VERSION_GREATER", "VERSION_LESS_EQUAL", "VERSION_GREATER_EQUAL":
             index += 1
             guard let right = current else {
                 throw CMakeConditionError.malformed
@@ -175,6 +176,10 @@ struct CMakeCondition {
     }
 
     private func compare(_ left: CMakeConditionToken, _ operation: String, _ right: CMakeConditionToken) throws -> Bool {
+        for token in [left, right] where !token.quoted && variables[token.text] == nil
+            && CMakeFacts.machineVariables.contains(token.text) {
+            throw CMakeConditionError.undecidable(token.text)
+        }
         let leftValue  = value(of: left)
         let rightValue = value(of: right)
         switch operation {
@@ -187,6 +192,17 @@ struct CMakeCondition {
             // The right side names a list variable, never a value.
             let list = variables[right.text] ?? ""
             return list.split(separator: ";").contains { String($0) == leftValue }
+        case "VERSION_EQUAL", "VERSION_LESS", "VERSION_GREATER", "VERSION_LESS_EQUAL", "VERSION_GREATER_EQUAL":
+            let leftVersion  = Self.versionComponents(of: leftValue)
+            let rightVersion = Self.versionComponents(of: rightValue)
+            switch operation {
+            case "VERSION_EQUAL":         return leftVersion == rightVersion
+            case "VERSION_LESS":          return leftVersion.lexicographicallyPrecedes(rightVersion)
+            case "VERSION_GREATER":       return rightVersion.lexicographicallyPrecedes(leftVersion)
+            case "VERSION_LESS_EQUAL":    return !rightVersion.lexicographicallyPrecedes(leftVersion)
+            case "VERSION_GREATER_EQUAL": return !leftVersion.lexicographicallyPrecedes(rightVersion)
+            default:                      throw CMakeConditionError.undecidable(operation)
+            }
         default:
             // A number comparison of something that is no number is false, as CMake's is.
             guard let leftNumber = Double(leftValue), let rightNumber = Double(rightValue) else {
@@ -201,5 +217,17 @@ struct CMakeCondition {
             default:              throw CMakeConditionError.undecidable(operation)
             }
         }
+    }
+
+    /// `major[.minor[.patch[.tweak]]]` as CMake compares it: four integers, a missing
+    /// component zero, and a component's non-digit tail dropped — `3.12rc1` is `3.12`.
+    static func versionComponents(of text: String) -> [Int] {
+        var components = text.split(separator: ".", omittingEmptySubsequences: false).map { component in
+            Int(component.prefix { $0.isNumber }) ?? 0
+        }
+        while components.count < 4 {
+            components.append(0)
+        }
+        return Array(components.prefix(4))
     }
 }

@@ -23,6 +23,20 @@ public struct CMakeFacts: Equatable {
         self.variables       = variables
     }
 
+    /// The version of CMake whose language the subset follows. A project compares
+    /// `CMAKE_VERSION` to choose between an older and a newer way of saying one thing, and
+    /// the subset reads the newer; the value is the last release of the 3 series, so a
+    /// project that refuses to build under 4 reads as it did before 4.
+    public static let cmakeVersion = "3.31.0"
+
+    /// Variables a `cmake` run fills from the machine and the facts do not: the compilers'
+    /// and the system's versions. Left unset they would read as empty, and `if(… VERSION_LESS
+    /// 10)` would then hold silently, so a comparison or a `set` that reads one is refused.
+    public static let machineVariables: Set<String> = [
+        "CMAKE_C_COMPILER_VERSION", "CMAKE_CXX_COMPILER_VERSION", "CMAKE_OBJC_COMPILER_VERSION",
+        "CMAKE_OBJCXX_COMPILER_VERSION", "CMAKE_SYSTEM_VERSION", "CMAKE_HOST_SYSTEM_VERSION",
+    ]
+
     /// A Mac with Apple's clang, building Debug: what the toolchain here is. `WIN32`,
     /// `MSVC` and `BUILD_SHARED_LIBS` are left unset, which reads as false.
     public static func macOS(sourceDirectory: String) -> CMakeFacts {
@@ -37,6 +51,10 @@ public struct CMakeFacts: Equatable {
             "CMAKE_C_COMPILER_ID":     "AppleClang",
             "CMAKE_CXX_COMPILER_ID":   "AppleClang",
             "CMAKE_BUILD_TYPE":        "Debug",
+            "CMAKE_VERSION":           cmakeVersion,
+            "CMAKE_MAJOR_VERSION":     "3",
+            "CMAKE_MINOR_VERSION":     "31",
+            "CMAKE_PATCH_VERSION":     "0",
         ])
     }
 }

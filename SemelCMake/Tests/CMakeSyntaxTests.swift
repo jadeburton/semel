@@ -84,6 +84,28 @@ final class CMakeSyntaxTests: XCTestCase {
         XCTAssertEqual(commands[0].arguments[3].literalText, "PLAIN")
     }
 
+    /// pugixml spreads one `$<OR:…>` over three lines; each line is an argument of its own.
+    func test_aGeneratorExpressionOpenAtTheEndOfAnArgumentEndsWithIt() throws {
+        let commands = try parse("""
+            string(CONCAT msvc $<OR:
+                $<STREQUAL:${FRONTEND},MSVC>,
+                $<CXX_COMPILER_ID:MSVC>
+            >)
+            """)
+        XCTAssertEqual(commands[0].arguments.count, 6)
+        XCTAssertEqual(commands[0].arguments[2].parts, [.generatorExpression("$<OR:")])
+        XCTAssertEqual(commands[0].arguments[3].parts, [.generatorExpression("$<STREQUAL:${FRONTEND},MSVC>"), .literal(",")])
+        XCTAssertEqual(commands[0].arguments[5].literalText, ">")
+    }
+
+    /// tinyxml2's file has Windows line ends, which Swift reads as one character each.
+    func test_windowsLineEndsAreLineEnds() throws {
+        let commands = try parse("project(p C)\r\n# a comment\r\nadd_library(a\r\n  a.c)\r\n")
+        XCTAssertEqual(commands.map(\.name), ["project", "add_library"])
+        XCTAssertEqual(literals(commands[1]), ["a", "a.c"])
+        XCTAssertEqual(commands.map(\.location.line), [1, 3])
+    }
+
     func test_parenthesesInsideTheArgumentsAreArgumentsOfTheirOwn() throws {
         let commands = try parse("if((A AND B) OR C)")
         XCTAssertEqual(literals(commands[0]), ["(", "A", "AND", "B", ")", "OR", "C"])

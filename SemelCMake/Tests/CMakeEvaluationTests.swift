@@ -245,6 +245,30 @@ final class CMakeEvaluationTests: XCTestCase {
         XCTAssertEqual(project.untranslated, [])
     }
 
+    /// miniz calls `project()` in both branches of a `CMAKE_VERSION` test; a project
+    /// comparing a compiler's version compares what only a `cmake` run knows.
+    func test_aVersionComparisonIsDecidedUnlessItReadsTheMachine() throws {
+        let project = try evaluate("""
+            if(CMAKE_VERSION VERSION_LESS "3.12")
+              project(old C)
+            else()
+              project(new C)
+            endif()
+            set(NEED 3.12.4)
+            if(NEED VERSION_GREATER_EQUAL 3.12 AND NEED VERSION_LESS 3.12.10rc1 AND 1.0 VERSION_EQUAL 1)
+              add_library(versioned v.c)
+            endif()
+            if(CMAKE_C_COMPILER_VERSION VERSION_LESS 10)
+              add_library(old_compiler o.c)
+            endif()
+            """)
+        XCTAssertEqual(project.name, "new")
+        XCTAssertEqual(project.targets.map(\.name), ["versioned"])
+        XCTAssertEqual(project.untranslated.map(\.reason),
+                       [.undecidableCondition("CMAKE_C_COMPILER_VERSION VERSION_LESS 10 (CMAKE_C_COMPILER_VERSION)")])
+        XCTAssertEqual(CMakeCondition.versionComponents(of: "3.12rc1.7"), [3, 12, 7, 0])
+    }
+
     func test_aConditionTheFactsDoNotDecideSkipsTheWholeBlockAndSaysSo() throws {
         let project = try evaluate("""
             if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/extra.c)
