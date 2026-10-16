@@ -935,6 +935,15 @@ a `Project.converter` names the tool the harness runs over the build folder afte
 machine file is written, as it runs `prepare`, and the four hermeticity builds build what
 the tool wrote.
 
+*Two real projects, 2026-10-16.* The roster's `sqlite` checkout (the amalgamation mirror)
+translates to its three targets with the project's defines, every refusal a
+configure-time check (`check_include_file`, `configure_file` and kin), and the formula
+builds untouched: the `sqlite3` shell links and reports its version. The roster's
+`simdjson` checkout translates its library, but the formula does not build, because the
+project adds its include folders through a function of its own, and a user-defined
+function is refused by design; one `headerFolders` line by hand mends it. So far the
+subset holds: the one refusal that blocked a target is one the design refuses on purpose.
+
 Not yet: the makefile side, which shares the emitter and the flag-splitting rule and
 adds a rule resolver and a recipe classifier, and wants a decision first on whether it
 ends in `CMakeProject` or in a Semel-vocabulary description both feed; `configure_file`;

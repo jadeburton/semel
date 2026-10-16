@@ -1,24 +1,22 @@
 # Handover: `semel-cmake` and the `SemelCMake` package (B-166)
 
 Written 2026-10-12 by a cloud session that had no Swift toolchain, for the Mac session
-that takes the branch over. Everything below was verified through the repository's own
-CI on `macos-26`, never on a Mac by hand. The branch is `claude/ecstatic-babbage-2vg5jt`;
-no pull request has been opened for it.
+that takes the branch over, and brought up to date by that session on 2026-10-16. The
+branch is `claude/ecstatic-babbage-2vg5jt`.
 
 ## State of the branch
 
-- Head `5f3b535`, which merges `origin/main` at `0579107` (#196). Three dispatched runs of
-  `.github/workflows/swift.yml`:
-  - 38179748586 on `2b158e2` (the package and the tool): green, every step.
-  - 38182753688 on `c6c9e3f` (the fixture added): red twice on
-    `RemovalEndToEndTests.test_removingTheFixtureRunsOnlyTheFinderAndWritesNoEntry`,
-    which main fixed as B-156 in #194 after the branch's base; the CMake fixture itself
-    passed in both attempts.
-  - 38188664167 on `5f3b535` (main merged in): green, every step, the CMake fixture
-    through all four hermeticity builds.
+- The cloud session's verification was through the repository's own CI on `macos-26`:
+  three dispatched runs of `.github/workflows/swift.yml`, 38179748586 on `2b158e2` (the
+  package and the tool, green), 38182753688 on `c6c9e3f` (the fixture added; red twice on
+  `RemovalEndToEndTests`, main's B-156, while the CMake fixture passed both times) and
+  38188664167 on `5f3b535` (main merged in, green through all four hermeticity builds).
+- On 2026-10-16 the Mac session merged `Build-system/main` at `3734886` (#210), ran every
+  command under "How to verify" (all green, `swiftlint --strict` clean), ran the tool and
+  a build by hand, and put two real projects through it; the results are below.
 - Backlog: the translator is **B-166** (`FUTURE.md`, section "CMake and makefile
-  conversion"); main took B-156 for the removal test. Every comment and the fixture say
-  B-166. The three earliest commit messages still say B-156, which cannot be changed.
+  conversion"). It was B-156, then B-157, and main took both while the branch was open;
+  the early commit messages still say B-156 and B-157, which cannot be changed.
 - What a reviewer should know first: `AGENTS.md` and `README.md` already describe the
   tool; `FUTURE.md`'s B-166 entry records the design decision and the "As built" state.
 
@@ -75,15 +73,22 @@ scripts/build.sh test --filter FixtureTests/test_cmakeHello   # the fixture, fou
 swiftlint --strict
 ```
 
-By hand, which nobody has done yet:
+By hand, done on 2026-10-16 with the debug binaries:
 
 ```sh
 .build/debug/semel-cmake EndToEnd/Fixtures/cmake          # then read the two files it wrote, and delete them
 .build/debug/semel 'base EndToEnd/Fixtures' 'build cmake --into /tmp/cmake-out'
 ```
 
-The CLI's printed report (`semel-cmake/main.swift`) has never been seen by a person; its
-wording is the one place a quick read may want to change something.
+The tool reported the two targets and the one refusal (`find_package`, line 10), wrote
+the formula, the config and the machine file, and `.gitignore` kept all three out of the
+tree. The build ran 17 nodes and exported `hello` and `libgreet.a`; `hello` printed its
+greeting twice, as `GREET_TIMES=2` asks. Note that `semel` talks to whatever `semelserv`
+owns the default socket, and two from other sessions were running; start one over a
+private `SEMEL_HOME` and `SEMEL_SOCKET` (the socket path under 104 bytes) and point both
+programs at it, as the harness does.
+
+The CLI's printed report reads as it should; nothing in its wording asked for a change.
 
 ## Known limits, each marked in the code
 
@@ -126,20 +131,42 @@ wording is the one place a quick read may want to change something.
    registration, in `SemelCMake`, with a `kind` from the next free number. Nothing in the
    code needs to change for it; it is a question of whether a project wants the formula
    derived live, which the owner decided against for now.
-3. **A real project through the tool.** The roster's `sqlite` and `simdjson` checkouts
-   both carry CMake files, and the harness can run a converter over a `.git` source as
-   it runs one over a fixture (`configure()` runs it for every source). The first one to
-   try will say which refusals matter in practice and which subset additions pay.
+3. **A real project through the tool.** Done for both roster checkouts on 2026-10-16,
+   over copies of the harness's clones under `~/Library/Caches/semel/end-to-end`:
+   - `sqlite` (the `rhuijben/sqlite-amalgamation` mirror at 3.53.4): the tool found all
+     three targets — `libsqlite3.dylib`, `libsqlite3.a` and the `sqlite3` shell linked
+     against the archive — with the project's sixteen `SQLITE_*` defines and
+     `SQLITE_NOHAVE_SYSTEM` on the shell, and `gnu17` in the config. The 42 refusals are
+     all configure-time: `check_include_file`, `check_function_exists`,
+     `check_symbol_exists`, `configure_file` for `sqlite3_config.h`, and
+     `target_include_directories` reading `CMAKE_INSTALL_PREFIX`. The formula, untouched,
+     built through the engine in 32 nodes and the shell reports `3.53.4`. The roster's
+     hand-written `sqlite.fmla` has the same shape with fewer lines, through
+     `clang.compiled`; the tool spells the chain out because it may need to lay a
+     literal over any stage.
+   - `simdjson` (v4.6.11): the tool found `libsimdjson.a` from `src/simdjson.cpp`, the
+     two targets of a compilation-failure test, and three header-only libraries, with
+     the `SIMDJSON_*` defines and `c++17`. The library's formula does not build: the
+     project adds `include/` and `src/` through its own `simdjson_add_props` function
+     (a `$<BUILD_INTERFACE:…>` generator expression inside), and a user-defined function
+     is refused, so `src/simdjson.cpp` cannot find `<base.h>`. The fix by hand is one
+     `headerFolders` line per chain. The roster builds the `singleheader/` amalgamation
+     instead, which no CMake file describes.
+   - What this says about the subset: the one refusal that blocked a target was the
+     user-defined function, and `function`/`macro` are refused by design. The
+     configure-time checks never blocked anything. Nothing in the two projects argues
+     for a subset addition yet; a third project with `foreach` over source lists would
+     be the next useful probe.
 
 ## Suggested order of work
 
-1. Run the four commands above on the Mac; nothing is expected to fail.
-2. Run `semel-cmake` over one real CMake project and read what it refuses. Extend the
-   subset only where a refusal blocks a target, not for completeness.
+1. Done 2026-10-16: the four commands on the Mac, all green.
+2. Done 2026-10-16: `sqlite` and `simdjson` through the tool, results under "Open
+   decisions". Extend the subset only where a refusal blocks a target, not for
+   completeness; so far none has, other than a user-defined function.
 3. Decide the model question in "Open decisions" with the owner, then the make side.
-4. Open the pull request: body with `What`, `Why`, `Testing`, `Checklist`, ending
-   with the Claude Code line, per `AGENTS.md`. Delete this file in that PR or keep it as
-   the record under `docs/superpowers/plans`, as the owner prefers.
+4. The pull request is open from this branch, with this file kept as the record under
+   `docs/superpowers/plans`.
 
 ## Things that happened that a successor should not repeat
 
