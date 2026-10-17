@@ -88,7 +88,9 @@ public enum ProtocolVersion {
     /// Version 32 gives `batchRejected` its `listing`: the names the locked folder lacks
     /// against its lock's tree and those it holds that the tree does not, each bounded as
     /// the paths are (B-164).
-    public static let current = 32
+    /// Version 33 gives a running node in a `progress` record its `subject`, what it is
+    /// computed for as the error report names it, and its `identity` (B-168).
+    public static let current = 33
 }
 
 public struct Hello: Codable, Equatable, Sendable {

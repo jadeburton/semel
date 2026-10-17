@@ -86,6 +86,11 @@ private final class CardView: NSVisualEffectView {
         if let names = CardText.namesLine(of: card) {
             stack.addArrangedSubview(label(names, font: .systemFont(ofSize: 12), lines: 2, width: textWidth))
         }
+        // A running node a line, each truncated rather than wrapped, so a node keeps one
+        // line and its place for as long as it runs.
+        for running in CardText.runningLines(of: card) {
+            stack.addArrangedSubview(label(running, font: .systemFont(ofSize: 12), lines: 1, width: textWidth))
+        }
         if let fraction = CardText.barFraction(of: card) {
             let bar = NSProgressIndicator()
             bar.style           = .bar

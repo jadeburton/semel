@@ -75,26 +75,57 @@ final class CardTextTests: XCTestCase {
         ])
     }
 
-    func test_printWritesARunningCardAsItsHeadlineAndItsResultAsACard() {
+    /// B-168. A running node a line, named by its type and what it is computed for as the
+    /// error report names a subject: a compile by its module, a compiler by its source, a
+    /// linker by its product; a node with no subject by its path, and one with neither by
+    /// its type alone.
+    func test_printWritesARunningCardAsItsHeadlineAndItsNodesAndItsResultAsACard() {
         let record  = ProgressRecord(scheduled: 88, computed: 31, fromCache: 9, pending: 48,
-                                     running: [ActiveNode(type: "SwiftCompiler", name: "App/View.swift"),
-                                               ActiveNode(type: "ClangCompiler", name: "Sources/parser.c"),
+                                     running: [ActiveNode(type: "SwiftCompiler", name: "", subject: .target(name: "Models"),
+                                                          identity: "3fa2c1d07e"),
+                                               ActiveNode(type: "ClangCompiler", name: "input:/Sources/App/main.m.p",
+                                                          subject: .source(path: "input:/Sources/App/main.m"),
+                                                          identity: "9b04e7aa11"),
+                                               ActiveNode(type: "ClangLinker", name: "", subject: .product(path: "output:/c/hello"),
+                                                          identity: "51cc0e2f9d"),
+                                               ActiveNode(type: "StaticFile", name: "input:/c/src/hello.c"),
                                                ActiveNode(type: "ProjectBuilder", name: "")])
-        let running = Card(id: 3, content: .running(record: record, rotation: 0))
+        let running = Card(id: 3, content: .running(record: record))
         XCTAssertEqual(CardText.lines(for: running), [
-            "Building · 3 running · 48 ahead",
-            "SwiftCompiler App/View.swift · ClangCompiler Sources/parser.c",
+            "Building · 5 running · 48 ahead",
+            "SwiftCompiler  Models",
+            "ClangCompiler  Sources/App/main.m",
+            "ClangLinker  hello",
+            "StaticFile  c/src/hello.c",
+            "ProjectBuilder",
             "31 computed · 9 from cache · 48 pending",
-        ], "as the mockup draws it")
-        XCTAssertEqual(CardText.namesLine(of: Card(id: 3, content: .running(record: record, rotation: 2))),
-                       "ProjectBuilder · SwiftCompiler App/View.swift", "a node with no name by its type, wrapping round")
+        ])
+        XCTAssertNil(CardText.namesLine(of: running), "a running card names nodes, not products")
         XCTAssertEqual(CardText.barFraction(of: running), 40.0 / 88.0)
-        XCTAssertEqual(CardText.printed(.shown(running)), ["running: Building · 3 running · 48 ahead"])
-        XCTAssertEqual(CardText.printed(.progressed(running)), ["running: Building · 3 running · 48 ahead"])
-        XCTAssertEqual(CardText.printed(.dismissed(running)), ["dismissed: Building · 3 running · 48 ahead"])
+        let printed = ["running: Building · 5 running · 48 ahead", "  SwiftCompiler  Models", "  ClangCompiler  Sources/App/main.m",
+                       "  ClangLinker  hello", "  StaticFile  c/src/hello.c", "  ProjectBuilder"]
+        XCTAssertEqual(CardText.printed(.shown(running)), printed)
+        XCTAssertEqual(CardText.printed(.progressed(running)), printed)
+        XCTAssertEqual(CardText.printed(.dismissed(running)), ["dismissed: Building · 5 running · 48 ahead"])
 
         let result = result(changed: ["output:/c/hello"])
         XCTAssertEqual(CardText.printed(.resolved(result)), ["card: 1 product changed", "  hello", "  3 computed · 9 from cache"])
+    }
+
+    /// B-168. Two running nodes of one type and one subject — one module compiled under two
+    /// configurations — are told apart by the start of their identities; a third of another
+    /// subject needs nothing more.
+    func test_twoRunningNodesOfOneTypeAndSubjectAreToldApartByTheirIdentities() {
+        let nodes = [ActiveNode(type: "SwiftCompiler", name: "", subject: .target(name: "Models"), identity: "3fa2c1d07e55"),
+                     ActiveNode(type: "SwiftCompiler", name: "", subject: .target(name: "Models"), identity: "9b04e7aa1100"),
+                     ActiveNode(type: "SwiftCompiler", name: "", subject: .target(name: "App"), identity: "51cc0e2f9d00"),
+                     ActiveNode(type: "SwiftLinker", name: "", subject: .target(name: "Models"), identity: "77aa0e2f9d00")]
+        XCTAssertEqual(RunningNodeNames.lines(of: nodes), [
+            "SwiftCompiler  Models #3fa2c1d0",
+            "SwiftCompiler  Models #9b04e7aa",
+            "SwiftCompiler  App",
+            "SwiftLinker  Models",
+        ])
     }
 
     func test_aTreesEntriesAreNamedOnceByItsFolder() {

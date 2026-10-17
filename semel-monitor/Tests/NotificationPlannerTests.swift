@@ -250,7 +250,8 @@ final class NotificationPlannerTests: XCTestCase {
         XCTAssertEqual(running.kind, .running)
         XCTAssertEqual(CardText.lines(for: running), [
             "Building · 2 running · 5 ahead",
-            "ClangCompiler src/a.c · ClangCompiler src/b.c",
+            "ClangCompiler  src/a.c",
+            "ClangCompiler  src/b.c",
             "0 computed · 0 from cache · 5 pending",
         ])
         XCTAssertNil(planner.lastCard, "a running card is not a settle's card")
@@ -262,7 +263,7 @@ final class NotificationPlannerTests: XCTestCase {
         XCTAssertEqual(updated.id, running.id)
         XCTAssertEqual(CardText.lines(for: updated), [
             "Building · 1 running · 3 ahead",
-            "ClangCompiler src/c.c",
+            "ClangCompiler  src/c.c",
             "2 computed · 0 from cache · 3 pending",
         ])
         XCTAssertEqual(planner.cards, [updated])
@@ -334,24 +335,48 @@ final class NotificationPlannerTests: XCTestCase {
         let changes = planner.receive(Events.progress(running: ["b"]))
         XCTAssertEqual(changes.map(Self.kind), ["dismissed", "shown"])
         XCTAssertEqual(changes.first, .dismissed(first))
-        XCTAssertEqual(planner.cards.map(CardText.namesLine(of:)), ["ClangCompiler src/b.c"])
+        XCTAssertEqual(planner.cards.map(CardText.runningLines(of:)), [["ClangCompiler  src/b.c"]])
     }
 
-    func test_theRunningCardTurnsThroughMoreNodesThanItNames() throws {
+    /// B-168. Every running node is a line, named by what it is computed for, and the clock
+    /// moves none of them: a card that changed without a `progress` would show one node
+    /// where another was, which reads as the second replacing the first.
+    func test_theRunningCardListsEveryRunningNodeAndTheClockMovesNone() throws {
         let planner = planner()
         let running = try XCTUnwrap(planner.receive(Events.progress(running: ["a", "b", "c"])).first?.shownCard)
-        XCTAssertEqual(CardText.namesLine(of: running), "ClangCompiler src/a.c · ClangCompiler src/b.c")
-        XCTAssertEqual(planner.nextDeadline, NotificationPlanner.namesTurn)
+        XCTAssertEqual(CardText.runningLines(of: running), ["ClangCompiler  src/a.c", "ClangCompiler  src/b.c",
+                                                            "ClangCompiler  src/c.c"])
+        XCTAssertNil(planner.nextDeadline, "nothing waits on the clock while the settle runs")
 
-        clock.advance(by: NotificationPlanner.namesTurn)
-        guard case .progressed(let turned)? = planner.advance().first else {
-            return XCTFail("expected the names turned")
+        clock.advance(by: .seconds(10))
+        XCTAssertEqual(planner.advance(), [])
+        XCTAssertEqual(planner.cards, [running])
+    }
+
+    /// B-168. Across two consecutive records, a node still running keeps its place above
+    /// the ones that started after it, a node that finished leaves its line, and a node that
+    /// started is a new line at the bottom.
+    func test_aNodeThatKeepsRunningKeepsItsLineAndANewOneIsANewLineBelow() throws {
+        let planner = planner()
+        planner.receive(Events.progress(running: ["a", "b", "c"]))
+        let changes = planner.receive(Events.progress(pending: 4, running: ["b", "c", "d"]))
+        guard case .progressed(let updated)? = changes.first else {
+            return XCTFail("expected the running card updated in place, got \(changes)")
         }
-        XCTAssertEqual(CardText.namesLine(of: turned), "ClangCompiler src/c.c · ClangCompiler src/a.c")
-        XCTAssertEqual(CardText.headline(of: turned), CardText.headline(of: running), "the turn moves only the names")
+        XCTAssertEqual(CardText.runningLines(of: updated), ["ClangCompiler  src/b.c", "ClangCompiler  src/c.c",
+                                                            "ClangCompiler  src/d.c"])
+    }
 
-        planner.receive(Events.progress(running: ["a"]))
-        XCTAssertNil(planner.nextDeadline, "nothing to turn through when every running node is named")
+    /// More running nodes than the card lists: the first that started, a line each, and the
+    /// rest counted.
+    func test_theRunningCardCountsTheNodesBeyondThoseItLists() throws {
+        let names   = (0..<(CardText.runningNodesListed + 3)).map { "n\($0)" }
+        let planner = planner()
+        let running = try XCTUnwrap(planner.receive(Events.progress(running: names)).first?.shownCard)
+        let lines   = CardText.runningLines(of: running)
+        XCTAssertEqual(lines.count, CardText.runningNodesListed + 1)
+        XCTAssertEqual(lines.first, "ClangCompiler  src/n0.c")
+        XCTAssertEqual(lines.last, "and 3 more")
     }
 
     func test_aRunningCardClickedAwayStaysAwayForTheRestOfItsSettle() throws {
@@ -388,22 +413,23 @@ final class NotificationPlannerTests: XCTestCase {
         let planner = planner()
         let printer = CardPrinter(clock: clock)
         XCTAssertEqual(printer.lines(for: planner.receive(Events.progress(running: ["a"]))),
-                       ["running: Building · 1 running · 5 ahead"])
+                       ["running: Building · 1 running · 5 ahead", "  ClangCompiler  src/a.c"])
 
         clock.advance(by: .milliseconds(500))
         XCTAssertEqual(printer.lines(for: planner.receive(Events.progress(pending: 4, running: ["a", "b", "c"]))), [],
                        "within the second")
         clock.advance(by: .seconds(1))
         XCTAssertEqual(printer.lines(for: planner.receive(Events.progress(pending: 3, running: ["a", "b", "c"]))),
-                       ["running: Building · 3 running · 3 ahead"], "a second on, and the set moved since the last line")
+                       ["running: Building · 3 running · 3 ahead", "  ClangCompiler  src/a.c", "  ClangCompiler  src/b.c",
+                        "  ClangCompiler  src/c.c"], "a second on, and the set moved since the last line")
         clock.advance(by: .seconds(2))
         XCTAssertEqual(printer.lines(for: planner.receive(Events.progress(pending: 2, running: ["a", "b", "c"]))), [],
                        "the same running set is no line, however long after")
-        XCTAssertEqual(printer.lines(for: planner.advance()), [], "nor is a turn of the names")
+        XCTAssertEqual(printer.lines(for: planner.advance()), [], "nor is the clock")
 
         clock.advance(by: .seconds(1))
         XCTAssertEqual(printer.lines(for: planner.receive(Events.progress(pending: 0, running: ["c"]))),
-                       ["running: Building · 1 running · 0 ahead"])
+                       ["running: Building · 1 running · 0 ahead", "  ClangCompiler  src/c.c"])
         XCTAssertEqual(printer.lines(for: planner.settle(Events.settled(computed: 4), Events.artifacts(changed: ["output:/c/hello"]))),
                        ["card: 1 product changed", "  hello", "  4 computed · 0 from cache"])
     }

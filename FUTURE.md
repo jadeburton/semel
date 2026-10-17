@@ -1801,6 +1801,31 @@ the eight seconds a result card stays are the app's.
    window mark the tree's folder row. What disappeared at a launch's reconciliation, whose
    node was gone before this launch, has no folder: nothing left in the graph says which
    tree it was part of, and is named by its own path.
+5. ~~**B-168: every running node by what it is computed for.**~~ Filed and done
+   2026-10-17, on the owner's report that the running card showed `SwiftCompiler` nodes
+   with nothing to tell them apart, so that it was hard to say whether one instance was
+   replacing another. A `SwiftCompiler` had no path and no `input` port, so the record's
+   name was empty, and the card's two names turning every two seconds put one bare
+   `SwiftCompiler` where another had been. An `ActiveNode` now carries its `subject` — the
+   `ErrorDocument.Subject` its error report would name (B-145), from the node's own
+   `errorSubject` over the inputs it is about to read — and its `identity`, the hash of its
+   spec (protocol version 33). A node naming no subject of its own whose output an
+   `OutputFile` takes is named by that product, which is how a `ClangLinker` is named; this
+   is the one naming the engine adds, read from the wires and never from time. So a
+   `SwiftCompiler` is named by its module, a `ClangCompiler` and a `ClangPreprocessor` by
+   their source, a `SwiftLinker` by its output name, a `ClangLinker` by its product, the
+   Apple compilers by their resource and a builder by its formula; a node with none of
+   these keeps the record's name, its path, or its type alone. The running card lists
+   every running node a line each — `SwiftCompiler  Models` — up to eight and `and N
+   more`, in the order they started and with nothing moving on the clock; two of one type
+   and one subject are told apart by the first eight characters of their identities
+   (`SwiftCompiler  Models #3fa2c1d0`). The live window's rows and `--print`'s `running:`
+   lines say the same, the latter with the nodes indented under the headline. A subject is
+   written through `SubjectNames` in `SemelCLI`, which the error report's subject line now
+   calls too. `MessageJSONTests`, `RunningNodeNamesTests` (a real engine and the real
+   toolchain types behind the server), `CardTextTests` and `NotificationPlannerTests` pin
+   it. Left: the prompt's own progress line (`watch`) still names a node by the record's
+   `name`, and could take the subject the same way.
 
 ### Formula language
 

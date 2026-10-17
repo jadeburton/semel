@@ -311,10 +311,12 @@ was done.
   ending it: only the settle's own events end it. No card is made under a pause, and a
   running card clicked away stays away for the rest of its settle; its result still makes
   a card of its own.
-- **What it shows.** The headline `Building · 12 running · 48 ahead`; two running nodes, by
-  their type and the name the record carries, a node with no name by its type alone;
-  every two seconds on the app's clock the two names turn to the next two, wrapping, while
-  more run than are named; a bar of pending against scheduled — the share of the
+- **What it shows.** The headline `Building · 12 running · 48 ahead`; every running node a
+  line, up to eight and then `and N more`, by its type and what it is computed for
+  (B-168, below) — `SwiftCompiler  Models`, `ClangCompiler  Sources/App/main.m` — in the
+  order the record lists them, which is the order they started, so a node that keeps
+  running keeps its place above the ones that started after it and a node that starts is a
+  new line at the bottom; nothing on the card moves on the clock; a bar of pending against scheduled — the share of the
   scheduled nodes that are no longer waiting to start, `(scheduled − pending) /
   scheduled`; and `31 computed · 9 from cache · 48 pending` in small type. Its mark is the
   accent colour, where a result's is green and an error's red.
@@ -328,7 +330,8 @@ was done.
   status item's `last settle`.
 - **`--print`.** `running: <headline>` when the card appears, then when the running set has
   changed since the last such line and a second has passed since it (`CardPrinter`) — the
-  rarer of the two; a turn of the names writes nothing. The card it becomes is written as
+  rarer of the two — each followed by the running nodes as the card lists them, indented
+  two spaces. The card it becomes is written as
   any card is, `card: …`, and one that goes as `dismissed: Building · …`. Two lines can
   read the same: the set changed and the counts did not.
 - **The settling glyph.** The glyph drawn dimmed whole (`StatusGlyph.unreachedOpacity`),
@@ -341,7 +344,7 @@ was done.
 - **The live window.** *Show window*, or a click on the running card, opens it; the
   running card goes as any clicked card does. `LiveWindowModel` is fed every event whether
   or not the window is open, since a node's elapsed time is measured on the app's clock
-  from the `progress` that first listed it — matched by type and name, the first
+  from the `progress` that first listed it — matched by its whole description, identity and all, the first
   unmatched of each, so two nodes of one description keep their own starts. It shows
   `scheduled · computed · from cache · pending · running` while a settle runs and the last
   `settled`'s four counts after it; the bar full once a settle has ended. Below, the last
@@ -359,7 +362,7 @@ was done.
   window's.
 - **`show`** on `--print`'s standard input writes the live window once, `live: semel ·
   idle` (or `settling`, `no engine`), then indented: the counts, `started N of M`, each
-  running node as `type · name · 2.1 s` or `nothing running`, `last settle: <headline>`,
+  running node as `type · subject · 2.1 s` (`SwiftCompiler · Models · 2.1 s`) or `nothing running`, `last settle: <headline>`,
   and each product as `folder: name · mark`, then any errors' lines.
 - **B-150 item 4.** `DaemonEvent.artifacts` carries `treeFolders: [String: String]`, the
   folder of the tree product each path is an entry of; protocol version 29. The engine's
@@ -373,3 +376,19 @@ was done.
   another appeared is a tree that changed; `--only` keeps a tree by its folder; and the
   products window marks the tree's folder row with what the settle did to it, beside its
   entries' own marks in the folder below.
+- **B-168, what a running node is computed for** (2026-10-17). The record's `name` — a
+  path, a project file, the file on an `input` port — is empty for a `SwiftCompiler`,
+  which has none of them, so the card showed bare `SwiftCompiler`s and, turning its two
+  names every two seconds, put one where another had been, which read as instances
+  replacing each other. An `ActiveNode` carries its `subject`, the `ErrorDocument.Subject`
+  its error report would name, from the node's own `errorSubject` over the inputs it is
+  about to read, and its `identity`, the hash of its spec; protocol version 33. A node
+  that names no subject and whose output an `OutputFile` takes is named by that product —
+  a `ClangLinker` — read from the wires, never from time. The card, the window and
+  `--print` write the subject through `SubjectNames`, the report's own writer: a module by
+  its name, a source by its path on disk relative to the base, a product or a resource by
+  its file name. A node with no subject keeps the record's name, and one with neither its
+  type alone. Two running nodes of one type and one subject — one module compiled under
+  two configurations — carry the first eight characters of their identities,
+  `SwiftCompiler  Models #3fa2c1d0`. The names do not turn any more: every running node is
+  a line, so the card changes only when a node starts or ends.

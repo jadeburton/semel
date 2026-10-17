@@ -2,10 +2,11 @@
 // semel-monitor
 //
 // The live window behind *Show window*: the settle's counts and a bar for pending against
-// scheduled, the nodes running now with their type, name and how long each has run, and
-// under them the last settle's products, marked as the products window marks them, and its
-// errors in the report's lines. Everything it shows is `LiveWindowModel`'s, read on every
-// event while it is open and, while a settle runs, twice a second for the elapsed times.
+// scheduled, the nodes running now with their type, what each is computed for and how long
+// each has run, and under them the last settle's products, marked as the products window
+// marks them, and its errors in the report's lines. Everything it shows is
+// `LiveWindowModel`'s, read on every event while it is open and, while a settle runs, twice
+// a second for the elapsed times.
 
 import AppKit
 import SemelMonitor

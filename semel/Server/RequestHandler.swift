@@ -411,7 +411,9 @@ public final class RequestHandler {
         }
         // Between the two, as often as the pass changes state (B-95).
         engine.progressReporter = { [weak self] report in
-            let running = report.running.map { ActiveNode(type: $0.typeName, name: $0.name) }
+            let running = report.running.map {
+                ActiveNode(type: $0.typeName, name: $0.name, subject: $0.subject, identity: $0.identity)
+            }
             self?.eventSink?.deliver(.daemon(.progress(record: ProgressRecord(scheduled: report.scheduled,
                                                                               computed:  report.computed,
                                                                               fromCache: report.fromCache,
