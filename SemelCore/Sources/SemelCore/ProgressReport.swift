@@ -9,6 +9,8 @@
 // `BuildEngine.progressReporter`; a server turns it into an event and the terminal into a
 // line redrawn in place.
 
+import SemelNodeKit
+
 /// What one settle has done so far and what it is doing now.
 public struct ProgressReport: Equatable, Sendable {
 
@@ -38,14 +40,20 @@ public struct ProgressReport: Equatable, Sendable {
     }
 }
 
-/// One node computing now, as a report names it: the type, and the path it has or the
-/// project file it builds — empty when it has neither.
+/// One node computing now, as a report names it: the type; what it is computed for, as its
+/// error report would name it (B-145); the path it has, the project file it builds or the
+/// file on its `input` port, empty when it has none of them; and its identity, the hash of
+/// its spec, which tells two nodes of one type and one subject apart.
 public struct ActiveNodeDescription: Equatable, Sendable {
     public let typeName: String
     public let name: String
+    public let subject: ErrorDocument.Subject?
+    public let identity: String
 
-    public init(typeName: String, name: String) {
+    public init(typeName: String, name: String, subject: ErrorDocument.Subject? = nil, identity: String = "") {
         self.typeName = typeName
         self.name     = name
+        self.subject  = subject
+        self.identity = identity
     }
 }

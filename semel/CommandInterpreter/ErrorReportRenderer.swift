@@ -412,7 +412,7 @@ struct BlockRenderer {
             }
             return [styledToolLine(first)] + printed.dropFirst().map { "  \(styledToolLine($0))" }
         case .engine(let condition):
-            let drawn = ConditionLines(path: displayed).lines(for: condition)
+            let drawn = ConditionLines(path: SubjectNames.displayed).lines(for: condition)
             let headline = drawn.path.map { bold($0) + drawn.headline } ?? drawn.headline
             return [headline] + drawn.details.map { labelled($0.label, $0.value) } + drawn.continuation.map { "  \($0)" }
         case .several(let documents):
@@ -441,52 +441,17 @@ struct BlockRenderer {
         return bold(location) + ": " + red("error:") + rest
     }
 
-    /// A path in the input file system as the reader finds it on disk, relative to the base.
-    private func displayed(_ path: String) -> String {
-        let root = FileSystemName.input
-        if path == root || path == "\(root)/" {
-            return "."
-        }
-        if path.hasPrefix("\(root)/") {
-            return String(path.dropFirst(root.count + 1))
-        }
-        return path
-    }
-
     // MARK: Subject
 
+    /// Written through `SubjectNames`, as the monitor writes a running node's subject.
     private func subjectLine(_ subjects: [ErrorDocument.Subject]) -> String? {
         guard let first = subjects.first else {
             return nil
         }
-        let values = subjects.map(subjectValue)
+        let values = subjects.map(SubjectNames.value(of:))
         var seen: Set<String> = []
         let unique = values.filter { seen.insert($0).inserted }
-        return labelled(subjectLabel(first), unique.joined(separator: ", "))
-    }
-
-    private func subjectLabel(_ subject: ErrorDocument.Subject) -> String {
-        switch subject {
-        case .target:   return "target"
-        case .product:  return "product"
-        case .package:  return "package"
-        case .resource: return "resource"
-        case .formula:  return "formula"
-        case .project:  return "project"
-        case .source:   return "source"
-        }
-    }
-
-    private func subjectValue(_ subject: ErrorDocument.Subject) -> String {
-        switch subject {
-        case .target(let name):    return name
-        case .package(let name):   return name
-        case .product(let path):   return Path(path).lastComponent ?? path
-        case .resource(let path):  return Path(path).lastComponent ?? path
-        case .project(let path):   return Path(path).lastComponent ?? path
-        case .formula(let path):   return displayed(path)
-        case .source(let path):    return displayed(path)
-        }
+        return labelled(SubjectNames.label(of: first), unique.joined(separator: ", "))
     }
 
     // MARK: Headings

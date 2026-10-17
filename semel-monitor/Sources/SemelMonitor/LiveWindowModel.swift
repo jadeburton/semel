@@ -11,7 +11,7 @@
 //     semel · settling
 //     scheduled 88 · computed 31 · from cache 9 · pending 48 · running 12
 //     ▓▓▓▓▓▓▓▓▓░░░░░░░░░░
-//     SwiftCompiler   App/View.swift          2.1 s
+//     SwiftCompiler   Models                  2.1 s
 //     ClangCompiler   Sources/parser.c        0.6 s
 
 import SemelProtocol
@@ -19,6 +19,7 @@ import SemelProtocol
 /// One node running now, and for how long the app has seen it run.
 public struct RunningNodeRow: Equatable, Sendable {
     public let type: String
+    /// What it is computed for, as `RunningNodeNames` writes it.
     public let name: String
     public let elapsed: Duration
 }
@@ -55,9 +56,9 @@ public struct LiveWindowModel {
     /// errors when it moved nothing; nil when it did neither.
     public private(set) var lastSettleCard: Card?
 
-    /// When each running node was first listed, in the record's order. Matched by type and
-    /// name, the first unmatched of each, so two nodes of one description each keep their
-    /// own start.
+    /// When each running node was first listed, in the record's order. Matched by the whole
+    /// description — type, subject, name and identity — the first unmatched of each, so two
+    /// nodes of one description each keep their own start.
     private var started: [(node: ActiveNode, at: Duration)] = []
 
     /// The events of a settle not yet ended: its errors come before its `settled`, and its
@@ -129,7 +130,10 @@ public struct LiveWindowModel {
     /// The nodes running now, in the order they started, each with how long it has run at
     /// `now`.
     public func runningRows(at now: Duration) -> [RunningNodeRow] {
-        started.map { RunningNodeRow(type: $0.node.type, name: $0.node.name, elapsed: now - $0.at) }
+        let subjects = RunningNodeNames.subjects(of: started.map(\.node))
+        return zip(started, subjects).map { entry, subject in
+            RunningNodeRow(type: entry.node.type, name: subject, elapsed: now - entry.at)
+        }
     }
 
     /// How far the bar is drawn: pending against scheduled while a settle runs, full once

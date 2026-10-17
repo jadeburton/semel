@@ -14,8 +14,10 @@
 //     libConversations.a, libExplore.a
 //     1 error · 2 products without a value
 //
-//     Building · 12 running · 48 ahead
-//     SwiftCompiler App/View.swift · ClangCompiler Sources/parser.c
+//     Building · 3 running · 48 ahead
+//     SwiftCompiler  App
+//     SwiftCompiler  Models
+//     ClangCompiler  Sources/parser.c
 //     31 computed · 9 from cache · 48 pending
 
 import SemelCLI
@@ -26,15 +28,18 @@ public enum CardText {
     /// How many products a card names before it counts the rest, as a report heading does.
     public static let productsNamed = 3
 
-    /// How many running nodes a running card names at once; the clock turns through the
-    /// rest (`NotificationPlanner.namesTurn`).
-    public static let runningNodesNamed = 2
+    /// How many running nodes a running card lists, a line each, before it counts the rest:
+    /// as many as a machine of a common size runs at once.
+    public static let runningNodesListed = 8
 
     /// The headline, then what is under it: for errors the first cause's line one; the
-    /// names; the counts; and, on the bottom card of a full stack, how many were folded.
+    /// names, or a running card's nodes a line each; the counts; and, on the bottom card of
+    /// a full stack, how many were folded.
     public static func lines(for card: Card) -> [String] {
         [headline(of: card)]
-            + [diagnosticLine(of: card), namesLine(of: card), countsLine(of: card), earlierLine(of: card)].compactMap { $0 }
+            + [diagnosticLine(of: card), namesLine(of: card)].compactMap { $0 }
+            + runningLines(of: card)
+            + [countsLine(of: card), earlierLine(of: card)].compactMap { $0 }
     }
 
     /// `3 products changed, 1 appeared`; `1 product disappeared`; `2 products without a
@@ -42,7 +47,7 @@ public enum CardText {
     /// ahead` while a settle runs.
     public static func headline(of card: Card) -> String {
         switch card.content {
-        case .running(let record, _):
+        case .running(let record):
             return "Building · \(record.running.count) running · \(record.pending) ahead"
         case .result:
             let parts = resultParts(of: card.movedProducts)
@@ -76,14 +81,14 @@ public enum CardText {
     }
 
     /// The lines `--print` writes for one change: a card as its headline after `card:`
-    /// and the rest indented under it; a running card as `running:` and its headline; a
-    /// card that goes, by its headline. An update to a card's `earlier` count writes
-    /// nothing: the fold that moved it was written. How often a running card's progress is
-    /// written is `CardPrinter`'s to decide.
+    /// and the rest indented under it; a running card as `running:` and its headline, with
+    /// its running nodes indented under it; a card that goes, by its headline. An update to
+    /// a card's `earlier` count writes nothing: the fold that moved it was written. How
+    /// often a running card's progress is written is `CardPrinter`'s to decide.
     public static func printed(_ change: CardChange) -> [String] {
         switch change {
         case .shown(let card) where card.kind == .running, .progressed(let card):
-            return ["running: \(headline(of: card))"]
+            return ["running: \(headline(of: card))"] + runningLines(of: card).map { "  \($0)" }
         case .shown(let card), .resolved(let card):
             let lines = lines(for: card)
             return ["card: \(lines[0])"] + lines.dropFirst().map { "  \($0)" }
@@ -119,13 +124,9 @@ public enum CardText {
     }
 
     /// Three names and `and N more`, named as the report names products: by file name,
-    /// the path under `output:` only for two of one name, a tree by its folder. On a
-    /// running card, the running nodes the card's turn has come to, each by its type and
-    /// the name the record gives it.
+    /// the path under `output:` only for two of one name, a tree by its folder. Nil for a
+    /// running card, which lists nodes rather than products (`runningLines`).
     public static func namesLine(of card: Card) -> String? {
-        if case .running(let record, let rotation) = card.content {
-            return runningNames(of: record, from: rotation)
-        }
         let products = card.products
         guard !products.isEmpty else {
             return nil
@@ -140,7 +141,7 @@ public enum CardText {
     /// `31 computed · 9 from cache · 48 pending` while a settle runs.
     public static func countsLine(of card: Card) -> String? {
         switch card.content {
-        case .running(let record, _):
+        case .running(let record):
             return "\(record.computed) computed · \(record.fromCache) from cache · \(record.pending) pending"
         case .result(_, _, _, let counts, _):
             return counts.map { "\($0.computed) computed · \($0.fromCache) from cache" }
@@ -151,29 +152,25 @@ public enum CardText {
 
     /// How far a running card's bar is drawn, nil for any other card.
     public static func barFraction(of card: Card) -> Double? {
-        guard case .running(let record, _) = card.content else {
+        guard case .running(let record) = card.content else {
             return nil
         }
         return record.startedFraction
     }
 
-    /// `SwiftCompiler App/View.swift · ClangCompiler Sources/parser.c`: up to
-    /// `runningNodesNamed` of the running nodes from `rotation` on, wrapping round.
-    static func runningNames(of record: ProgressRecord, from rotation: Int) -> String? {
-        let running = record.running
-        guard !running.isEmpty else {
-            return nil
+    /// A running card's nodes, a line each — `SwiftCompiler  Models` — in the order the
+    /// record lists them, which is the order they started: a node that keeps running keeps
+    /// its place above the ones that started after it, and a node that starts is a new
+    /// line at the bottom. Up to `runningNodesListed`, then `and N more`; none for any
+    /// other card.
+    public static func runningLines(of card: Card) -> [String] {
+        guard case .running(let record) = card.content else {
+            return []
         }
-        let shown = min(runningNodesNamed, running.count)
-        return (0..<shown)
-            .map { running[(rotation + $0) % running.count] }
-            .map(nodeName)
-            .joined(separator: " · ")
-    }
-
-    /// A running node as the record carries it: its type, and its name when it has one.
-    public static func nodeName(_ node: ActiveNode) -> String {
-        node.name.isEmpty ? node.type : "\(node.type) \(node.name)"
+        let lines = RunningNodeNames.lines(of: record.running)
+        let shown = lines.prefix(runningNodesListed)
+        let rest  = lines.count - shown.count
+        return Array(shown) + (rest > 0 ? ["and \(rest) more"] : [])
     }
 }
 

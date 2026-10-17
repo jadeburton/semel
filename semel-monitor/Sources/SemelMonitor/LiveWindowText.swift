@@ -38,7 +38,7 @@ public enum LiveWindowText {
         return model.lastSettled.map { "started \($0.scheduled) of \($0.scheduled)" }
     }
 
-    /// `SwiftCompiler · App/View.swift · 2.1 s`.
+    /// `SwiftCompiler · Models · 2.1 s`.
     static func line(of row: RunningNodeRow) -> String {
         ([row.type] + (row.name.isEmpty ? [] : [row.name]) + [ElapsedText.text(row.elapsed)]).joined(separator: " · ")
     }

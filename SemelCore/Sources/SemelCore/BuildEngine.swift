@@ -1067,12 +1067,39 @@ public final class BuildEngine {
                                         running:   running))
     }
 
-    /// The type name and the name a report gives the node, taken as it starts: a read or
-    /// two per node start, which is one per tool process.
+    /// The type name, what the node is computed for, the name a report gives it and its
+    /// identity, taken as it starts: the node's inputs read once more beside the read its
+    /// run makes, which is small beside one tool process.
     private func describeForProgress(_ nodeRecord: NodeRecord) -> ActiveNodeDescription {
         let typeName = (try? TypeRegistry.type(kind: nodeRecord.kind)).map { String(describing: $0) }
             ?? "kind \(nodeRecord.kind)"
-        return ActiveNodeDescription(typeName: typeName, name: progressName(of: nodeRecord))
+        return ActiveNodeDescription(typeName: typeName,
+                                     name:     progressName(of: nodeRecord),
+                                     subject:  progressSubject(of: nodeRecord),
+                                     identity: nodeRecord.identity ?? "")
+    }
+
+    /// What the node is computed for, as its error report would name it (B-145): the node's
+    /// own `errorSubject` over the inputs it is about to read — a compile's module, a
+    /// compiler's source — else the product it is published as, for a node that names
+    /// nothing of its own and whose output an `OutputFile` takes: a linker's. Read from the
+    /// node's spec and its wires' keys and values, so two settles name a node alike.
+    private func progressSubject(of nodeRecord: NodeRecord) -> ErrorDocument.Subject? {
+        if let node = try? nodeRecord.makeNode(),
+           let subject = node.errorSubject(input: try? node.buildProcessInput()) {
+            return subject
+        }
+        guard let nodeID = nodeRecord.id else {
+            return nil
+        }
+        let consumers = FatalErrors.attempt({ try database.wire.select(comingFromNodeID: nodeID) }) ?? []
+        let products = consumers.compactMap { wire -> String? in
+            guard let consumer = try? database.node.select(nodeID: wire.toNodeID), consumer.kind == OutputFile.kind else {
+                return nil
+            }
+            return consumer.properties[OutputFile.pathProperty]
+        }
+        return products.min().map { .product(path: $0) }
     }
 
     /// The name a report gives the node, else the file on its `input` port. A compiler

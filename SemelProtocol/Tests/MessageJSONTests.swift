@@ -49,9 +49,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsThirtyTwo() {
-        XCTAssertEqual(ProtocolVersion.current, 32)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 32,
+    func test_currentProtocolVersionIsThirtyThree() {
+        XCTAssertEqual(ProtocolVersion.current, 33)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 33,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -62,8 +62,35 @@ final class MessageJSONTests: XCTestCase {
                                     running: [ActiveNode(type: "ClangCompiler", name: "input:/src/main.c")])
         XCTAssertEqual(try json(Event.daemon(.progress(record: record))),
                        #"{"daemon":{"progress":{"record":{"computed":3,"fromCache":4,"pending":5,"#
-                     + #""running":[{"name":"input:\/src\/main.c","type":"ClangCompiler"}],"scheduled":12}}}}"#)
+                     + #""running":[{"identity":"","name":"input:\/src\/main.c","type":"ClangCompiler"}],"scheduled":12}}}}"#)
         XCTAssertEqual(try roundTrip(Event.daemon(.progress(record: record))), .daemon(.progress(record: record)))
+    }
+
+    /// B-168. A running node carries what it is computed for, typed as the error report's
+    /// subject, and the identity that tells two of one type and subject apart.
+    func test_aRunningNodeCarriesItsSubjectAndIdentity() throws {
+        let compiler = ActiveNode(type: "SwiftCompiler", name: "", subject: .target(name: "Models"), identity: "3fa2c1d0")
+        let record   = ProgressRecord(scheduled: 2, computed: 0, fromCache: 0, pending: 1, running: [compiler])
+
+        XCTAssertEqual(try json(Event.daemon(.progress(record: record))),
+                       #"{"daemon":{"progress":{"record":{"computed":0,"fromCache":0,"pending":1,"#
+                     + #""running":[{"identity":"3fa2c1d0","name":"","subject":{"target":{"name":"Models"}},"#
+                     + #""type":"SwiftCompiler"}],"scheduled":2}}}}"#)
+        XCTAssertEqual(try roundTrip(Event.daemon(.progress(record: record))), .daemon(.progress(record: record)))
+    }
+
+    /// Every kind of subject survives the wire on a running node.
+    func test_roundTripsARunningNodeOfEverySubjectKind() throws {
+        let subjects: [ErrorDocument.Subject] = [
+            .target(name: "Models"), .product(path: "output:/App/App"), .package(name: "GRDB.swift"),
+            .resource(path: "input:/App/Assets.xcassets"), .formula(path: "input:/App/semel.fmla"),
+            .project(path: "input:/App/App.xcodeproj"), .source(path: "input:/Sources/App/main.m"),
+        ]
+        for subject in subjects {
+            let record = ProgressRecord(scheduled: 1, computed: 0, fromCache: 0, pending: 0,
+                                        running: [ActiveNode(type: "T", name: "", subject: subject, identity: "abc")])
+            XCTAssertEqual(try roundTrip(Event.daemon(.progress(record: record))), .daemon(.progress(record: record)))
+        }
     }
 
     func test_encodesSettledEvent() throws {

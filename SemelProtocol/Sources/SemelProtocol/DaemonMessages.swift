@@ -640,14 +640,27 @@ public struct ProgressRecord: Codable, Equatable, Sendable {
     }
 }
 
-/// One node computing now: its type and the name a report would give it — its path when
-/// it has one, the project file when it is a builder, empty otherwise.
+/// One node computing now: its type, what it is computed for and what tells it apart from
+/// another node of its type.
 public struct ActiveNode: Codable, Equatable, Sendable {
     public let type: String
+    /// Its path when it has one, the project file when it is a builder, else the file on
+    /// its `input` port; empty when it has none of them.
     public let name: String
+    /// What the node is computed for, as the error report names what a failure belongs to
+    /// (B-145): a compile's module, a compiler's source, a link's product. Typed, so a client
+    /// draws it as the report draws a subject; nil for a node that names none, which a
+    /// client names by `name`.
+    public let subject: ErrorDocument.Subject?
+    /// The node's identity, the hash of its spec: two nodes of one type and one subject —
+    /// one module compiled under two configurations — are told apart by it, and a client
+    /// follows one node from one record to the next by it. Empty for a node without one.
+    public let identity: String
 
-    public init(type: String, name: String) {
-        self.type = type
-        self.name = name
+    public init(type: String, name: String, subject: ErrorDocument.Subject? = nil, identity: String = "") {
+        self.type     = type
+        self.name     = name
+        self.subject  = subject
+        self.identity = identity
     }
 }

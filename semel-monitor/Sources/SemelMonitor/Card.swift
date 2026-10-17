@@ -32,10 +32,9 @@ public struct Card: Equatable, Sendable {
     }
 
     public enum Content: Equatable, Sendable {
-        /// A settle in progress, as its latest `progress` record says. `rotation` is the
-        /// index of the first running node the card names: the clock moves it on, so that a
-        /// settle running more nodes than a card has room for names each of them in turn.
-        case running(record: ProgressRecord, rotation: Int)
+        /// A settle in progress, as its latest `progress` record says: every running node a
+        /// line, in the record's order, so a node keeps its line while it runs.
+        case running(record: ProgressRecord)
         /// What the settle's `artifacts` said, each list in the event's path order, and the
         /// `settled` before it — nil for a settle that scheduled nothing and still moved a
         /// product, a removal's. `treeFolders` is the event's: the folder of the tree
@@ -128,8 +127,7 @@ public enum CardChange: Equatable, Sendable {
     case folded(Card)
     /// A card on screen whose `earlier` count moved.
     case updated(Card)
-    /// The running card on screen, redrawn: a `progress` moved it, or the clock turned the
-    /// names it shows.
+    /// The running card on screen, redrawn: a `progress` moved it.
     case progressed(Card)
     /// The running card on screen became its settle's result or errors card, in its place
     /// in the stack and under its id.

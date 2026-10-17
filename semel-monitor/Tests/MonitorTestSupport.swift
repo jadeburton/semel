@@ -47,7 +47,14 @@ enum Events {
     static func record(scheduled: Int = 10, computed: Int = 0, fromCache: Int = 0, pending: Int = 5,
                        running names: [String]) -> ProgressRecord {
         ProgressRecord(scheduled: scheduled, computed: computed, fromCache: fromCache, pending: pending,
-                       running: names.map { ActiveNode(type: "ClangCompiler", name: "src/\($0).c") })
+                       running: names.map(compile(of:)))
+    }
+
+    /// The compile of `src/<name>.c`, as the engine describes it: by its source, with an
+    /// identity of its own.
+    static func compile(of name: String) -> ActiveNode {
+        ActiveNode(type: "ClangCompiler", name: "input:/src/\(name).c.p", subject: .source(path: "input:/src/\(name).c"),
+                   identity: "identity-of-\(name)")
     }
 
     /// A compile error stopping `products`.

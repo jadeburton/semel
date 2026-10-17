@@ -17,9 +17,6 @@ public final class NotificationPlanner {
     /// How many cards are on screen at most; older ones fold into the bottom one.
     public static let mostCardsShown = 5
 
-    /// How long a running card names the same running nodes before it turns to the next.
-    public static let namesTurn = Duration.seconds(2)
-
     /// How long a running card waits, after its settle's `settled`, for the `artifacts`
     /// that would make it the result. The engine sends the two back to back when a product
     /// moved and sends no `artifacts` when none did, and nothing else marks a settle's end:
@@ -68,9 +65,6 @@ public final class NotificationPlanner {
 
     /// The running card on screen, if any.
     private var runningCardID: Int?
-    /// When the running card next turns to the next running nodes; nil while it names
-    /// them all.
-    private var nextTurn: Duration?
     /// When a running card whose settle has ended goes, should no `artifacts` come for it.
     private var runningCardWaitsUntil: Duration?
     /// The settle in progress had its running card clicked away, so its next `progress`
@@ -131,7 +125,6 @@ public final class NotificationPlanner {
                 changes += retireRunningCard()
             } else if runningCardID != nil {
                 runningCardWaitsUntil = clock.now + Self.artifactsWait
-                nextTurn              = nil
             }
         case .artifacts(let appeared, let changed, let disappeared, let treeFolders):
             changes += replaceErrorCards(givenAValue: appeared + changed)
@@ -208,15 +201,15 @@ public final class NotificationPlanner {
 
     // MARK: - Time
 
-    /// When the planner next has something to do — a result card to go, a running card to
-    /// turn its names or to go — for the caller to come back then with `advance`.
+    /// When the planner next has something to do — a result card to go, or a running card
+    /// whose settle has ended — for the caller to come back then with `advance`.
     public var nextDeadline: Duration? {
-        (Array(deadlines.filter { !hovered.contains($0.key) }.values) + [nextTurn, runningCardWaitsUntil].compactMap { $0 })
+        (Array(deadlines.filter { !hovered.contains($0.key) }.values) + [runningCardWaitsUntil].compactMap { $0 })
             .min()
     }
 
-    /// The result cards whose time is up, dismissed; the running card's names turned, or
-    /// the card gone when its settle ended with no product moved.
+    /// The result cards whose time is up, dismissed; the running card gone when its settle
+    /// ended with no product moved.
     @discardableResult
     public func advance() -> [CardChange] {
         expire()
@@ -229,9 +222,6 @@ public final class NotificationPlanner {
         if let waitsUntil = runningCardWaitsUntil, waitsUntil <= now {
             changes += retireRunningCard()
         }
-        if let turn = nextTurn, turn <= now {
-            changes += turnRunningNames()
-        }
         return changes
     }
 
@@ -240,47 +230,23 @@ public final class NotificationPlanner {
     /// The running card made by the first `progress` that lists a running node, and
     /// redrawn in place by every one after it. A settle whose records list nothing running
     /// shows no card, and neither does one under a pause or whose card was clicked away.
+    /// The card lists what the record lists in the record's order, which is the order the
+    /// nodes started, and nothing moves on the clock: a line changes only when a node
+    /// starts or finishes, so a node that stays on the card is the same node.
     private func showProgress(_ record: ProgressRecord) -> [CardChange] {
         if let runningID = runningCardID, let index = cards.firstIndex(where: { $0.id == runningID }) {
-            guard case .running(let shown, let rotation) = cards[index].content, shown != record else {
+            guard case .running(let shown) = cards[index].content, shown != record else {
                 return []
             }
-            let turned = record.running.isEmpty ? 0 : rotation % record.running.count
-            cards[index] = Card(id: runningID, content: .running(record: record, rotation: turned),
-                                earlier: cards[index].earlier)
-            scheduleTurn(runningNodes: record.running.count)
+            cards[index] = Card(id: runningID, content: .running(record: record), earlier: cards[index].earlier)
             return [.progressed(cards[index])]
         }
         guard !record.running.isEmpty, !isPaused, !runningCardDeclined else {
             return []
         }
-        let card = Card(id: takeID(), content: .running(record: record, rotation: 0))
+        let card = Card(id: takeID(), content: .running(record: record))
         runningCardID = card.id
-        scheduleTurn(runningNodes: record.running.count)
         return show(card)
-    }
-
-    /// A turn is due only while there are more running nodes than a card names.
-    private func scheduleTurn(runningNodes: Int) {
-        guard runningNodes > CardText.runningNodesNamed else {
-            nextTurn = nil
-            return
-        }
-        if nextTurn == nil {
-            nextTurn = clock.now + Self.namesTurn
-        }
-    }
-
-    private func turnRunningNames() -> [CardChange] {
-        nextTurn = nil
-        guard let runningID = runningCardID, let index = cards.firstIndex(where: { $0.id == runningID }),
-              case .running(let record, let rotation) = cards[index].content, !record.running.isEmpty else {
-            return []
-        }
-        let turned = (rotation + CardText.runningNodesNamed) % record.running.count
-        cards[index] = Card(id: runningID, content: .running(record: record, rotation: turned), earlier: cards[index].earlier)
-        scheduleTurn(runningNodes: record.running.count)
-        return [.progressed(cards[index])]
     }
 
     /// The running card goes with nothing in its place.
@@ -393,7 +359,6 @@ public final class NotificationPlanner {
 
     private func clearRunningCard() {
         runningCardID         = nil
-        nextTurn              = nil
         runningCardWaitsUntil = nil
     }
 
