@@ -271,7 +271,7 @@ final class BuildCommandTests: XCTestCase {
 
         XCTAssertEqual(interpreter.errorsReported, 1)
         XCTAssertFalse(FileManager.default.fileExists(atPath: externalRoot.appendingPathComponent("semel-out/src").path))
-        XCTAssertEqual(lines.last, "1 error · 1 product without a value · nothing exported")
+        XCTAssertEqual(lines.last, "1 error · 1 of 2 products up to date · nothing exported")
     }
 
     /// A folder the reader named with `--into` is one they asked to have filled: it gets the
@@ -293,7 +293,7 @@ final class BuildCommandTests: XCTestCase {
             "broken.a:",
             "the source is gone",
             "",
-            "1 error · 1 product without a value · 1 of 2 products exported",
+            "1 error · 1 of 2 products up to date · 1 of 2 products exported",
         ])
     }
 

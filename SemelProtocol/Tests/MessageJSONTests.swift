@@ -49,9 +49,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsThirtyThree() {
-        XCTAssertEqual(ProtocolVersion.current, 33)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 33,
+    func test_currentProtocolVersionIsThirtyFour() {
+        XCTAssertEqual(ProtocolVersion.current, 34)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 34,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -331,10 +331,11 @@ final class MessageJSONTests: XCTestCase {
             .remove(removedFiles: ["a", "b"], removedFolders: ["src"]),
             .fetch(mode: 0o644),
             .symbolicLink(target: "Versions/Current/Tiny"),
-            .errors(records: [record]),
+            .errors(records: [record], products: ProductTally(products: 5, upToDate: 2)),
             .errors(records: [ErrorRecord(document: .engine(.unlinkedKind(kind: 43), subject: nil), products: [],
                                           facts: ErrorFacts(nodeType: "kind 43", nodeIDs: [37], ports: ["output"],
-                                                            carrierCount: 1))]),
+                                                            carrierCount: 1))],
+                    products: ProductTally(products: 0, upToDate: 0)),
             .tools(namespaces: [ToolNamespaceRecord(namespace: "swift.compiler", toolName: "swiftc",
                                               descriptors: [descriptor])]),
             .reset(archivedGraphPath: "/tmp/semel-home/graph.sqlite.broken-2026-09-23T101500Z"),
@@ -520,7 +521,7 @@ final class MessageJSONTests: XCTestCase {
     }
 
     func test_roundTripsErrorsEvent() throws {
-        let event = Event.daemon(.errors(records: [Self.sampleRecord]))
+        let event = Event.daemon(.errors(records: [Self.sampleRecord], products: ProductTally(products: 4, upToDate: 3)))
 
         XCTAssertEqual(try roundTrip(event), event)
     }

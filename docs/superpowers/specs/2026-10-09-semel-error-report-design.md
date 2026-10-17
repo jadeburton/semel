@@ -251,3 +251,35 @@ Where the code differs from the text above:
   depends on `SemelNodeKit` to carry the document as the value the node published, protocol
   version 26 (25 is B-146's). `Semel.version` is 0.1.16, since a stored error port's hash
   named a sentence.
+
+## Amended (2026-10-17, B-169): up to date, pending, in error
+
+The owner found `1 error · every product has a value` under a graph that held no products
+at all (a removed `semel.machine.config` takes every product with it), and the phrase "has
+a value" esoteric wherever the prompt says it. The client's words are now three, decided
+from `NoValueReason` by case (`ValueState`): a product holding a value is **up to date**;
+one without is **pending** when its reason is a state the graph passes through
+(`pending`, `initializing`, `inputNotProduced`) and **in error** when it is a failure or
+one above it (`error`, `inputInError`). A source pushed and then removed (`deleted`) is
+neither and is said as **removed**. The engine's own vocabulary is unchanged.
+
+- **The summary line counts the graph's products**, from a `ProductTally` the server sends
+  with the `errors` reply and the idle-time event (protocol 34), counted as the report names
+  products — a tree once, by its folder: `1 error · 2 of 5 products up to date`, `no errors ·
+  5 products up to date`, `3 errors · no products up to date`, and `1 error · no products`
+  for a graph that holds none. `errors` with no errors and a clean `build` print it in place
+  of `No errors.`; the export's part after it is unchanged. A view with only the records —
+  the monitor's card — counts what they name, `1 error · 2 products in error`, and says
+  nothing of products when they name none.
+- **`no product:` is left out when the graph holds no products**: it would set the errors
+  apart from nothing.
+- **A removed machine file is its own condition**, `ErrorCondition.machineFileRemoved`, with
+  the `write with:` remedy the unpushed one has (B-109): `swift/CPackage/semel.machine.config,
+  the machine's configuration, has been removed` / `write with: semel-swift prepare
+  swift/CPackage`. The engine decides it from the removed `StaticFile`'s name, the one name
+  the machine file's writers write.
+- **`errors <product>`** with nothing stopping it says `libModels.a has no errors.`: the
+  server's empty answer does not say whether the product is up to date yet.
+- **`ls`** prints `[up to date]` beside a product holding its value, `[pending]`, `[in error]`,
+  `[removed]`, `[not pushed]` and `[unreferenced]` as before otherwise, right-aligned to the
+  one column the longest noted name and the longest status of the listing reach.

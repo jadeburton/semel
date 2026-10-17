@@ -262,9 +262,9 @@ public final class CommandInterpreter: CommandContext {
 
     private func printEvent(_ event: Event) {
         switch event {
-        case .daemon(.errors(let records)):
+        case .daemon(.errors(let records, let products)):
             if printsErrorEvents {
-                ErrorReportRenderer.lines(for: records, style: ErrorReportStyle(colour: reportsInColour))
+                ErrorReportRenderer.lines(for: records, products: products, style: ErrorReportStyle(colour: reportsInColour))
                     .forEach { outputMessage($0) }
             }
             countErrorRecords(records)
@@ -550,10 +550,16 @@ public final class CommandInterpreter: CommandContext {
 
     /// Every failure the graph holds, as `errors` would list it, without printing it.
     public func errorRecords() throws -> [ErrorRecord] {
-        guard case .errors(let records) = try request(.errors(product: nil)).0 else {
-            return []
+        try errorReport().records
+    }
+
+    /// Every failure the graph holds and the graph's tally of products, as `errors` would
+    /// report them, without printing them.
+    public func errorReport() throws -> (records: [ErrorRecord], products: ProductTally?) {
+        guard case .errors(let records, let products) = try request(.errors(product: nil)).0 else {
+            return ([], nil)
         }
-        return records
+        return (records, products)
     }
 
     // MARK: - build
@@ -592,7 +598,7 @@ public final class CommandInterpreter: CommandContext {
             pushExclusions.insert(inTree)
         }
 
-        let records = try errorRecords()
+        let (records, products) = try errorReport()
         // Counted as the `errors` verb counts a report: the exit status is what says the
         // build failed, whatever was exported.
         countErrorRecords(records)
@@ -602,7 +608,7 @@ public final class CommandInterpreter: CommandContext {
             guard errorsReported == errorsBefore else {
                 return
             }
-            outputMessage("No errors.")
+            outputMessage(products.map(ErrorReportRenderer.summaryLine(products:)) ?? "No errors.")
             // A named destination with nothing to put in it is `export`'s error to report;
             // the default one is only used when there is something to put in it.
             if try destination != nil || hasProducts(folder) {
@@ -616,7 +622,7 @@ public final class CommandInterpreter: CommandContext {
         let style = ErrorReportStyle(verbose: verbose, colour: reportsInColour)
         let export = try exportBeside(records: records, folders: [folder], destination: exportFolder,
                                       exportsWhatHasAValue: destination != nil)
-        reportErrors(records, style: style, export: export, printsBlocks: true)
+        reportErrors(records, products: products, style: style, export: export, printsBlocks: true)
         if let hint = prepareHint(for: folder) {
             outputMessage(hint)
         }
@@ -628,8 +634,9 @@ public final class CommandInterpreter: CommandContext {
     /// the blocks — unless `printsBlocks` is off, for a watcher whose prompt prints its own
     /// report — then the summary line, which says what became of the export. Counted by
     /// the caller.
-    public func reportErrors(_ records: [ErrorRecord], style: ErrorReportStyle, export: ExportOutcome?, printsBlocks: Bool) {
-        let lines = ErrorReportRenderer.lines(for: records, style: style, export: export)
+    public func reportErrors(_ records: [ErrorRecord], products: ProductTally?, style: ErrorReportStyle,
+                             export: ExportOutcome?, printsBlocks: Bool) {
+        let lines = ErrorReportRenderer.lines(for: records, products: products, style: style, export: export)
         (printsBlocks ? lines : Array(lines.suffix(1))).forEach { outputMessage($0) }
     }
 
@@ -693,7 +700,7 @@ public final class CommandInterpreter: CommandContext {
             HelpEntry(verbs: ["build"], usage: "build <folder> [--into <dir>] [--no-follow] [--verbose]",
                       description: "push the folder, wait, report; push what its formula needs from the tree; "
                                  + "export the products, to semel-out/<folder> under the base unless --into says where; "
-                                 + "with errors, --into still gets what has a value"),
+                                 + "with errors, --into still gets what is up to date"),
             HelpEntry(verbs: ["wait"], usage: "wait",
                       description: "block until the build has settled; at a terminal a line shows where it stands, "
                                  + "and SEMEL_PROGRESS=full lists the running nodes under it"),
@@ -703,10 +710,10 @@ public final class CommandInterpreter: CommandContext {
             HelpEntry(verbs: ["watch"],
                       usage: "watch <folder> [--into <dir>] [--only <pattern>] [--except <pattern>] [--verbose]",
                       description: "start a semel-watch that pushes the folder as you save, after two quiet seconds; "
-                                 + "--into exports what has a value after each settle; one per session"),
+                                 + "--into exports what is up to date after each settle; one per session"),
             HelpEntry(verbs: ["unwatch"], usage: "unwatch", description: "stop the semel-watch `watch <folder>` started"),
             HelpEntry(verbs: ["errors", "e"], usage: "errors [<product>] [--verbose]",
-                      description: "what has no value and why: a heading per set of products with the same "
+                      description: "what is in error and why: a heading per set of products with the same "
                                  + "errors, each error under it; with a product, or a tree product's folder, that product's errors alone; "
                                  + "--verbose adds the engine's facts"),
             HelpEntry(verbs: ["explain", "why"], usage: "explain <path>",
@@ -833,7 +840,7 @@ public final class CommandInterpreter: CommandContext {
         var pushed: Set<String> = []
         var errorsBeforeSettle = errorsBeforeSettle
         while true {
-            guard case .errors(let records) = try request(.errors(product: nil)).0 else {
+            guard case .errors(let records, _) = try request(.errors(product: nil)).0 else {
                 return pushed
             }
             let missing = records.flatMap { $0.document.causes.compactMap(\.unpushedSource) }

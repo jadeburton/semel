@@ -197,6 +197,52 @@ public struct ProductReach {
         return String(path.dropLast(entryName.count + 1))
     }
 
+    // MARK: - Counting products
+
+    /// How many products the graph holds, and how many of them hold a value: what a
+    /// report's summary line counts, `2 of 5 products up to date`.
+    public struct Tally: Equatable, Sendable {
+        public let products: Int
+        public let upToDate: Int
+
+        public init(products: Int, upToDate: Int) {
+            self.products = products
+            self.upToDate = upToDate
+        }
+    }
+
+    /// The products counted as a report names them: one on its own by its path, a tree
+    /// product once by its folder. A tree holds a value when every entry it has holds one;
+    /// one a formula publishes none of whose entries is in the graph is not, as the report
+    /// names it by its folder when it is what failed.
+    public static func tally(database: DatabaseLayer) throws -> Tally {
+        // Counted as two sets rather than a walk: a key is a product, and one entry without
+        // a value is enough to keep it from being up to date.
+        var products:    Set<String> = []
+        var notUpToDate: Set<String> = []
+        for nodeRecord in try database.node.select(kind: OutputFile.kind) {
+            guard let path = nodeRecord.properties[OutputFile.pathProperty] else {
+                continue
+            }
+            let key = try treeFolder(ofArtifact: nodeRecord, database: database).map { "\($0)/" } ?? path
+            products.insert(key)
+            if case .value? = try nodeRecord.readFromInputPort(OutputFile.inputPort).values.first {
+                continue
+            }
+            notUpToDate.insert(key)
+        }
+        let treesPort = ProjectBuilder.treesInputPort.asSymbolID()
+        for builder in try database.node.select(kind: ProjectBuilder.kind) {
+            for wire in try database.wire.select(goingToNodeID: try builder.requireID(), toSymbolID: treesPort) {
+                let key = "\(wire.name.resolveSymbol())/"
+                if products.insert(key).inserted {
+                    notUpToDate.insert(key)
+                }
+            }
+        }
+        return Tally(products: products.count, upToDate: products.count - notUpToDate.count)
+    }
+
     // MARK: - Naming a product
 
     /// Whether `path` — a full path under `output:` — names a product: an `OutputFile`

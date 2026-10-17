@@ -173,8 +173,12 @@ public final class RequestHandler {
             case .errors(let product):
                 // Sliced once the report is whole: `ErrorReport` orders and folds over
                 // every failure at once, so there is nothing to send before it is done.
-                let slicer = ReplySlicer<ErrorRecord>(verb: "errors", stream: replyStream) { .errors(records: $0) }
-                try slicer.append(contentsOf: try errorRecords(stopping: product))
+                let records  = try errorRecords(stopping: product)
+                let products = try productTally()
+                let slicer   = ReplySlicer<ErrorRecord>(verb: "errors", stream: replyStream) {
+                    .errors(records: $0, products: products)
+                }
+                try slicer.append(contentsOf: records)
                 return (.daemon(slicer.last), nil)
             case .check:
                 let report = GraphCheck.run(database: database)
@@ -342,6 +346,13 @@ public final class RequestHandler {
             .flatMap(ErrorRecord.records(of:))
     }
 
+    /// How many products the graph holds and how many are up to date, for a report's summary
+    /// line: the whole graph's, whichever records the report carries.
+    private func productTally() throws -> ProductTally {
+        let tally = try ProductReach.tally(database: database)
+        return ProductTally(products: tally.products, upToDate: tally.upToDate)
+    }
+
     /// Why the last settle did what it did to the node at `path` (B-91). A path with no node
     /// is an error naming it, whether or not anything has settled; a node with no settle
     /// behind it — nothing has done work since this server started — answers nil, which
@@ -388,7 +399,13 @@ public final class RequestHandler {
     /// engine outliving its handler (tests swap handlers) does not keep it alive.
     private func installReporters() {
         engine.errorReporter = { [weak self] entries in
-            self?.eventSink?.deliver(.daemon(.errors(records: entries.flatMap(ErrorRecord.records(of:)))))
+            guard let self else {
+                return
+            }
+            // Best effort, as the report is: a tally the graph cannot give is left out
+            // rather than lose the report it comes with.
+            let products = try? self.productTally()
+            self.eventSink?.deliver(.daemon(.errors(records: entries.flatMap(ErrorRecord.records(of:)), products: products)))
         }
         engine.noticeReporter = { [weak self] line in
             self?.eventSink?.deliver(.daemon(.notice(line: line)))

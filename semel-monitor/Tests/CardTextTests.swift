@@ -31,7 +31,7 @@ final class CardTextTests: XCTestCase {
 
     func test_anErrorHeadlineCountsTheProductsWithoutAValue() {
         let records = [Events.compileError(products: Events.products("output:/a", "output:/b"))]
-        XCTAssertEqual(CardText.headline(of: Card(id: 1, content: .errors(records: records))), "2 products without a value")
+        XCTAssertEqual(CardText.headline(of: Card(id: 1, content: .errors(records: records))), "2 products in error")
     }
 
     func test_theStatusSummaryIsTheHeadlineWithoutItsNoun() {
@@ -68,10 +68,10 @@ final class CardTextTests: XCTestCase {
         let records = [Events.compileError(line, products: Events.products("output:/Packages/libConversations.a",
                                                                            "output:/Packages/libExplore.a"))]
         XCTAssertEqual(CardText.printed(.shown(Card(id: 2, content: .errors(records: records)))), [
-            "card: 2 products without a value",
+            "card: 2 products in error",
             "  Packages/Models/Sources/Models/Account.swift:201:28: error: cannot convert value of type 'String' to specified type 'Int'",
             "  libConversations.a, libExplore.a",
-            "  1 error · 2 products without a value",
+            "  1 error · 2 products in error",
         ])
     }
 

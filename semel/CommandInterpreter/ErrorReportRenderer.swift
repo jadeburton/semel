@@ -16,8 +16,9 @@
 // line one the diagnostic, then what the failing function belongs to, then — where the
 // engine can state one as a fact — what to change. An error is printed in full once; a
 // later heading that needs it again names it by its first line and `(above)`. Errors no
-// product needs come last, under `no product:`. The report ends with one summary line,
-// counting errors and products; nodes are not counted.
+// product needs come last, under `no product:`, a heading left out when the graph holds no
+// products to set them apart from. The report ends with one summary line, counting errors
+// and products — `1 error · 2 of 5 products up to date` — and nodes are not counted.
 
 import Foundation
 import SemelNodeKit
@@ -57,11 +58,11 @@ public enum ColourPolicy {
 
 /// What became of an export a report is about, for its summary line.
 public enum ExportOutcome: Equatable, Sendable {
-    /// No export was made: products the build names have no value.
+    /// No export was made: products the build names are not up to date.
     case nothing
-    /// Every product had a value and was exported, to a folder as the reader typed it.
+    /// Every product was up to date and exported, to a folder as the reader typed it.
     case whole(destination: String)
-    /// `--into` exported what had a value: `exported` of `products`.
+    /// `--into` exported what was up to date: `exported` of `products`.
     case partial(exported: Int, of: Int)
 }
 
@@ -72,7 +73,7 @@ struct ErrorBlock: Equatable {
     var document: ErrorDocument
     /// Each subject the merged documents name, in the order met.
     var subjects: [ErrorDocument.Subject]
-    /// Every product without a value because of it.
+    /// Every product in error because of it.
     var products: [StoppedProduct]
     var facts:    [ErrorFacts]
 }
@@ -95,11 +96,13 @@ public enum ErrorReportRenderer {
 
     /// The headings, each with its errors, and the summary line at the end. What `errors`
     /// prints, the idle-time report after a settle, and the monitor's products window.
-    public static func lines(for records: [ErrorRecord], style: ErrorReportStyle,
+    /// `products` is the graph's tally, which the summary line counts; without one it
+    /// counts only the products the records name.
+    public static func lines(for records: [ErrorRecord], products: ProductTally? = nil, style: ErrorReportStyle,
                              export: ExportOutcome? = nil) -> [String] {
         let blocks = Self.blocks(for: records)
-        return groupLines(blocks, style: style)
-            + [summaryLine(errors: blocks.count, productsWithoutValue: productCount(blocks), export: export)]
+        return groupLines(blocks, headsUnneeded: products?.products != 0, style: style)
+            + [summaryLine(errors: blocks.count, productsInError: productCount(blocks), products: products, export: export)]
     }
 
     /// One condition as a report draws it, with no heading and no summary: an error a
@@ -112,13 +115,15 @@ public enum ErrorReportRenderer {
 
     /// `errors <product>`: that product's heading and its errors, alone. `product` is the
     /// full path asked about, `output:/…`; the records are the server's answer for it, and
-    /// none means the product has a value.
-    static func productView(_ records: [ErrorRecord], product: String, style: ErrorReportStyle) -> [String] {
+    /// none means no error stops the product — which says nothing of whether it is up to date
+    /// yet, so the line says only that.
+    static func productView(_ records: [ErrorRecord], product: String, products: ProductTally? = nil,
+                            style: ErrorReportStyle) -> [String] {
         let isTree = records.contains { record in record.products.contains { $0.treeFolder == product } }
         let name   = ProductNames(products: [StoppedProduct(path: product, treeFolder: isTree ? product : nil)])
             .name(of: product, isTree: isTree)
         guard !records.isEmpty else {
-            return ["\(ProductNames.headingName(name)) has a value."]
+            return ["\(ProductNames.headingName(name)) has no errors."]
         }
         let blocks   = Self.blocks(for: records)
         let renderer = BlockRenderer(names: ProductNames(products: blocks.flatMap(\.products)), style: style)
@@ -127,18 +132,22 @@ public enum ErrorReportRenderer {
             lines.append(contentsOf: renderer.lines(for: block))
             lines.append("")
         }
-        return lines + [summaryLine(errors: blocks.count, productsWithoutValue: productCount(blocks), export: nil)]
+        return lines + [summaryLine(errors: blocks.count, productsInError: productCount(blocks), products: products,
+                                    export: nil)]
     }
 
-    /// The summary line, in its four forms: the counts alone, as `errors` and the report
-    /// after a settle say them; and after an export, nothing exported, all of it, or what
-    /// had a value.
-    static func summaryLine(errors: Int, productsWithoutValue: Int, export: ExportOutcome?) -> String {
-        var parts = ["\(errors) \(errors == 1 ? "error" : "errors")"]
-        switch productsWithoutValue {
-        case 0:  parts.append("every product has a value")
-        case 1:  parts.append("1 product without a value")
-        default: parts.append("\(productsWithoutValue) products without a value")
+    /// The summary line: the errors, then the products by the graph's tally — `2 of 5
+    /// products up to date`, `5 products up to date`, `no products up to date`, and `no
+    /// products` for a graph that holds none, which claims nothing about them — then, after
+    /// an export, nothing exported, all of it, or what was up to date. Without a tally, the
+    /// products the records name are counted as `in error`, and none is not said at all: a
+    /// count of what is up to date is not known.
+    static func summaryLine(errors: Int, productsInError: Int, products: ProductTally?, export: ExportOutcome?) -> String {
+        var parts = [errors == 0 ? "no errors" : "\(errors) \(errors == 1 ? "error" : "errors")"]
+        if let products {
+            parts.append(productsPart(products))
+        } else if productsInError > 0 {
+            parts.append("\(productsInError) \(productsInError == 1 ? "product" : "products") \(ValueState.inError.word)")
         }
         switch export {
         case nil:
@@ -153,11 +162,32 @@ public enum ErrorReportRenderer {
         return parts.joined(separator: " · ")
     }
 
+    /// The products by the graph's tally, in the summary line's words.
+    private static func productsPart(_ tally: ProductTally) -> String {
+        guard tally.products > 0 else {
+            return "no products"
+        }
+        let upToDate = ValueState.upToDate.word
+        switch tally.upToDate {
+        case tally.products:
+            return "\(tally.products) \(tally.products == 1 ? "product" : "products") \(upToDate)"
+        case 0:
+            return "no products \(upToDate)"
+        default:
+            return "\(tally.upToDate) of \(tally.products) products \(upToDate)"
+        }
+    }
+
+    /// The summary line of a graph holding no errors: `no errors · 5 products up to date`.
+    public static func summaryLine(products: ProductTally) -> String {
+        summaryLine(errors: 0, productsInError: 0, products: products, export: nil)
+    }
+
     /// The report's summary line for these records, with no export: what a view too small
     /// for the report — a notification card — says under the error it shows.
-    public static func summaryLine(for records: [ErrorRecord]) -> String {
+    public static func summaryLine(for records: [ErrorRecord], products: ProductTally? = nil) -> String {
         let blocks = Self.blocks(for: records)
-        return summaryLine(errors: blocks.count, productsWithoutValue: productCount(blocks), export: nil)
+        return summaryLine(errors: blocks.count, productsInError: productCount(blocks), products: products, export: nil)
     }
 
     /// How many errors the report counts for these records: one per cause, merged as its
@@ -262,14 +292,20 @@ public enum ErrorReportRenderer {
 
     /// Each heading and its errors: an error in full under the first heading that needs
     /// it, and by its first line and `(above)` under every later one, so the report holds
-    /// each error once and every product's heading still names all it waits on.
-    private static func groupLines(_ blocks: [ErrorBlock], style: ErrorReportStyle) -> [String] {
+    /// each error once and every product's heading still names all it waits on. The
+    /// errors no product needs go under `no product:` only where `headsUnneeded`: in a
+    /// graph that holds no products the heading would set them apart from nothing.
+    private static func groupLines(_ blocks: [ErrorBlock], headsUnneeded: Bool, style: ErrorReportStyle) -> [String] {
         let names    = ProductNames(products: blocks.flatMap(\.products))
         let renderer = BlockRenderer(names: names, style: style)
         var printed: Set<Int> = []
         var lines: [String] = []
         for group in groups(of: blocks) {
-            lines.append(renderer.heading(group.productKeys.isEmpty ? noProductHeading : names.heading(ofKeys: group.productKeys)))
+            if !group.productKeys.isEmpty {
+                lines.append(renderer.heading(names.heading(ofKeys: group.productKeys)))
+            } else if headsUnneeded {
+                lines.append(renderer.heading(noProductHeading))
+            }
             var afterAbove = false
             for index in group.blocks {
                 if printed.contains(index) {

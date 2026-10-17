@@ -210,7 +210,7 @@ final class WatcherTests: XCTestCase {
         try watcher.run()
 
         XCTAssertTrue(lines.contains("broken.a:"), lines.joined(separator: "\n"))
-        XCTAssertEqual(lines.last, "1 error · 1 product without a value · nothing exported", lines.joined(separator: "\n"))
+        XCTAssertEqual(lines.last, "1 error · no products up to date · nothing exported", lines.joined(separator: "\n"))
         XCTAssertFalse(lines.contains { $0.hasPrefix("Exported") })
     }
 

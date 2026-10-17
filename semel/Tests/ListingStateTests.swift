@@ -99,8 +99,8 @@ final class ListingStateTests: XCTestCase {
 
     // MARK: - The states
 
-    /// A pushed source and the product built from it are both there. Nothing to say.
-    func test_aPushedSourceAndItsBuiltProductCarryNoNote() throws {
+    /// A pushed source is there, and says nothing; the product built from it is up to date.
+    func test_aPushedSourceCarriesNoNoteAndItsProductIsUpToDate() throws {
         interpreter.handleCommand("build src")
 
         XCTAssertEqual(try lines(.input, "src"), [
@@ -108,7 +108,7 @@ final class ListingStateTests: XCTestCase {
             "-rw-r--r--        47  semel.fmla",
         ])
         XCTAssertEqual(try lines(.output, "src"), [
-            "-rw-r--r--        28  main.txt",
+            "-rw-r--r--        28  main.txt  [up to date]",
         ])
     }
 
@@ -117,18 +117,18 @@ final class ListingStateTests: XCTestCase {
     /// cannot be made without it says the other thing, because what the user removed is a
     /// source and not an artifact. Here the product is wired straight to the source, so its
     /// input carries the removal itself.
-    func test_aRemovedSourceIsListedAsDeletedAndItsProductAsFailed() throws {
+    func test_aRemovedSourceIsListedAsRemovedAndItsProductAsInError() throws {
         interpreter.handleCommand("build src")
 
         interpreter.handleCommand("rm src/main.c")
         interpreter.handleCommand("wait")
 
         XCTAssertEqual(try lines(.input, "src"), [
-            "-rw-r--r--         -  main.c  [deleted]",
+            "-rw-r--r--         -  main.c  [removed]",
             "-rw-r--r--        47  semel.fmla",
         ])
         XCTAssertEqual(try lines(.output, "src"), [
-            "-rw-r--r--         -  main.txt  [failed]",
+            "-rw-r--r--         -  main.txt  [in error]",
         ])
     }
 
@@ -136,7 +136,7 @@ final class ListingStateTests: XCTestCase {
     /// A node that demands its input is stopped by a removed source the way a compiler is,
     /// and publishes a failure of its own — so the product reads the same word it reads when
     /// it is wired straight to the source. One user action, one word, whatever the distance.
-    func test_aProductBehindABuilderWhoseSourceWasRemovedIsListedAsFailed() throws {
+    func test_aProductBehindABuilderWhoseSourceWasRemovedIsListedAsInError() throws {
         interpreter.handleCommand("push src")
         let builder = GraphSpecNode(TreeBuilder.self, inputs: [TreeBuilder.inputPort: ["main.c": .staticFile(at: "input:/src/main.c")]])
             .port(TreeBuilder.outputPort)
@@ -147,12 +147,12 @@ final class ListingStateTests: XCTestCase {
         interpreter.handleCommand("wait")
 
         XCTAssertEqual(try lines(.output, "made"), [
-            "-rw-r--r--         -  bundle.tree  [failed]",
+            "-rw-r--r--         -  bundle.tree  [in error]",
         ])
     }
 
     /// A product whose input is in error is a failure to act on, and says so.
-    func test_aProductWhoseInputFailedIsListedAsFailed() throws {
+    func test_aProductWhoseInputFailedIsListedAsInError() throws {
         let source = try wireProduct("broken.a")
         // Written after the wiring, which puts every output of its target back to pending.
         try source.writeToOutputPort(StaticFile.outputPort,
@@ -160,17 +160,18 @@ final class ListingStateTests: XCTestCase {
         engine.waitUntilIdleBlocking()
 
         XCTAssertEqual(try lines(.output, "made"), [
-            "-rw-r--r--         -  broken.a  [failed]",
+            "-rw-r--r--         -  broken.a  [in error]",
         ])
     }
 
-    /// A product whose input has never had a value is neither failing nor going away; the
-    /// source behind it is one nobody pushed, which is what `input:` calls it (B-118).
-    func test_aProductWhoseInputWasNeverProducedIsListedAsNotProduced() throws {
+    /// A product whose input has never had a value is neither failing nor going away: it is
+    /// pending. The source behind it is one nobody pushed, which is what `input:` calls it
+    /// (B-118).
+    func test_aProductWhoseInputWasNeverProducedIsListedAsPending() throws {
         try wireProduct("unpushed.a")
 
         XCTAssertEqual(try lines(.output, "made"), [
-            "-rw-r--r--         -  unpushed.a  [not produced]",
+            "-rw-r--r--         -  unpushed.a  [pending]",
         ])
         XCTAssertEqual(try lines(.input, "stand-in"), [
             "-rw-r--r--         -  unpushed.a  [not pushed]",

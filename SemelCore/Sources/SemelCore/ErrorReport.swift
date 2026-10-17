@@ -261,8 +261,13 @@ public enum ErrorReport {
             let isTree = record.kind == Folder.kind
 
             // A removed source carries nothing a build follows: it went because someone took
-            // it away, and a build that pushed it back would undo that unasked.
-            if port.valueKind == .deleted {
+            // it away, and a build that pushed it back would undo that unasked. A removed
+            // machine file is said as one, with the command that writes it again.
+            if port.valueKind == .deleted, record.kind == StaticFile.kind, isMachineFile(path) {
+                let writers = machineFileWriters(ofFileAt: path, nodeID: port.nodeID, database: database)
+                result[port.nodeID] = .engine(.machineFileRemoved(path: path), subject: nil,
+                                              remedy: writers.isEmpty ? nil : .writeMachineFile(commands: writers))
+            } else if port.valueKind == .deleted {
                 result[port.nodeID] = .engine(.removed(path: path, isFolder: isTree), subject: nil)
             } else if anythingNeeds(port.nodeID) {
                 let writers = record.kind == StaticFile.kind
@@ -298,11 +303,11 @@ public enum ErrorReport {
     /// over this one — which is the walk `unclaimedConfigKeys` makes. The engine names no
     /// toolchain: which command writes a namespace is what its plugin registered.
     static func machineFileWriters(ofFileAt path: String, nodeID: ObjectID, database: DatabaseLayer) -> [MachineFileCommand] {
-        let full     = Path(path)
-        let relative = full.relative(to: Path(FileSystemName.input)) ?? full
-        guard relative.lastComponent == MachineFileWriter.fileName else {
+        guard isMachineFile(path) else {
             return []
         }
+        let full     = Path(path)
+        let relative = full.relative(to: Path(FileSystemName.input)) ?? full
 
         var prefixes: Set<String> = []
         var pending:  [(producerID: ObjectID, port: String)] = [(nodeID, StaticFile.outputPort)]
@@ -339,6 +344,12 @@ public enum ErrorReport {
             }
         }
         return found.sorted().map { MachineFileCommand(writer: $0, folder: folder.isEmpty ? "." : folder) }
+    }
+
+    /// Whether a source's path names a machine file: the one name its writers write
+    /// (B-109), wherever it sits in the input file system.
+    static func isMachineFile(_ path: String) -> Bool {
+        Path(path).lastComponent == MachineFileWriter.fileName
     }
 
     /// The document a port carries, with what the sources say already worked out.

@@ -78,13 +78,16 @@ final class StreamedReplyTests: XCTestCase {
         var parts = ReplyParts()
         try parts.append(.daemon(.errors(records: [ErrorRecord(document: .engine(.noSources, subject: nil), products: [],
                                                                                    facts: ErrorFacts(nodeType: "a", nodeIDs: [1], ports: [],
-                                                                                                     carrierCount: 0))])))
+                                                                                                     carrierCount: 0))],
+                                         products: ProductTally(products: 2, upToDate: 1))))
 
-        let whole = try parts.whole(endingWith: .daemon(.errors(records: [])))
+        let whole = try parts.whole(endingWith: .daemon(.errors(records: [], products: ProductTally(products: 3, upToDate: 1))))
 
+        // The last part's tally is the reply's: it is read with the whole answer.
         XCTAssertEqual(whole, .daemon(.errors(records: [ErrorRecord(document: .engine(.noSources, subject: nil), products: [],
                                                                                    facts: ErrorFacts(nodeType: "a", nodeIDs: [1], ports: [],
-                                                                                                     carrierCount: 0))])))
+                                                                                                     carrierCount: 0))],
+                                              products: ProductTally(products: 3, upToDate: 1))))
     }
 
     /// With no parts the last frame is the reply as it came: a small reply is untouched.
@@ -106,7 +109,7 @@ final class StreamedReplyTests: XCTestCase {
         var parts = ReplyParts()
         try parts.append(.daemon(.list(entries: [])))
 
-        XCTAssertThrowsError(try parts.append(.daemon(.errors(records: [])))) { error in
+        XCTAssertThrowsError(try parts.append(.daemon(.errors(records: [], products: ProductTally(products: 0, upToDate: 0))))) { error in
             XCTAssertEqual(error as? ReplyStreamError, .mismatchedPart)
         }
         XCTAssertThrowsError(try parts.whole(endingWith: .daemon(.remove(removedFiles: [], removedFolders: [])))) { error in
@@ -116,7 +119,7 @@ final class StreamedReplyTests: XCTestCase {
 
     func test_onlyListRemoveAndErrorsMayStream() {
         let streaming: [DaemonResponse] = [.list(entries: []), .remove(removedFiles: [], removedFolders: []),
-                                           .errors(records: [])]
+                                           .errors(records: [], products: ProductTally(products: 0, upToDate: 0))]
         let single: [DaemonResponse] = [.ok, .pushFile(didChange: true), .pushFiles(outcomes: []), .contentRoots, .folderChildren,
                                         .fetch(mode: 0o644), .symbolicLink(target: "a"), .check(scheduledNodes: 0),
                                         .collected(removed: 0, removedBytes: 0, kept: 0), .tools(namespaces: []),

@@ -79,7 +79,9 @@ final class SettleTimeErrorCountingTests: XCTestCase {
     }
 
     /// The report after a settle — the idle-time event, printed as it arrives — is the same
-    /// report, ending with its summary: the counts alone, a settle exporting nothing.
+    /// report, ending with its summary: the counts alone, a settle exporting nothing. The
+    /// formula publishes no products, so its error has no `no product:` heading over it and
+    /// the summary says there are none.
     func test_theReportAfterASettleEndsWithItsSummary() throws {
         try writeBrokenFormula()
         var lines: [String] = []
@@ -92,13 +94,13 @@ final class SettleTimeErrorCountingTests: XCTestCase {
         guard let block = lines.firstIndex(of: "no node type is registered under the name 'NoSuchNodeType'") else {
             return XCTFail(transcript)
         }
-        XCTAssertEqual(lines[block - 1], "no product:", transcript)
+        XCTAssertNotEqual(lines[block - 1], "no product:", transcript)
         XCTAssertEqual(Array(lines[block...].prefix(5)), [
             "no node type is registered under the name 'NoSuchNodeType'",
             "  formula: src/semel.fmla",
             "  register: NoSuchNodeType",
             "",
-            "1 error · every product has a value",
+            "1 error · no products",
         ], transcript)
     }
 
@@ -158,7 +160,7 @@ final class SettleTimeErrorCountingTests: XCTestCase {
         }
         XCTAssertEqual(lastSettled + 1, summary, transcript)
         XCTAssertEqual(Array(lines[summary...].dropFirst().prefix(2)),
-                       ["   appeared: output:/src/copy.txt", "No errors."], transcript)
+                       ["   appeared: output:/src/copy.txt", "no errors · 1 product up to date"], transcript)
         XCTAssertEqual(lines.filter { $0.hasPrefix("   appeared:") }.count, 1, transcript)
     }
 

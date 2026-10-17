@@ -324,9 +324,10 @@ public final class Watcher {
     /// short of a value as a new one.
     private func reportAndExport(in session: WatchSession) {
         let interpreter = session.interpreter
-        let records: [ErrorRecord]
+        let records:  [ErrorRecord]
+        let products: ProductTally?
         do {
-            records = try interpreter.errorRecords()
+            (records, products) = try interpreter.errorReport()
         } catch {
             outputError("semel-watch: could not ask the engine for its errors: \(error)")
             return
@@ -348,7 +349,8 @@ public final class Watcher {
             guard configuration.printsReports || export != nil else {
                 return
             }
-            interpreter.reportErrors(records, style: style, export: export, printsBlocks: configuration.printsReports)
+            interpreter.reportErrors(records, products: products, style: style, export: export,
+                                     printsBlocks: configuration.printsReports)
             return
         }
         guard let destination = configuration.exportDestination else {

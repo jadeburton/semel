@@ -2,17 +2,17 @@
 // SemelMonitor
 //
 // The words on a card. Every one is a word the engine's events carry — appeared, changed,
-// disappeared, without a value, computed, from cache, running, pending — and every product
+// disappeared, in error, computed, from cache, running, pending — and every product
 // is named as the error report names it (B-145), through the report's own `ProductNames`.
 //
 //     3 products changed, 1 appeared
 //     App, libModels.a, libConversations.a and 1 more
 //     3 computed · 9 from cache
 //
-//     2 products without a value
+//     2 products in error
 //     Packages/Models/Sources/Models/Account.swift:201:28: error: cannot convert value …
 //     libConversations.a, libExplore.a
-//     1 error · 2 products without a value
+//     1 error · 2 products in error
 //
 //     Building · 3 running · 48 ahead
 //     SwiftCompiler  App
@@ -42,8 +42,8 @@ public enum CardText {
             + [countsLine(of: card), earlierLine(of: card)].compactMap { $0 }
     }
 
-    /// `3 products changed, 1 appeared`; `1 product disappeared`; `2 products without a
-    /// value`, or the error count for errors no product needs; `Building · 12 running · 48
+    /// `3 products changed, 1 appeared`; `1 product disappeared`; `2 products in error`,
+    /// or the error count for errors no product needs; `Building · 12 running · 48
     /// ahead` while a settle runs.
     public static func headline(of card: Card) -> String {
         switch card.content {
@@ -63,7 +63,7 @@ public enum CardText {
                 let errors = ErrorReportRenderer.errorCount(of: records)
                 return "\(errors) \(errors == 1 ? "error" : "errors")"
             }
-            return "\(products) \(products == 1 ? "product" : "products") without a value"
+            return "\(products) \(products == 1 ? "product" : "products") \(ValueState.inError.word)"
         }
     }
 

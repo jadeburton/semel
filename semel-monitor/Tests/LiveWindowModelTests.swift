@@ -78,7 +78,7 @@ final class LiveWindowModelTests: XCTestCase {
         var model = LiveWindowModel()
         let record = Events.compileError(products: Events.products("output:/c/broken"))
         receive(Events.progress(running: ["a"]),
-                .errors(records: [record]),
+                .errors(records: [record], products: nil),
                 .settled(scheduled: 2, computed: 2, fromCache: 0, errors: 1),
                 Events.artifacts(appeared: ["output:/c/hello"], changed: ["output:/App/App.app/Info.plist"],
                                  treeFolders: ["output:/App/App.app/Info.plist": "output:/App/App.app"]),

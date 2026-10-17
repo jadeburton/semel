@@ -152,7 +152,7 @@ missing settings: clang.preprocessor.toolDescriptor.architecture, clang.preproce
 
 semel.machine.config has not been pushed (above)
 
-4 errors · 3 products without a value · nothing exported
+4 errors · no products up to date · nothing exported
 ```
 
 It failed, and it says why: the formula names `<../semel.machine.config>` beside `hello/`,
@@ -163,8 +163,9 @@ block: its first line is what is wrong, then what it belongs to — the sources 
 and last what to change. An error printed under an earlier heading comes back under a later
 one as its first line and `(above)`. The three compilers missing one set of settings are
 one error naming the three sources; `errors output:/hello/hello` would show that product's
-heading and its errors alone. The summary line counts errors and products, and says nothing was
-exported: a build with errors leaves `--into` without what has no value. The file's own
+heading and its errors alone. The summary line counts errors and products — none of the three
+is up to date — and says nothing was exported: a build with errors leaves `--into` without
+what is not up to date. The file's own
 block names the command with the folder the file goes in, `.` being the base directory;
 the tools' blocks name it with `<folder>`, since they do not know where the settings were
 meant to come from. That command is not one of Semel's:
@@ -215,7 +216,7 @@ Settled.
    appeared: output:/hello/config.txt
    appeared: output:/hello/hello
    appeared: output:/hello/hello.dylib
-No errors.
+no errors · 3 products up to date
 Exported 3 files into /Users/you/semel-playground/out
 ```
 
@@ -321,9 +322,9 @@ ls -o hello
 ```
 
 ```
--rw-r--r--      1215  config.txt
--rwxr-xr-x     33504  hello
--rw-r--r--     33440  hello.dylib
+-rw-r--r--      1215  config.txt   [up to date]
+-rwxr-xr-x     33504  hello        [up to date]
+-rw-r--r--     33440  hello.dylib  [up to date]
 ```
 
 ## Part 2 — Watch it not work
@@ -361,7 +362,7 @@ Push file: hello/src/hello.h [no change]
 Push file: hello/src/hello2.c [no change]
 Push file: hello/src/main.c [no change]
 Settled.
-No errors.
+no errors · 3 products up to date
 Exported 3 files into /Users/you/semel-playground/out
 ```
 
@@ -387,7 +388,7 @@ Settled.
 ✅ 8 nodes scheduled, 7 computed, 1 from cache, 0 errors
    changed: output:/hello/hello
    changed: output:/hello/hello.dylib
-No errors.
+no errors · 3 products up to date
 Exported 3 files into /Users/you/semel-playground/out
 ```
 
@@ -439,7 +440,7 @@ Push file: hello/src/hello2.c [no change]
 Push file: hello/src/main.c [no change]
 Settled.
 ✅ 17 nodes scheduled, 10 computed, 7 from cache, 0 errors
-No errors.
+no errors · 3 products up to date
 Exported 3 files into /Users/you/semel-playground/out
 ```
 
@@ -487,7 +488,8 @@ either: an unused key is only reported when it falls under no selected prefix at
 this story in full, and the whole file is seventy-five lines — read it now; it is the shape
 of the node you are about to write.
 
-`errors` shows what is wrong when a build fails; after a good build it says `No errors.`
+`errors` shows what is wrong when a build fails; after a good build it says `no errors · 3
+products up to date`.
 `debug` dumps the whole graph — forty nodes here, over four hundred lines. It is a lot, and
 worth seeing once.
 
@@ -631,7 +633,7 @@ Push file: hello/src/main.c [no change]
 Settled.
 ✅ 3 nodes scheduled, 3 computed, 0 from cache, 0 errors
    appeared: output:/hello/lines.txt
-No errors.
+no errors · 4 products up to date
 Exported 4 files into /Users/you/semel-playground/out
 ```
 
@@ -692,7 +694,7 @@ Push file: hello/src/main.c [no change]
 Settled.
 ✅ 1 node scheduled, 1 computed, 0 from cache, 0 errors
    disappeared: output:/hello/lines.txt
-No errors.
+no errors · 3 products up to date
 Exported 3 files into /Users/you/semel-playground/out
 ```
 
@@ -737,13 +739,13 @@ no node type is registered under the name 'MyLineCounter'
   formula: hello/hello.fmla
   register: MyLineCounter
 
-2 errors · 1 product without a value · 3 of 4 products exported
+2 errors · 3 of 4 products up to date · 3 of 4 products exported
 ```
 
 Two errors, one cause. The formula names a type the server does not register, and the
 node the formula made from it is still in the graph, named by its kind — the number you
 gave `MyLineCounter`, which is `45` here — since there is no type to name it by. Both
-are under one heading, `lines.txt`, the one product without a value; the other three have values,
+are under one heading, `lines.txt`, the one product in error; the other three are up to date,
 and `--into` gets those. `--verbose` on `errors` or `build` adds the engine's facts under
 each error: the node's type and its row in the graph — the number `check` names it by —
 its ports, and how many nodes downstream carry the failure.
@@ -763,7 +765,7 @@ Push file: hello/src/main.c [no change]
 Settled.
 ✅ 2 nodes scheduled, 2 computed, 0 from cache, 0 errors
    disappeared: output:/hello/lines.txt
-No errors.
+no errors · 3 products up to date
 Exported 3 files into /Users/you/semel-playground/out
 ```
 

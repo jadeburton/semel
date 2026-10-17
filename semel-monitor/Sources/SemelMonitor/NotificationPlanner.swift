@@ -103,7 +103,7 @@ public final class NotificationPlanner {
             changes += closeHeldSettle()
             settleInProgress = record
             changes += showProgress(record)
-        case .errors(let records):
+        case .errors(let records, _):
             if heldCounts != nil {
                 changes += closeHeldSettle()
             }

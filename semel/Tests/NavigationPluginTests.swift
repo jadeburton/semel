@@ -63,9 +63,10 @@ final class NavigationPluginTests: XCTestCase {
         XCTAssertEqual(context.messages, ["-rw-r--r--         1  a.c  [pending]"])
     }
 
-    /// Every word `ls` prints beside a name, pinned. The states are not interchangeable —
-    /// one settles by itself, one is a failure to act on, one is neither — and these words
-    /// are the whole of what tells a reader which is which.
+    /// Every word `ls` prints beside a name in `input:`, pinned, right-aligned to one column.
+    /// The states are not interchangeable — one settles by itself, one is a failure to act
+    /// on, one is neither — and these words are the whole of what tells a reader which is
+    /// which. A source holding its value says nothing.
     func test_lsPrintsItsOwnWordForEachState() throws {
         connection.reply(.list(entries: [
             ListEntry(path: "built.o",    kind: .file, size: 4,   mode: 0o644, status: .none),
@@ -79,18 +80,56 @@ final class NavigationPluginTests: XCTestCase {
         try run("ls")
 
         XCTAssertEqual(context.messages, [
-            "-rw-r--r--         -  broken.o  [failed]",
+            "-rw-r--r--         -  broken.o        [in error]",
             "-rw-r--r--         4  built.o",
-            "-rw-r--r--         -  nobodys.o  [unreferenced]",
-            "-rw-r--r--         -  removed.o  [deleted]",
-            "-rw-r--r--         -  unpushed.o  [not pushed]",
-            "-rw-r--r--         -  waiting.o  [pending]",
+            "-rw-r--r--         -  nobodys.o   [unreferenced]",
+            "-rw-r--r--         -  removed.o        [removed]",
+            "-rw-r--r--         -  unpushed.o    [not pushed]",
+            "-rw-r--r--         -  waiting.o        [pending]",
         ])
     }
 
+    /// In `output:` a product holding its value is up to date, and says so with the rest;
+    /// a folder says nothing, and its longer name moves no column.
+    func test_lsSaysAProductHoldingItsValueIsUpToDate() throws {
+        connection.reply(.list(entries: [
+            ListEntry(path: "App",     kind: .file,   size: 62144, mode: 0o755, status: .none),
+            ListEntry(path: "Kit.bundle", kind: .folder, size: nil, mode: nil, status: .none),
+            ListEntry(path: "ctool",   kind: .file,   size: nil,   mode: 0o644, status: .failed),
+        ]))
+
+        try run("ls", ["-o"])
+
+        XCTAssertEqual(context.messages, [
+            "d---------         -  Kit.bundle/",
+            "-rwxr-xr-x     62144  App    [up to date]",
+            "-rw-r--r--         -  ctool    [in error]",
+        ])
+    }
+
+    /// The status column is right-aligned to the one column the longest noted name and the
+    /// longest status reach, so names of different lengths do not stagger it.
+    func test_lsRightAlignsTheStatusColumnWhateverTheNamesLengths() throws {
+        connection.reply(.list(entries: [
+            ListEntry(path: "hello",       kind: .file, size: nil, mode: 0o644, status: .failed),
+            ListEntry(path: "hello.dylib", kind: .file, size: nil, mode: 0o644, status: .failed),
+            ListEntry(path: "x",           kind: .file, size: 3,   mode: 0o644, status: .pending),
+        ]))
+
+        try run("ls", ["-o"])
+
+        XCTAssertEqual(context.messages, [
+            "-rw-r--r--         -  hello        [in error]",
+            "-rw-r--r--         -  hello.dylib  [in error]",
+            "-rw-r--r--         3  x             [pending]",
+        ])
+        let ends = Set(context.messages.map(\.count))
+        XCTAssertEqual(ends.count, 1, "every status ends in one column: \(context.messages)")
+    }
+
     /// B-118. Nothing is produced in `input:`: there the state is a source nobody pushed.
-    /// In `output:` it is a product whose input has no value, and the word says so.
-    func test_aNameWithNoValueIsNotPushedInInputAndNotProducedInOutput() throws {
+    /// In `output:` it is a product whose input has no value yet: pending.
+    func test_aNameWithNoValueIsNotPushedInInputAndPendingInOutput() throws {
         connection.reply(.list(entries: [
             ListEntry(path: "semel.machine.config", kind: .file, size: nil, mode: 0o644, status: .notProduced),
         ]))
@@ -102,7 +141,7 @@ final class NavigationPluginTests: XCTestCase {
 
         XCTAssertEqual(context.messages, [
             "-rw-r--r--         -  semel.machine.config  [not pushed]",
-            "-rw-r--r--         -  hello  [not produced]",
+            "-rw-r--r--         -  hello  [pending]",
         ])
     }
 

@@ -68,7 +68,7 @@ final class RemovalEndToEndTests: XCTestCase {
                                          to: tree.appendingPathComponent("c", isDirectory: true))
         _ = try EndToEndRun.run("semel-clang", arguments: [tree.path], environment: environment, timeout: 60, step: "semel-clang")
         let output = try semel("base \(tree.path)", "build c", step: "build")
-        XCTAssertTrue(output.contains("No errors."), output)
+        XCTAssertTrue(output.contains("no errors · 3 products up to date"), output)
         return tree
     }
 
@@ -120,7 +120,7 @@ final class RemovalEndToEndTests: XCTestCase {
         let output = try semel("base \(tree.path)", "rm c", "wait", "errors", step: "rm")
 
         XCTAssertEqual(try summary(in: output).fromCache, 0, output)
-        XCTAssertTrue(output.contains("No errors."), output)
+        XCTAssertTrue(output.contains("no errors · no products"), output)
         XCTAssertEqual(try cacheEntryCount(), entries, "a removal writes no entry")
 
         let inputListing = try semel("ls", step: "ls")
@@ -135,7 +135,8 @@ final class RemovalEndToEndTests: XCTestCase {
     }
 
     /// The machine file every tool's settings are read from, named by path in the formula:
-    /// removed, it is what the report names, and no tool runs over it or stores anything. The
+    /// removed, it is what the report names, with the command that writes it again, and no
+    /// tool runs over it or stores anything. The
     /// project builder, which reads the listing the removal changed, may run and store its
     /// own answer; nothing below it does.
     func test_aRemovedSourceIsNamedAsRemovedAndNoToolRunsOverIt() throws {
@@ -144,7 +145,8 @@ final class RemovalEndToEndTests: XCTestCase {
 
         let output = try semel("base \(tree.path)", "rm semel.machine.config", "wait", "errors", step: "rm")
 
-        XCTAssertTrue(output.contains("semel.machine.config has been removed"), output)
+        XCTAssertTrue(output.contains("semel.machine.config, the machine's configuration, has been removed"), output)
+        XCTAssertTrue(output.contains("  write with: semel-clang ."), "the command that writes it again:\n\(output)")
         XCTAssertFalse(output.contains("error:"), "no tool ran over the removed file:\n\(output)")
         XCTAssertLessThanOrEqual(try summary(in: output).computed, 2, "the finder and the builder at most:\n\(output)")
         XCTAssertEqual(try toolEntries(), tools, "no tool's run is stored")
