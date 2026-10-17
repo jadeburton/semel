@@ -115,8 +115,30 @@ final class TestCommandContext: CommandContext {
         self.baseDirectory = baseDirectory
     }
 
-    func outputMessage(_ message: String) { messages.append(message) }
-    func outputError(_ message: String)   { errors.append(message) }
+    /// Every push status shown, in order, and how many times one was ended (B-167).
+    private(set) var pushStatuses: [PushStatus] = []
+    private(set) var pushStatusesEnded = 0
+    /// Lines, errors and statuses as they came, one after another: `status: …` for a
+    /// status shown, `status ended`, and the lines as they are.
+    private(set) var transcript: [String] = []
+
+    func outputMessage(_ message: String) {
+        messages.append(message)
+        transcript.append(message)
+    }
+    func outputError(_ message: String) {
+        errors.append(message)
+        transcript.append(message)
+    }
+
+    func showPushStatus(_ status: PushStatus) {
+        pushStatuses.append(status)
+        transcript.append("status: \(status.line)")
+    }
+    func pushStatusEnded() {
+        pushStatusesEnded += 1
+        transcript.append("status ended")
+    }
 
     func countErrorRecords(_ records: [ErrorRecord]) { countedErrorRecords.append(records) }
 

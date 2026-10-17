@@ -139,6 +139,26 @@ final class FolderOnDiskTests: XCTestCase {
         XCTAssertNotEqual(walked.contentRoot, try FolderContentRoot.root(ofFolderAt: package))
     }
 
+    /// The read says how far it has got, for a client's status line (B-167): nothing read
+    /// out of what was listed, then every `filesReadBetweenReports` files, then all of them.
+    func test_theReadCountsWhatItHasReadOutOfWhatItListed() throws {
+        let total = FolderOnDisk.filesReadBetweenReports * 2 + 3
+        for index in 0..<total {
+            try write("tree/sub\(index % 4)/file\(index).txt", "\(index)")
+        }
+        var reports: [[Int]] = []
+
+        let onDisk = FolderOnDisk.read(Path("tree"), under: root.path) { read, listed in
+            reports.append([read, listed])
+        }
+
+        XCTAssertEqual(onDisk.fileCount, total)
+        XCTAssertEqual(reports, [[0, total],
+                                 [FolderOnDisk.filesReadBetweenReports, total],
+                                 [FolderOnDisk.filesReadBetweenReports * 2, total],
+                                 [total, total]])
+    }
+
     private func subfolder(named name: String, of folder: FolderOnDisk) -> FolderOnDisk? {
         for case .folder(let subfolder) in folder.children where subfolder.path.lastComponent == name {
             return subfolder

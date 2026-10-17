@@ -50,6 +50,11 @@ final class FilePlugin: CommandPlugin {
     /// long. What `semel-watch` issues for a burst of saves; a path that matches nothing is
     /// reported and the rest are pushed.
     private func handlePush(externalPathsOrWildcards arguments: [String], context: any CommandContext) throws {
+        // Said from the first moment: matching a wildcard over a large tree walks all of it
+        // before the first file is read. Erased before the push's own lines, and on every
+        // way out, a thrown failure's included.
+        context.showPushStatus(.reading(read: 0, total: nil))
+        defer { context.pushStatusEnded() }
         let matcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: context.baseDirectory))
         var entries: [FileWildcardEntry] = []
         for externalPathOrWildcard in arguments {
@@ -157,14 +162,22 @@ final class FilePlugin: CommandPlugin {
                 }
                 try push(work, notOnDisk: notOnDisk.filter { !replaced.reportedPaths.contains($0) }, tally: &tally,
                          context: context)
+                // The commit is one reply, sent when the barrier has judged the whole batch:
+                // there is nothing to count while it comes, so the line says it waits. A
+                // batch the user opened commits nothing here.
+                if !heldByOpenBatch {
+                    context.showPushStatus(.committing(files: tally.files))
+                }
             }
         } catch let failure as ServerError {
+            context.pushStatusEnded()
             guard case .batchRejected = failure.response else {
                 throw failure
             }
             throw ServerError(response: failure.response,
                               lead:     "push: \(tally.counts ?? "nothing") sent, and none of it committed")
         }
+        context.pushStatusEnded()
         guard !tally.namedEachPath, let counts = tally.counts else {
             return
         }
@@ -436,6 +449,13 @@ final class FilePlugin: CommandPlugin {
         var batch    = PushBatch()
         var pipeline = PushPipeline()
         defer { pipeline.abandon() }
+
+        // Counted as the push's last line counts: a link, to a file or a folder, is a file.
+        let total = work.count { $0.entry.kind == .file || $0.entry.symbolicLinkTarget != nil }
+        func showProgress() {
+            context.showPushStatus(.pushing(recorded: files, total: total, bytesSent: pipeline.bytesRecorded))
+        }
+        showProgress()
         for item in work {
             switch item {
             case .held(let entry):
@@ -447,10 +467,12 @@ final class FilePlugin: CommandPlugin {
             }
             if batch.isFull {
                 try pipeline.send(&batch, context: context, report: report)
+                showProgress()
             }
         }
         try pipeline.send(&batch, context: context, report: report)
         try pipeline.collectAll(context: context, report: report)
+        showProgress()
     }
 
     /// What pushing one entry did, for the report the whole push makes at the end.
@@ -510,13 +532,16 @@ final class FilePlugin: CommandPlugin {
 
         // The roots first, for the dot-named files each folder holds: a walk of the disk
         // leaves them out, and the server's roots fold them in (B-77 item 5).
+        context.showPushStatus(.comparing)
         let heldRoots = try Self.heldRoots(below: entry.path, context: context)
         var hiddenFiles: [String: [String]] = [:]
         for held in heldRoots.values.sorted(by: { $0.path < $1.path }) where !held.hiddenFiles.isEmpty {
             hiddenFiles[held.path] = held.hiddenFiles
         }
         let onDisk = FolderOnDisk.read(entry.path, under: context.baseDirectory, symbolicLinkTarget: entry.symbolicLinkTarget,
-                                       hiddenFiles: hiddenFiles, excluding: isExcluded)
+                                       hiddenFiles: hiddenFiles, excluding: isExcluded) { read, total in
+            context.showPushStatus(.reading(read: read, total: total))
+        }
 
         // The folder itself: a link is always sent, since what it holds is compared in the
         // folder above it, which this push was not asked about; any other folder only when
@@ -532,6 +557,9 @@ final class FilePlugin: CommandPlugin {
         Self.compare(onDisk, with: heldRoots, into: &decisions)
 
         let compared = decisions.filter { $0.value == .compareChildren }.keys.sorted()
+        if !compared.isEmpty {
+            context.showPushStatus(.comparing)
+        }
         let heldChildren = compared.isEmpty ? [:] : try Self.heldChildren(of: compared, context: context)
 
         var notOnDisk: [String] = []
@@ -714,6 +742,10 @@ final class FilePlugin: CommandPlugin {
         /// Oldest first.
         private var inFlight: [SentBatch] = []
 
+        /// The bytes of every file in the batches collected so far: what the server has
+        /// answered for.
+        private(set) var bytesRecorded = 0
+
         /// Sends what `batch` has gathered and leaves it empty, collecting the oldest batch
         /// first when as many as may be are already out.
         mutating func send(_ batch: inout PushBatch, context: any CommandContext,
@@ -748,7 +780,9 @@ final class FilePlugin: CommandPlugin {
 
         private mutating func collectOldest(context: any CommandContext,
                                             report: (FileWildcardEntry, PushOutcome) -> Void) throws {
-            try inFlight.removeFirst().report(context: context, report: report)
+            let oldest = inFlight.removeFirst()
+            try oldest.report(context: context, report: report)
+            bytesRecorded += oldest.bytesSent
         }
     }
 
@@ -845,7 +879,13 @@ final class FilePlugin: CommandPlugin {
                                  reply: try context.requestWithoutWaiting(request, body: content.bytes))
                 }
             }
-            return SentBatch(steps: sent, filesReply: filesReply)
+            let bytesSent = steps.reduce(0) { total, step in
+                guard case .file(_, let content) = step else {
+                    return total
+                }
+                return total + content.bytes.count
+            }
+            return SentBatch(steps: sent, filesReply: filesReply, bytesSent: bytesSent)
         }
     }
 
@@ -926,6 +966,8 @@ final class FilePlugin: CommandPlugin {
 
         let steps: [Step]
         let filesReply: FilesReply
+        /// The bytes of the batch's files and links, for the push's status line.
+        let bytesSent: Int
 
         /// Collects the batch's replies and reports every step in order. A failure that is
         /// the server's rather than one entry's stops the push.

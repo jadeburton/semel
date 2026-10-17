@@ -151,9 +151,15 @@ extension FolderOnDisk {
     /// into the lock's root; read here, a push of the folder sends them, so the engine's
     /// root and the lock's agree by construction. `prepare`'s own fold of a vendored folder
     /// is the folder alone, with no lock above it, and is told the same names.
+    ///
+    /// `onFilesRead` is told how many of the listed files have been read, out of how many:
+    /// once when the listing is done, every `filesReadBetweenReports` files after, and once
+    /// at the end. It is called under a lock, one call at a time, from whichever thread read
+    /// the file — what a client draws a count from while it waits.
     public static func read(_ relativePath: Path, under baseDirectory: String, symbolicLinkTarget: String? = nil,
                             hiddenFiles: [String: [String]] = [:],
-                            excluding isExcluded: (Path) -> Bool = { _ in false }) -> FolderOnDisk {
+                            excluding isExcluded: (Path) -> Bool = { _ in false },
+                            onFilesRead: ((_ read: Int, _ total: Int) -> Void)? = nil) -> FolderOnDisk {
         let lister = ExternalFileSystemLister(rootDirectoryPath: baseDirectory)
         let absolutePath = relativePath.isEmpty ? baseDirectory
                                                 : (baseDirectory as NSString).appendingPathComponent(relativePath.string)
@@ -171,14 +177,35 @@ extension FolderOnDisk {
         var pending: [(entry: FileWildcardEntry, absolutePath: String)] = []
         let listed = list(absolutePath: absolutePath, relativePath: relativePath, symbolicLinkTarget: symbolicLinkTarget,
                           lister: lister, hiddenFiles: hiddenFiles, isExcluded: isExcluded, pending: &pending)
-        var files = [FileOnDisk?](repeating: nil, count: pending.count)
+        let total = pending.count
+        let progressLock = NSLock()
+        var filesRead = 0
+        onFilesRead?(0, total)
+        var files = [FileOnDisk?](repeating: nil, count: total)
         files.withUnsafeMutableBufferPointer { slots in
-            DispatchQueue.concurrentPerform(iterations: pending.count) { index in
+            DispatchQueue.concurrentPerform(iterations: total) { index in
                 slots[index] = FileOnDisk(listedAs: pending[index].entry, at: pending[index].absolutePath)
+                guard let onFilesRead else {
+                    return
+                }
+                progressLock.withLock {
+                    filesRead += 1
+                    if filesRead % filesReadBetweenReports == 0, filesRead < total {
+                        onFilesRead(filesRead, total)
+                    }
+                }
             }
+        }
+        if total > 0 {
+            onFilesRead?(total, total)
         }
         return fold(listed, files: files.compactMap { $0 })
     }
+
+    /// How many files a read gets through between two calls of its `onFilesRead`: often
+    /// enough for a count a person watches, rare enough that the lock the readers share to
+    /// make the call is not what they wait on.
+    public static let filesReadBetweenReports = 256
 
     /// The folder at `absolutePath`, as its own root: what `prepare` folds a vendored
     /// dependency from, with the dot-named files its lock names (`hiddenFiles`, relative to
