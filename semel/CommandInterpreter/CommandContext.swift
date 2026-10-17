@@ -46,6 +46,12 @@ protocol CommandContext: AnyObject {
     func settleWaitBegan()
     func settleWaitEnded()
 
+    /// What a push is doing now, on one line redrawn in place at a terminal and nowhere
+    /// else (B-167); `pushStatusEnded()` erases it before the push prints its result. The
+    /// client's alone: nothing of it is sent to the server.
+    func showPushStatus(_ status: PushStatus)
+    func pushStatusEnded()
+
     /// Where the settle under way stood at the last progress event this client heard; nil
     /// when the last settle it heard of has finished, or it has heard of none. What `watch`
     /// says when a key ends it, and what the progress line starts from.

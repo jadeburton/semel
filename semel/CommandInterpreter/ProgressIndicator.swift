@@ -14,6 +14,9 @@
 // typing, and those are the silent minutes B-95 is about. Nothing here is drawn when
 // standard output is not a terminal, so a script, a test and the harness see the output
 // they saw before.
+//
+// The same line says what a push is doing while it reads, sends and commits (`PushStatus`,
+// B-167): a push holds the thread as a wait does, for tens of seconds on a large tree.
 
 import Foundation
 import SemelProtocol
@@ -437,6 +440,10 @@ final class IndicatorLine {
     private var drawnLines = 0
     private var clock = ActiveNodeClock()
     private var timer: DispatchSourceTimer?
+    /// What a push is doing, drawn while no settle wait is: the two never meet, since a
+    /// push does not wait for the settle it starts, and a wait takes the line when one
+    /// begins.
+    private var status: PushStatus?
 
     /// `write` puts text on the terminal as given, with no newline of its own; `now` is
     /// the clock and `terminalSize` the window, both replaceable so a test can set them.
@@ -471,7 +478,9 @@ final class IndicatorLine {
             return
         }
         lock.withLock {
+            eraseIfDrawn()
             let current = now()
+            status    = nil
             startedAt = current
             record    = latest
             drawnAt   = nil
@@ -548,8 +557,64 @@ final class IndicatorLine {
             body()
             if startedAt != nil, record != nil {
                 draw(at: now())
+                return
+            }
+            if status != nil {
+                drawStatus(at: now())
             }
         }
+    }
+
+    // MARK: - A push's status
+
+    /// What a push is doing now, drawn in place of the last status. A new phase is drawn
+    /// at once, so the line says from the first file what the push is at; a count moving
+    /// within a phase waits out the redraw interval, so twenty thousand replies are not
+    /// twenty thousand writes. Nothing is drawn while a settle wait holds the line.
+    func show(_ status: PushStatus) {
+        guard enabled else {
+            return
+        }
+        lock.withLock {
+            guard startedAt == nil else {
+                return
+            }
+            let current      = now()
+            let phaseChanged = self.status?.phase != status.phase
+            self.status = status
+            if !phaseChanged, let drawnAt, current.timeIntervalSince(drawnAt) < Self.redrawInterval {
+                return
+            }
+            drawStatus(at: current)
+        }
+    }
+
+    /// The push is over: its status is erased, and what it prints next lands on a clean
+    /// line.
+    func endStatus() {
+        guard enabled else {
+            return
+        }
+        lock.withLock {
+            guard status != nil else {
+                return
+            }
+            eraseIfDrawn()
+            status  = nil
+            drawnAt = nil
+        }
+    }
+
+    /// Under the lock. One write, the erase and the line together, cut to the width so it
+    /// never wraps onto a row the next erase does not reach.
+    private func drawStatus(at time: Date) {
+        guard let status else {
+            return
+        }
+        let line = TerminalText.truncatedFromRight(status.line, toWidth: terminalSize().usableColumns)
+        write(Self.erasing(lines: drawnLines) + line)
+        drawnAt    = time
+        drawnLines = 1
     }
 
     // MARK: - Drawing

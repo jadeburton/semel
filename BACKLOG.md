@@ -179,6 +179,68 @@ showed `LICENSE`. An `rm Dependencies/Charts/LICENSE` after it was refused with 
 sha256:783cd4bc…` and `not pushed: Dependencies/Charts/LICENSE`: the one file the owner's
 push left out.
 
+**B-167** `done` — **A push of a large tree said nothing for tens of seconds.** Reported
+2026-10-17: "When I use the semel CLI to push files, there is almost no feedback for a very
+long time." The owner pushes trees of about 20,000 files. Measured on main at 3734886 with
+release binaries, a fresh home and a `semelserv` started first, pushing a generated tree of
+20,730 files in 337 folders, 436 MB, sizes from 1 KB to 1 MB (93% under 16 KB), with
+temporary timing lines in the client and the server:
+
+| phase | `push tree` (cold) | `push tree` (unchanged) | `push tree/**/*.*` (cold) | `push tree/**/*.*` (unchanged) |
+|---|---|---|---|---|
+| connect, banner | 0.6 s | 0.02 s | 0.6 s | 0.02 s |
+| wildcard match (walk, `lstat`) | — | — | 0.67 s | 0.74 s |
+| server's roots (`contentRoots`) | 0.001 s | 0.017 s | — | — |
+| walk, read and hash on every core (`FolderOnDisk.read`) | 1.36 s | 1.58 s | — | — |
+| work list | 0.03 s | 0.04 s | 0.08 s | 0.09 s |
+| first `pushFiles` leaves | +1.4 s from the push's start | (none sent) | +0.76 s | +0.84 s |
+| sending, pipelined (2 in flight × 64 files / 8 MB) | 21.7 s | 0.003 s | 26.5 s | 9.9 s |
+| of which the server's interning, off its queue | 4.2 s | — | 4.8 s | 1.0 s |
+| of which the server's recording, on its queue | 21.8 s | — | 26.5 s | 9.9 s |
+| the implicit batch's commit (`endBatch`, the lock barrier) | 0.53 s | 0.001 s | 0.38 s | 0.48 s |
+| total, start to `Pushed` | 24.4 s | 1.7 s | 27.8 s | 11.3 s |
+
+Until `Pushed 20730 files and 1 folder` the user saw nothing at all: one line, printed once
+the commit had answered (B-161), after 24 s of silence. The settle is not a phase of the
+push: the push does not wait for it, and its summary arrives as an event, at the prompt or
+during the next command. Recording on the server's one queue is the push's cost — about
+1.05 ms a file, creeping from 60 ms to 78 ms per request of 64 over the push; the client's
+own work is under 2 s, and the pipeline keeps the queue fed. Two slower-than-they-should-be
+findings, measured and filed as B-170 and B-171: a wildcard push of files the server
+already holds sends and records every one of them (9.9 s for 20,730 unchanged files),
+because B-132's comparison runs only for a folder argument; and the server's recording
+time per file is about a third above the 0.75 ms the 2026-10-04 measurement of a 4,537-file
+push implies.
+
+Fixed 2026-10-17. At a terminal, a push says what it is doing on one line redrawn in place
+(carriage return and erase, no scrollback): `Reading files…` from the first moment, before
+a wildcard's walk; `Comparing with what the server holds…` while it waits for the roots or
+the children; `Reading 12,800 of 20,730 files…` while the folder is read and hashed, from the
+listing on, every 256 files (`FolderOnDisk.read(…, onFilesRead:)`); `Pushing 8,192 of
+20,730 files (160.0 MB sent)…` as each batch's replies come back, counted as the last line
+counts and the bytes being what the server has answered for, none for a file it already
+held; then `Committing 20,730 files: waiting for the server…`, since the commit is one reply
+whose progress the client cannot see. Inside a batch the user opened there is no commit,
+and no such line. The line is erased before the push's own lines, on every way out, so
+`Pushed` is still said only once the batch has committed and a refusal still prints with its
+`❌`; a line printed meanwhile — a file that cannot be read, a settle's summary — lands above
+it and the line comes back. A new phase is drawn at once and a count within one at most
+every 0.1 s. It is drawn by the progress indicator (`IndicatorLine.show`, `PushStatus`) and
+so only where the progress line is: a terminal, not `dumb`, not `SEMEL_PROGRESS=0`. A pipe,
+a script's log and `semel-watch`'s reports see exactly the lines they saw before. Nothing of
+it crosses a port. Checked by hand under `script(1)` with the same tree: the first line
+0.0 s after the banner, the read's counts from 0.5 s, `Pushing` from 1.7 s, moving every
+0.13 s for 23 s, `Committing` for 0.4 s, then `Pushed`.
+
+Tests: `PushStatusTests` (root): the phases' wording; a folder push going through every
+phase from the first moment, with the counts only growing to the total; the commit said
+before `endBatch` and the line gone before `Pushed`; no commit inside an open batch; the
+line erased before a refusal is thrown; a wildcard push; and the indicator's drawing — at
+once on a new phase, held back within one, around a printed line, erased for good, cut to
+the width, nothing when disabled, and a settle wait taking the line. `FolderOnDiskTests`
+(SemelNodeKit) for the read's counts. The push's phase tests fail with `FilePlugin.swift`
+as it was.
+
 ## Performance
 
 Measured 2026-09-27 on the IceCubes packages tree (`C1/icecubes/Packages`, thirteen
@@ -555,6 +617,34 @@ What the after column holds is mostly libmalloc's cache of freed large blocks: u
 them, dirty — 364 MB of a 434 MB footprint at one moment of the Sequel Ace push, against
 41 MB live. It is bounded by count and does not grow with the tree, and
 `malloc_zone_pressure_relief` does not release it (B-155).
+
+**B-170** `open` — **A wildcard push sends and records every file the server already
+holds.** Measured 2026-10-17 while working on B-167, on main at 3734886 with release
+binaries, over a generated tree of 20,730 files in 337 folders (436 MB) the server already
+held byte for byte: `push tree/**/*.*` took 11.3 s, 9.9 s of it sending all 20,730 files in
+324 `pushFiles` requests for the server to record as unchanged, against 1.7 s for `push
+tree`, which sent none. The comparison with the server's roots and children (B-132) runs only
+in `expand`, for an entry the matcher returned as a folder; a wildcard returns files, each
+of which becomes `.send` at once. The owner pushes with `**/*.*`, so this is their everyday
+case, and with B-164's widening a locked folder reached by the pattern is already compared.
+The fix would group the matched files by the folders they are in, ask for those folders'
+roots and children in one request each as `expand` does, and send only what differs, keeping
+the work list's order and its report (`[no change]`, the `unchanged` count) as they are.
+
+**B-171** `open` — **Recording a pushed file on the server's queue costs about 1.05 ms, a
+third more than the 2026-10-04 figure.** Measured 2026-10-17 while working on B-167, on main
+at 3734886 with release binaries and a fresh home, with temporary timing around the queue's
+turn in `RequestHandler.pushFiles`: a cold `push tree` of 20,730 files (436 MB) spent 21.8 s
+recording on the queue over 324 requests of 64 files, and 4.2 s interning off it. Per request,
+the queue's time grew over the push: 60 ms for the first fifty requests, 59 ms for the next
+fifty, then 71, 67, 66 and 78 ms per request for each fifty after that (cumulative 3.0, 6.0,
+9.5, 12.9, 16.2 and 20.1 s at requests 50 to 300). A cold `push tree/**/*.*` of the same tree
+spent 26.5 s recording (1.28 ms a file); the same push of the unchanged tree 9.9 s (0.48 ms
+a file). The 2026-10-04 measurement of a cold 4,537-file push (3.4 s) implies about 0.75 ms
+a file. Not yet profiled: whether the growth is the graph's size (a folder's lookups or its
+manifest refold growing with its children), the journal of the implicit batch, or the
+machine's load during the run, which was not idle. A `sample` of the server during the push
+is the next step.
 
 ## Design, correctness and code quality
 

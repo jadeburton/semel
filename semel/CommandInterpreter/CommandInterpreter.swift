@@ -63,6 +63,9 @@ public final class CommandInterpreter: CommandContext {
     func settleWaitBegan() { indicator.begin(showing: settleInProgress) }
     func settleWaitEnded() { indicator.end() }
 
+    func showPushStatus(_ status: PushStatus) { indicator.show(status) }
+    func pushStatusEnded() { indicator.endStatus() }
+
     /// Reads the key that ends a `watch`. Standard input unless a test puts a script here.
     var keyReader: any KeyReader = TerminalKeyReader()
 
