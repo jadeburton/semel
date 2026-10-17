@@ -90,7 +90,10 @@ public enum ProtocolVersion {
     /// the paths are (B-164).
     /// Version 33 gives a running node in a `progress` record its `subject`, what it is
     /// computed for as the error report names it, and its `identity` (B-168).
-    public static let current = 33
+    /// Version 34 gives the `errors` reply and event the graph's `ProductTally`, which the
+    /// summary line counts, and adds `machineFileRemoved` to the conditions a record's
+    /// document can carry (B-169).
+    public static let current = 34
 }
 
 public struct Hello: Codable, Equatable, Sendable {

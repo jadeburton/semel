@@ -105,30 +105,42 @@ final class NavigationPlugin: CommandPlugin {
             return
         }
 
-        for entry in ListingOrder.sorted(results) {
-            let name = context.relativeName(Path(entry.path), to: displayBase)
+        let rows = ListingOrder.sorted(results).map { entry in
+            ListingRow(entry: entry,
+                       name: context.relativeName(Path(entry.path), to: displayBase) + (entry.kind == .folder ? "/" : ""),
+                       note: ValueState.listingNote(for: entry.status, kind: entry.kind, in: targetFS.kind).map { "[\($0)]" })
+        }
+        Self.listingLines(rows).forEach { context.outputMessage($0) }
+    }
 
-            var statusNote = ""
-            switch entry.status {
-            case .none:         break
-            case .unreferenced: statusNote = "  [unreferenced]"
-            case .pending:      statusNote = "  [pending]"
-            // One state, two words: nothing is produced in `input:`, where a name with no
-            // value is a source the formula names and nobody pushed (B-118).
-            case .notProduced:  statusNote = targetFS == .input ? "  [not pushed]" : "  [not produced]"
-            case .deleted:      statusNote = "  [deleted]"
-            case .failed:       statusNote = "  [failed]"
+    /// One line of a listing before it is laid out: the entry, its name as printed — a
+    /// folder's with its separator — and its state's note, bracketed, if it has one.
+    struct ListingRow {
+        let entry: ListEntry
+        let name:  String
+        let note:  String?
+    }
+
+    /// The lines of a listing: mode, size and name, then each note right-aligned to one
+    /// column, the one the longest noted name and the longest note reach, so names of
+    /// different lengths do not stagger the notes. A line with no note ends at its name and
+    /// moves no column: a long folder name above would otherwise push every note away.
+    static func listingLines(_ rows: [ListingRow]) -> [String] {
+        let nameWidth = rows.filter { $0.note != nil }.map(\.name.count).max() ?? 0
+        let noteWidth = rows.compactMap { $0.note?.count }.max() ?? 0
+        return rows.map { row in
+            let modeText = row.entry.kind == .folder
+                ? modeString(0, isDirectory: true)
+                : modeString(row.entry.mode ?? 0)
+            let sizeText = row.entry.kind == .folder
+                ? noSize
+                : row.entry.size.map { String(format: "%8d", $0) } ?? noSize
+            let line = "\(modeText)  \(sizeText)  \(row.name)"
+            guard let note = row.note else {
+                return line
             }
-
-            if entry.kind == .folder {
-                context.outputMessage("\(Self.modeString(0, isDirectory: true))  \(Self.noSize)  \(name)/\(statusNote)")
-                continue
-            }
-
-            let modeStr = Self.modeString(entry.mode ?? 0)
-            let sizeStr = entry.size.map { String(format: "%8d", $0) } ?? Self.noSize
-
-            context.outputMessage("\(modeStr)  \(sizeStr)  \(name)\(statusNote)")
+            let padding = (nameWidth - row.name.count) + (noteWidth - note.count)
+            return line + String(repeating: " ", count: padding + 2) + note
         }
     }
 

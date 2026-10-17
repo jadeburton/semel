@@ -89,6 +89,13 @@ public enum ErrorCondition: Codable, Hashable, Sendable, Error, ErrorConditionCo
     case notPushed(path: String, isFolder: Bool)
     /// A source pushed and then removed, which something still reads.
     case removed(path: String?, isFolder: Bool)
+    /// The machine's configuration, `semel.machine.config` in the input file system,
+    /// pushed and then removed while something still reads it (B-109). Its own case rather
+    /// than `removed`: the file is the machine's half of every formula's settings that read
+    /// it, so the graph built from it has no value, and what brings it back is the command
+    /// that writes it, which the document's remedy names, not a push of a file someone
+    /// keeps.
+    case machineFileRemoved(path: String)
     /// A node that carries an input's failure and whose cause is no longer in the graph,
     /// so it stands in for it.
     case inputInError

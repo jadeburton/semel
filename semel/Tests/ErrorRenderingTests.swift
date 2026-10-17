@@ -199,6 +199,19 @@ final class ErrorRenderingTests: XCTestCase {
         XCTAssertEqual(block(.removed(path: nil, isFolder: false)).first, "a source this node reads has been removed")
     }
 
+    /// The removed machine file is a statement about the whole graph, with the command that
+    /// writes the file again as its remedy, rather than a source to push back.
+    func test_machineFileRemoved() {
+        XCTAssertEqual(block(.machineFileRemoved(path: "input:/swift/CPackage/semel.machine.config"),
+                             remedy: .writeMachineFile(commands: [MachineFileCommand(command: "semel-swift prepare",
+                                                                                      folder: "swift/CPackage")])), [
+            "swift/CPackage/semel.machine.config, the machine's configuration, has been removed",
+            "  write with: semel-swift prepare swift/CPackage",
+        ])
+        XCTAssertEqual(block(.machineFileRemoved(path: "input:/semel.machine.config")),
+                       ["semel.machine.config, the machine's configuration, has been removed"])
+    }
+
     func test_inputInError() {
         XCTAssertEqual(block(.inputInError), ["an input is in error, and no node above it says why"])
     }
@@ -532,23 +545,23 @@ final class ErrorRenderingTests: XCTestCase {
 
     func test_inputsWithoutValue() {
         XCTAssertEqual(block(.inputsWithoutValue(kind: .includeFiles, paths: ["input:/hello/src/a.h"]), subject: .source(path: "input:/hello/src/main.c")), [
-            "include files without a value: hello/src/a.h",
+            "include files pending: hello/src/a.h",
             "  source: hello/src/main.c",
         ])
         XCTAssertEqual(block(.inputsWithoutValue(kind: .packageFolderAndManifest, paths: ["input:/Packages/Kit"])).first,
-                       "Packages/Kit and its Package.swift have no value")
+                       "Packages/Kit and its Package.swift are pending")
         XCTAssertEqual(block(.inputsWithoutValue(kind: .packageFolderAndManifest, paths: [])).first,
-                       "the package folder and its manifest have no value")
-        XCTAssertEqual(block(.inputsWithoutValue(kind: .headerFolders, paths: [])).first, "header folders have no value")
+                       "the package folder and its manifest are pending")
+        XCTAssertEqual(block(.inputsWithoutValue(kind: .headerFolders, paths: [])).first, "header folders are pending")
         XCTAssertEqual(block(.inputsWithoutValue(kind: .targetFolders, paths: (1...7).map { "input:/t\($0)" })).first,
-                       "target folders without a value: t1, t2, t3, t4, t5 and 2 more")
+                       "target folders pending: t1, t2, t3, t4, t5 and 2 more")
         let nouns: [(AwaitedInput, String)] = [(.targetFolderCandidates, "folders a target's sources may be in"),
                                                (.binaryArtifactFolders, "folders of binary targets' artifacts"),
                                                (.platformSettings, "settings that decide the platform"),
                                                (.locks, "locks of vendored packages"),
                                                (.versionSpecificManifests, "version-specific package manifests")]
         for (kind, noun) in nouns {
-            XCTAssertEqual(block(.inputsWithoutValue(kind: kind, paths: ["x"])).first, "\(noun) without a value: x")
+            XCTAssertEqual(block(.inputsWithoutValue(kind: kind, paths: ["x"])).first, "\(noun) pending: x")
         }
     }
 
@@ -954,7 +967,7 @@ final class ErrorRenderingTests: XCTestCase {
                  .toolInputNotWritten, .toolOutputNotRead, .toolOutputNamesItsSandbox, .toolLaunchFailed,
                  .sourceNotTaken, .toolOutputVaries,
                  .settingsMissing, .settingNotAccepted, .settingNotAList, .sdkNotFound, .sdkVersionDiffers, .settingNotSupported,
-                 .notPushed, .removed, .inputInError, .documentUnreadable,
+                 .notPushed, .removed, .machineFileRemoved, .inputInError, .documentUnreadable,
                  .unlinkedKind, .unknownTypeName, .requiredPortUnwired, .severalWiresOnOneWirePort, .portNotDeclared,
                  .outputPortMissing, .nodePropertyMissing, .propertyMissing, .propertiesExclusive, .propertyNotOfForm,
                  .inputNotOfForm, .inputHasNoContent, .sourceCannotProcess, .processNotSupported, .cannotHaveProperties,
@@ -1011,12 +1024,13 @@ final class ErrorRenderingTests: XCTestCase {
                                "Packages/libModels.a", "Packages/libTimeline.a")
 
         XCTAssertEqual(ErrorReportRenderer.lines(for: [ErrorRecord(document: document, products: needing, facts: facts())],
-                                                 style: plain, export: .nothing), [
+                                                 products: ProductTally(products: 7, upToDate: 2), style: plain,
+                                                 export: .nothing), [
             "libConversations.a, libExplore.a, libLists.a and 2 more:",
             "Packages/Models/Sources/Models/Account.swift:201:28: error: cannot convert value of type 'String' to specified type 'Int'",
             "  target: Models",
             "",
-            "1 error · 5 products without a value · nothing exported",
+            "1 error · 2 of 7 products up to date · nothing exported",
         ])
     }
 
@@ -1029,7 +1043,7 @@ final class ErrorRenderingTests: XCTestCase {
         connection.reply(.errors(records: [ErrorRecord(
             document: .tool(text: "input:/Sources/My App/main.swift:1:1: error: x\n  note: see input:/Sources/My App/other.swift",
                             tool: "swiftc", status: 1, subject: .source(path: "input:/Sources/My App/main.swift")),
-            products: [], facts: facts())]))
+            products: [], facts: facts())], products: ProductTally(products: 1, upToDate: 1)))
 
         try EnginePlugin().handle(verb: "errors", tokens: [], context: context)
 
@@ -1109,7 +1123,7 @@ final class ErrorRenderingTests: XCTestCase {
             "libExplore.a, libLists.a:",
             "Models/Account.swift:1:1: error: models (above)",
             "",
-            "2 errors · 3 products without a value",
+            "2 errors · 3 products in error",
         ])
     }
 
@@ -1127,7 +1141,7 @@ final class ErrorRenderingTests: XCTestCase {
             "",
             "b",
             "",
-            "2 errors · 2 products without a value",
+            "2 errors · 2 products in error",
         ])
     }
 
@@ -1143,19 +1157,22 @@ final class ErrorRenderingTests: XCTestCase {
             "no product:",
             "a",
             "",
-            "2 errors · 1 product without a value",
+            "2 errors · 1 product in error",
         ])
     }
 
-    /// `errors <product>`: the product's heading and its errors alone, or that it has a value.
+    /// `errors <product>`: the product's heading and its errors alone, or that no error stops it.
     func test_theProductViewIsItsHeadingAndItsErrors() {
         let record = ErrorRecord(document: .failure("boom"), products: products("Packages/libModels.a", "Packages/libKit.a"),
                                  facts: facts())
 
         XCTAssertEqual(ErrorReportRenderer.productView([record], product: "output:/Packages/libModels.a", style: plain),
-                       ["libModels.a:", "boom", "", "1 error · 2 products without a value"])
+                       ["libModels.a:", "boom", "", "1 error · 2 products in error"])
+        XCTAssertEqual(ErrorReportRenderer.productView([record], product: "output:/Packages/libModels.a",
+                                                       products: ProductTally(products: 4, upToDate: 2), style: plain).last,
+                       "1 error · 2 of 4 products up to date")
         XCTAssertEqual(ErrorReportRenderer.productView([], product: "output:/Packages/libModels.a", style: plain),
-                       ["libModels.a has a value."])
+                       ["libModels.a has no errors."])
     }
 
     // MARK: - Causes, once each
@@ -1181,7 +1198,7 @@ final class ErrorRenderingTests: XCTestCase {
             "  ports: output",
             "  carried by: 0 nodes",
             "",
-            "1 error · 2 products without a value",
+            "1 error · 2 products in error",
         ])
     }
 
@@ -1198,22 +1215,98 @@ final class ErrorRenderingTests: XCTestCase {
 
         XCTAssertEqual(lines.filter { !$0.hasPrefix(" ") && !$0.isEmpty },
                        ["no product:", "Packages/Kit/Sources/Kit has not been pushed", "Packages/Kit/Sources/Util has not been pushed",
-                        "2 errors · every product has a value"])
+                        "2 errors"])
     }
 
     // MARK: - The summary line
 
-    func test_theSummaryLineInItsFourForms() {
-        XCTAssertEqual(ErrorReportRenderer.summaryLine(errors: 1, productsWithoutValue: 5, export: nil),
-                       "1 error · 5 products without a value")
-        XCTAssertEqual(ErrorReportRenderer.summaryLine(errors: 2, productsWithoutValue: 1, export: .nothing),
-                       "2 errors · 1 product without a value · nothing exported")
-        XCTAssertEqual(ErrorReportRenderer.summaryLine(errors: 1, productsWithoutValue: 0, export: .whole(destination: "semel-out/Packages")),
-                       "1 error · every product has a value · exported to semel-out/Packages")
-        XCTAssertEqual(ErrorReportRenderer.summaryLine(errors: 1, productsWithoutValue: 2, export: .partial(exported: 3, of: 5)),
-                       "1 error · 2 products without a value · 3 of 5 products exported")
-        XCTAssertEqual(ErrorReportRenderer.summaryLine(errors: 1, productsWithoutValue: 2, export: .partial(exported: 0, of: 2)),
-                       "1 error · 2 products without a value · nothing exported")
+    private func summary(errors: Int, products: Int, upToDate: Int, export: ExportOutcome? = nil) -> String {
+        ErrorReportRenderer.summaryLine(errors: errors, productsInError: products - upToDate,
+                                        products: ProductTally(products: products, upToDate: upToDate), export: export)
+    }
+
+    /// The products by the graph's tally, in its four shapes: some up to date, none, all,
+    /// and a graph that holds no products, which claims nothing about them.
+    func test_theSummaryLineCountsTheGraphsProductsInItsFourShapes() {
+        XCTAssertEqual(summary(errors: 1, products: 5, upToDate: 2), "1 error · 2 of 5 products up to date")
+        XCTAssertEqual(summary(errors: 3, products: 5, upToDate: 0), "3 errors · no products up to date")
+        XCTAssertEqual(summary(errors: 0, products: 5, upToDate: 5), "no errors · 5 products up to date")
+        XCTAssertEqual(summary(errors: 1, products: 0, upToDate: 0), "1 error · no products")
+        XCTAssertEqual(summary(errors: 1, products: 1, upToDate: 1), "1 error · 1 product up to date")
+        XCTAssertEqual(ErrorReportRenderer.summaryLine(products: ProductTally(products: 5, upToDate: 5)),
+                       "no errors · 5 products up to date")
+    }
+
+    /// After an export, what became of it: nothing, all of it, or what was up to date.
+    func test_theSummaryLineSaysWhatTheExportCameTo() {
+        XCTAssertEqual(summary(errors: 2, products: 3, upToDate: 2, export: .nothing),
+                       "2 errors · 2 of 3 products up to date · nothing exported")
+        XCTAssertEqual(summary(errors: 1, products: 5, upToDate: 5, export: .whole(destination: "semel-out/Packages")),
+                       "1 error · 5 products up to date · exported to semel-out/Packages")
+        XCTAssertEqual(summary(errors: 1, products: 5, upToDate: 3, export: .partial(exported: 3, of: 5)),
+                       "1 error · 3 of 5 products up to date · 3 of 5 products exported")
+        XCTAssertEqual(summary(errors: 1, products: 2, upToDate: 0, export: .partial(exported: 0, of: 2)),
+                       "1 error · no products up to date · nothing exported")
+    }
+
+    /// Without a tally — a view that has only the records — the products they name are
+    /// counted as in error, and none is not said at all.
+    func test_theSummaryLineWithoutATallyCountsWhatTheRecordsName() {
+        XCTAssertEqual(ErrorReportRenderer.summaryLine(errors: 1, productsInError: 2, products: nil, export: nil),
+                       "1 error · 2 products in error")
+        XCTAssertEqual(ErrorReportRenderer.summaryLine(errors: 1, productsInError: 0, products: nil, export: nil),
+                       "1 error")
+    }
+
+    /// A graph that holds no products has no `no product:` heading to set its errors apart
+    /// from: the error alone, then the summary that says there are no products. The
+    /// removed machine file the owner met is the case.
+    func test_aGraphWithNoProductsHasNoHeading() {
+        let record = ErrorRecord(document: .engine(.machineFileRemoved(path: "input:/swift/CPackage/semel.machine.config"),
+                                                   subject: nil,
+                                                   remedy: .writeMachineFile(commands: [MachineFileCommand(
+                                                       command: "semel-swift prepare", folder: "swift/CPackage")])),
+                                 products: [], facts: facts())
+
+        XCTAssertEqual(ErrorReportRenderer.lines(for: [record], products: ProductTally(products: 0, upToDate: 0), style: plain), [
+            "swift/CPackage/semel.machine.config, the machine's configuration, has been removed",
+            "  write with: semel-swift prepare swift/CPackage",
+            "",
+            "1 error · no products",
+        ])
+    }
+
+    // MARK: - The words for a value's state
+
+    /// Each reason a port holds no value maps to one word, by case: a state the graph passes
+    /// through is pending, a failure or a failure above is in error, and a source taken away
+    /// is removed.
+    func test_eachNoValueReasonHasItsWord() {
+        let words: [(NoValueReason, String)] = [
+            (.pending,                        "pending"),
+            (.initializing,                   "pending"),
+            (.inputNotProduced,               "pending"),
+            (.inputInError,                   "in error"),
+            (.error(documentHash: "abc"),     "in error"),
+            (.deleted,                        "removed"),
+        ]
+        for (reason, word) in words {
+            XCTAssertEqual(ValueState(reason: reason).word, word, "\(reason)")
+            XCTAssertEqual(ValueState(.noValue(reason: reason)).word, word, "\(reason)")
+        }
+        XCTAssertEqual(ValueState(.value("abc")).word, "up to date")
+    }
+
+    /// Fails to compile when a reason is added without a word, which is the reminder to
+    /// add it to the table above.
+    func test_everyNoValueReasonIsNamedHere() {
+        func covered(_ reason: NoValueReason) -> Bool {
+            switch reason {
+            case .pending, .initializing, .inputNotProduced, .inputInError, .error, .deleted:
+                return true
+            }
+        }
+        XCTAssertTrue(covered(.pending))
     }
 
     // MARK: - --verbose
@@ -1224,7 +1317,7 @@ final class ErrorRenderingTests: XCTestCase {
         let record = ErrorRecord(document: .failure("boom"), products: [],
                                  facts: facts("SwiftCompiler", [2510], ports: ["swiftmodule", "object"], carried: 22))
 
-        XCTAssertEqual(ErrorReportRenderer.lines(for: [record], style: plain), ["no product:", "boom", "", "1 error · every product has a value"])
+        XCTAssertEqual(ErrorReportRenderer.lines(for: [record], style: plain), ["no product:", "boom", "", "1 error"])
         XCTAssertEqual(ErrorReportRenderer.lines(for: [record], style: ErrorReportStyle(verbose: true)), [
             "no product:",
             "boom",
@@ -1232,7 +1325,7 @@ final class ErrorRenderingTests: XCTestCase {
             "  ports: object, swiftmodule",
             "  carried by: 22 nodes",
             "",
-            "1 error · every product has a value",
+            "1 error",
         ])
     }
 

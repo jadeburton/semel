@@ -91,7 +91,7 @@ final class ErrorReportEndToEndTests: XCTestCase {
             "  1 error generated.",
             "  source: c/src/hello.c",
             "",
-            "1 error · 2 products without a value · nothing exported",
+            "1 error · 1 of 3 products up to date · nothing exported",
         ], output)
     }
 }

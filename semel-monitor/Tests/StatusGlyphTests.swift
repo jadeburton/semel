@@ -47,14 +47,14 @@ final class StatusGlyphTests: XCTestCase {
         let planner = NotificationPlanner(clock: ManualClock())
         XCTAssertFalse(planner.holdsErrorCard)
         let record = Events.compileError(products: Events.products("output:/c/hello"))
-        planner.settle(.errors(records: [record]), Events.settled(errors: 1))
+        planner.settle(.errors(records: [record], products: nil), Events.settled(errors: 1))
         XCTAssertTrue(planner.holdsErrorCard)
 
         planner.settle(Events.progress(), Events.settled(), Events.artifacts(changed: ["output:/c/hello"]))
         XCTAssertFalse(planner.holdsErrorCard, "a settle that gave the product a value replaced it")
 
         planner.pause()
-        planner.settle(Events.progress(), .errors(records: [record]), Events.settled(errors: 1))
+        planner.settle(Events.progress(), .errors(records: [record], products: nil), Events.settled(errors: 1))
         XCTAssertTrue(planner.holdsErrorCard, "a pause silences the card, not the state")
     }
 

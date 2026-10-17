@@ -86,6 +86,20 @@ public struct ErrorRecord: Codable, Equatable, Sendable {
     }
 }
 
+/// How many products the graph holds and how many of them are up to date — hold a value —
+/// counted as a report names them, a tree product once by its folder: what the summary
+/// line says, `1 error · 2 of 5 products up to date`, and with no products `no products`.
+/// Carried beside the records because what is up to date is in none of them.
+public struct ProductTally: Codable, Equatable, Sendable {
+    public let products: Int
+    public let upToDate: Int
+
+    public init(products: Int, upToDate: Int) {
+        self.products = products
+        self.upToDate = upToDate
+    }
+}
+
 /// The engine's facts about the node behind a record, for `--verbose`.
 public struct ErrorFacts: Codable, Equatable, Sendable {
     /// The node's type, `SwiftCompiler`, or `kind 43` for a kind the server does not link.
@@ -489,7 +503,9 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     /// What `fetch` answers for a symbolic link: its target, relative to its folder, and no
     /// body. What `cp` and `export` write is the link (B-77).
     case symbolicLink(target: String)
-    case errors(records: [ErrorRecord])
+    /// Every part carries the whole graph's tally, read with the records; a client keeps
+    /// the last part's.
+    case errors(records: [ErrorRecord], products: ProductTally)
     /// The findings travel in the frame body, as a JSON array of `CheckFinding`, for the
     /// reason `debug`'s text does: one broken invariant per node is the shape a badly
     /// broken graph has, and a reply over the JSON section's megabyte is refused outright —
@@ -566,8 +582,8 @@ extension DaemonResponse {
             return .list(entries: entries + laterEntries)
         case (.remove(let files, let folders), .remove(let laterFiles, let laterFolders)):
             return .remove(removedFiles: files + laterFiles, removedFolders: folders + laterFolders)
-        case (.errors(let records), .errors(let laterRecords)):
-            return .errors(records: records + laterRecords)
+        case (.errors(let records, _), .errors(let laterRecords, let products)):
+            return .errors(records: records + laterRecords, products: products)
         default:
             return nil
         }
@@ -579,7 +595,9 @@ extension DaemonResponse {
 /// What the engine reports from its background task, carried to every subscribed
 /// connection.
 public enum DaemonEvent: Codable, Equatable, Sendable {
-    case errors(records: [ErrorRecord])
+    /// The newly appearing causes, and the whole graph's tally of products, read with them:
+    /// nil when the graph could not be counted, which a client says nothing about.
+    case errors(records: [ErrorRecord], products: ProductTally?)
     case notice(line: String)
     /// The totals for one settle: how many nodes the engine fetched as scheduled, how
     /// many of them ran, how many were answered out of the cache, and how many errors the

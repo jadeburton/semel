@@ -634,12 +634,14 @@ final class EnginePlugin: CommandPlugin {
             product = path.string
         }
 
-        let records: [ErrorRecord]
+        let records:  [ErrorRecord]
+        let products: ProductTally
         do {
-            guard case .errors(let answered) = try context.request(.errors(product: product)).0 else {
+            guard case .errors(let answered, let tally) = try context.request(.errors(product: product)).0 else {
                 return
             }
-            records = answered
+            records  = answered
+            products = tally
         } catch let error as ServerError where error.isTheRequestsOwn {
             context.outputError("errors: \(error.description)")
             return
@@ -651,15 +653,16 @@ final class EnginePlugin: CommandPlugin {
             // on the count of settle reports, and the idle-time event this often follows may
             // have already counted this exact one.
             context.countErrorRecords(records)
-            ErrorReportRenderer.productView(records, product: asked, style: style).forEach { context.outputMessage($0) }
+            ErrorReportRenderer.productView(records, product: asked, products: products, style: style)
+                .forEach { context.outputMessage($0) }
             return
         }
 
         guard !records.isEmpty else {
-            context.outputMessage("No errors.")
+            context.outputMessage(ErrorReportRenderer.summaryLine(products: products))
             return
         }
         context.countErrorRecords(records)
-        ErrorReportRenderer.lines(for: records, style: style).forEach { context.outputMessage($0) }
+        ErrorReportRenderer.lines(for: records, products: products, style: style).forEach { context.outputMessage($0) }
     }
 }

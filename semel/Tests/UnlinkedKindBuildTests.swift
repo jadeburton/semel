@@ -96,7 +96,7 @@ final class UnlinkedKindBuildTests: XCTestCase {
         XCTAssertTrue(lines.contains("Push file: src/b.config"), "the push goes on past the file that woke it\n\(transcript)")
         XCTAssertFalse(transcript.contains("couldn’t be completed"), transcript)
         XCTAssertFalse(transcript.contains("couldn't be completed"), transcript)
-        XCTAssertFalse(lines.contains("No errors."), transcript)
+        XCTAssertFalse(lines.contains { $0.hasPrefix("no errors") }, transcript)
 
         guard let block = lines.firstIndex(of: "a node of kind \(unlinkedKind) is of a type this server does not link") else {
             return XCTFail("the report names the node by its kind\n\(transcript)")
@@ -106,7 +106,7 @@ final class UnlinkedKindBuildTests: XCTestCase {
                        ["a node of kind \(unlinkedKind) is of a type this server does not link",
                         "  register: kind \(unlinkedKind)"], transcript)
         XCTAssertGreaterThan(interpreter.errorsReported, 0)
-        XCTAssertEqual(lines.last, "1 error · 1 product without a value · 1 of 2 products exported", transcript)
+        XCTAssertEqual(lines.last, "1 error · 1 of 2 products up to date · 1 of 2 products exported", transcript)
         XCTAssertTrue(FileManager.default.fileExists(atPath: destination.appendingPathComponent("b.txt").path),
                       "--into gets what has a value")
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.appendingPathComponent("a.txt").path))

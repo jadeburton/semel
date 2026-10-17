@@ -281,13 +281,14 @@ final class EnginePluginTests: XCTestCase {
         }
     }
 
-    func test_errorsWithNoneSaysSo() throws {
-        connection.reply(.errors(records: []))
+    /// With no errors the summary line alone, counting the products the graph holds.
+    func test_errorsWithNoneSaysSoAndCountsTheProducts() throws {
+        connection.reply(.errors(records: [], products: ProductTally(products: 5, upToDate: 5)))
 
         try run("errors")
 
         XCTAssertEqual(connection.daemonRequests, [.errors(product: nil)])
-        XCTAssertEqual(context.messages, ["No errors."])
+        XCTAssertEqual(context.messages, ["no errors · 5 products up to date"])
     }
 
     /// A record's facts: the node behind it, for `--verbose`.
@@ -302,7 +303,7 @@ final class EnginePluginTests: XCTestCase {
         let record = ErrorRecord(document: .tool(text: "input:/a.c:1:1: error: boom", tool: "clang", status: 1,
                                                  subject: .source(path: "input:/a.c")),
                                  products: [], facts: Self.facts("ClangCompiler", 12, ports: ["errorLog", "output"]))
-        connection.reply(.errors(records: [record]))
+        connection.reply(.errors(records: [record], products: ProductTally(products: 2, upToDate: 2)))
 
         try run("errors")
 
@@ -311,7 +312,7 @@ final class EnginePluginTests: XCTestCase {
             "a.c:1:1: error: boom",
             "  source: a.c",
             "",
-            "1 error · every product has a value",
+            "1 error · 2 products up to date",
         ])
         XCTAssertEqual(context.countedErrorRecords, [[record]])
     }
@@ -327,7 +328,7 @@ final class EnginePluginTests: XCTestCase {
                             1 error generated.
                             """, tool: "clang", status: 1, subject: .source(path: "input:/hello/src/hello.c")),
                         products: [StoppedProduct(path: "output:/hello/hello")], facts: Self.facts("ClangCompiler", 24)),
-        ]))
+        ], products: ProductTally(products: 3, upToDate: 2)))
 
         try run("errors")
 
@@ -339,7 +340,7 @@ final class EnginePluginTests: XCTestCase {
             "  1 error generated.",
             "  source: hello/src/hello.c",
             "",
-            "1 error · 1 product without a value",
+            "1 error · 2 of 3 products up to date",
         ])
     }
 
@@ -348,8 +349,8 @@ final class EnginePluginTests: XCTestCase {
     func test_errorsVerboseAddsTheEnginesFactsAndNeverListsCarriers() throws {
         let record = ErrorRecord(document: .engine(.notPushed(path: "input:/shared.h", isFolder: false), subject: nil),
                                  products: [], facts: Self.facts("StaticFile", 12, carried: 20))
-        connection.reply(.errors(records: [record]))
-        connection.reply(.errors(records: [record]))
+        connection.reply(.errors(records: [record], products: ProductTally(products: 1, upToDate: 1)))
+        connection.reply(.errors(records: [record], products: ProductTally(products: 1, upToDate: 1)))
 
         try run("errors")
         try run("errors", ["--verbose"])
@@ -358,14 +359,14 @@ final class EnginePluginTests: XCTestCase {
             "no product:",
             "shared.h has not been pushed",
             "",
-            "1 error · every product has a value",
+            "1 error · 1 product up to date",
             "no product:",
             "shared.h has not been pushed",
             "  node: StaticFile #12",
             "  ports: output",
             "  carried by: 20 nodes",
             "",
-            "1 error · every product has a value",
+            "1 error · 1 product up to date",
         ])
         XCTAssertEqual(connection.daemonRequests, [.errors(product: nil), .errors(product: nil)])
     }
@@ -391,7 +392,8 @@ final class EnginePluginTests: XCTestCase {
     /// its folder, once for all its entries; and a cause no product reaches last, under
     /// `no product:`.
     func test_errorsLeadsWithTheProductsAndEndsWithWhatNoProductNeeds() throws {
-        connection.reply(.errors(records: [Self.unread, Self.compile, Self.catalog]))
+        connection.reply(.errors(records: [Self.unread, Self.compile, Self.catalog],
+                                 products: ProductTally(products: 5, upToDate: 2)))
 
         try run("errors")
 
@@ -407,21 +409,22 @@ final class EnginePluginTests: XCTestCase {
             "no product:",
             "notes.txt has been removed",
             "",
-            "3 errors · 3 products without a value",
+            "3 errors · 2 of 5 products up to date",
         ])
     }
 
     /// The idle-time report after a settle is drawn by the same renderer, with the same
     /// summary.
     func test_theIdleTimeReportIsTheSameReport() {
-        XCTAssertEqual(ErrorReportRenderer.lines(for: [Self.unread, Self.compile], style: ErrorReportStyle()).last,
-                       "2 errors · 2 products without a value")
+        XCTAssertEqual(ErrorReportRenderer.lines(for: [Self.unread, Self.compile], products: ProductTally(products: 4, upToDate: 2),
+                                                 style: ErrorReportStyle()).last,
+                       "2 errors · 2 of 4 products up to date")
     }
 
     /// The product as `cp` reads a path: with its file system, here from its root. The view
     /// is its heading and the errors it has no value because of, alone.
     func test_errorsForAProductIsTheProductView() throws {
-        connection.reply(.errors(records: [Self.compile]))
+        connection.reply(.errors(records: [Self.compile], products: ProductTally(products: 3, upToDate: 1)))
 
         try run("errors", ["output:/Packages/libModels.a"])
 
@@ -431,7 +434,7 @@ final class EnginePluginTests: XCTestCase {
             "Packages/Models/A.swift:3:5: error: cannot find 'x' in scope",
             "  target: Models",
             "",
-            "1 error · 2 products without a value",
+            "1 error · 1 of 3 products up to date",
         ])
         XCTAssertEqual(context.countedErrorRecords, [[Self.compile]])
     }
@@ -441,7 +444,7 @@ final class EnginePluginTests: XCTestCase {
     func test_errorsForATreeProductsFolderReadsRelativeToTheCurrentDirectory() throws {
         context.currentFileSystem    = .output
         context.currentDirectoryPath = Path("App/sub")
-        connection.reply(.errors(records: [Self.catalog]))
+        connection.reply(.errors(records: [Self.catalog], products: ProductTally(products: 1, upToDate: 0)))
 
         try run("errors", ["../Res"])
 
@@ -449,13 +452,14 @@ final class EnginePluginTests: XCTestCase {
         XCTAssertEqual(context.messages.first, "Res:")
     }
 
-    /// A product nothing is wrong with has a value, and says so; it is not an error.
-    func test_errorsForAProductWithNoErrorsSaysItHasAValue() throws {
-        connection.reply(.errors(records: []))
+    /// A product no error stops says so, and nothing more: whether it is built yet is not
+    /// what the server answered.
+    func test_errorsForAProductWithNoErrorsSaysItHasNone() throws {
+        connection.reply(.errors(records: [], products: ProductTally(products: 1, upToDate: 1)))
 
         try run("errors", ["-o", "Packages/libModels.a"])
 
-        XCTAssertEqual(context.messages, ["libModels.a has a value."])
+        XCTAssertEqual(context.messages, ["libModels.a has no errors."])
         XCTAssertEqual(context.errors, [])
     }
 

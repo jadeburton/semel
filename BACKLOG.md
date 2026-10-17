@@ -241,6 +241,79 @@ the width, nothing when disabled, and a settle wait taking the line. `FolderOnDi
 (SemelNodeKit) for the read's counts. The push's phase tests fail with `FilePlugin.swift`
 as it was.
 
+**B-169** `done` — **The summary line claimed `every product has a value` over a graph with no
+products, and the prompt's "has a value" read as engine talk.** Reported 2026-10-17 by the
+owner, verbatim: "I got semel itself to build inside semel without errors, then I deleted
+semel.machine.config inside semel. It correctly removed all output files but the error
+message is confusing: `no product:` / `semel.machine.config has been removed` / `1 error ·
+every product has a value`. "every product has a value" is the confusing part. There are 0
+products here. I also think we need to rework the term "has a value", it exists in other
+places of the UI but it is a bit esoteric. Other options: "is in error" (when has no value)
+or "is pending" when has no value but soon will, or "exists" if we really have to say it has
+a value. The `ls` command should align the rightmost column of statuses such as `[pending]`
+etc." Reproduced on main at 3734886 with release binaries on `swift/CPackage`: build, `rm`
+its `semel.machine.config`, then `errors` printed exactly that, and `ls` staggered its
+statuses by name length (`hello  [failed]` over `hello.dylib  [failed]`). The summary counted
+only the products the error records named, so a graph with none said every one had a value,
+and nothing told the reader that the removed file was the machine's configuration or how to
+get it back.
+
+Fixed 2026-10-17, in the client's words only; the engine's vocabulary (`NoValueReason`, "has
+a value") is unchanged. The owner's wording, refined the same day: a product holding a value
+is **up to date** — a declarative state, where "built" read as an event — one without is
+**pending** or **in error**, and a source pushed and then taken away is **removed**.
+`ValueState` in the client is the one table, by case:
+
+| `NoValueReason` | word |
+|---|---|
+| (a value) | up to date |
+| `pending` | pending |
+| `initializing` | pending |
+| `inputNotProduced` | pending |
+| `inputInError` | in error |
+| `error(documentHash:)` | in error |
+| `deleted` | removed (neither pending nor in error: nothing the graph will produce by itself) |
+
+- **The summary line counts the graph's products**, from a `ProductTally` (`products`,
+  `upToDate`) the server reads with `ProductReach.tally` — a tree product once, by its folder
+  — and sends with the `errors` reply and the idle-time event (protocol 34): `1 error · 2 of 5
+  products up to date`, `no errors · 5 products up to date`, `3 errors · no products up to
+  date`, and with zero products `1 error · no products`. `errors` with no errors and a clean
+  `build` print it where they printed `No errors.`. The monitor's card, which has only the
+  records, says `1 error · 2 products in error`, and nothing about products when they name
+  none.
+- **`no product:` is left out when the graph holds no products.**
+- **A removed machine file is its own condition**, `ErrorCondition.machineFileRemoved(path:)`
+  in `SemelNodeKit`, decided by the engine from the removed `StaticFile`'s name (the one name
+  B-109's writers write), with the `write with:` remedy the unpushed file already had — the
+  command each namespace selected out of it registered, here `semel-swift prepare`, B-109's
+  writer of the Swift half (`semel-clang` writes the clang half). No node publishes it, so no
+  `implementationVersion` moves; the protocol bump covers the record's document.
+- **`ls`** prints `[up to date]` beside a product in `output:` holding its value, `[pending]`
+  for what was `[not produced]` there, `[in error]` for `[failed]`, `[removed]` for
+  `[deleted]`; `[not pushed]` and `[unreferenced]` stay. The status column is right-aligned to
+  the one column the longest name with a status and the longest status of the listing
+  reach; mode and size are unchanged. A source in `input:` holding its value, and a folder, carry no status.
+- `errors <product>` with nothing stopping it says `libModels.a has no errors.`; the
+  converter's waiting states read `include files pending: …`; the monitor's products window
+  marks a failed product `in error`.
+
+After, the owner's scenario:
+
+```
+swift/CPackage/semel.machine.config, the machine's configuration, has been removed
+  write with: semel-swift prepare swift/CPackage
+
+1 error · no products
+```
+
+Tests: `ErrorRenderingTests` (the summary line in its four shapes and after an export, the
+fallback without a tally, the graph with no products and no heading, each `NoValueReason`'s
+word, the removed machine file's lines), `NavigationPluginTests` (every `ls` word, `[up to
+date]`, right alignment with names of different lengths), `ProductReachTests` (the tally),
+`UnpushedFileReportingTests` (the removed machine file's document and remedy, and a removed
+file of another name), `RequestHandlerTests` (the tally in the reply and the event).
+
 ## Performance
 
 Measured 2026-09-27 on the IceCubes packages tree (`C1/icecubes/Packages`, thirteen

@@ -306,7 +306,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertEqual(response, .errors(records: [
             fileRecord(first, message: "first"),
             fileRecord(second, message: "second"),
-        ]))
+        ], products: ProductTally(products: 0, upToDate: 0)))
     }
 
     /// Twelve nodes of one type, whose labels differ only by id: the reply orders them by
@@ -322,12 +322,12 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         let (response, _) = try daemon(.errors(product: nil))
         engine.reportIdleTimeErrors()
 
-        guard case .errors(let records) = response else {
+        guard case .errors(let records, _) = response else {
             return XCTFail("expected errors, got \(response)")
         }
         XCTAssertEqual(records.map(\.document), messages.map(ErrorDocument.failure),
                        "the nodes were created in message order, so node order is message order")
-        XCTAssertEqual(sink.events, [.daemon(.errors(records: records))])
+        XCTAssertEqual(sink.events, [.daemon(.errors(records: records, products: ProductTally(products: 0, upToDate: 0)))])
     }
 
     /// B-110. Three nodes of one type carrying one document are one record naming all
@@ -340,13 +340,13 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         let (response, _) = try daemon(.errors(product: nil))
         engine.reportIdleTimeErrors()
 
-        guard case .errors(let records) = response else {
+        guard case .errors(let records, _) = response else {
             return XCTFail("expected errors, got \(response)")
         }
         XCTAssertEqual(records.count, 1)
         XCTAssertEqual(records[0].facts.nodeIDs.count, 3)
         XCTAssertEqual(records[0].facts.nodeType, "TreeMerger")
-        XCTAssertEqual(sink.events, [.daemon(.errors(records: records))])
+        XCTAssertEqual(sink.events, [.daemon(.errors(records: records, products: ProductTally(products: 0, upToDate: 0)))])
     }
 
     /// B-74. Twenty nodes reading one deleted file all say "an input is in error" and none
@@ -376,15 +376,15 @@ final class RequestHandlerTests: RequestHandlerTestCase {
 
         XCTAssertEqual(response, .errors(records: [
             fileRecord(try source.requireID(), message: "the file is gone", carried: 20),
-        ]))
-        guard case .errors(let records) = response else {
+        ], products: ProductTally(products: 0, upToDate: 0)))
+        guard case .errors(let records, _) = response else {
             return XCTFail("expected errors, got \(response)")
         }
-        XCTAssertEqual(sink.events, [.daemon(.errors(records: records))])
+        XCTAssertEqual(sink.events, [.daemon(.errors(records: records, products: ProductTally(products: 0, upToDate: 0)))])
     }
 
     func test_errorsIsEmptyWhenNothingFailed() throws {
-        XCTAssertEqual(try daemon(.errors(product: nil)).0, .errors(records: []))
+        XCTAssertEqual(try daemon(.errors(product: nil)).0, .errors(records: [], products: ProductTally(products: 0, upToDate: 0)))
     }
 
     // MARK: - The products an error stops (B-142)
@@ -408,7 +408,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
             fileRecord(feeding, message: "first",
                        products: [StoppedProduct(path: "output:/app/bin"), StoppedProduct(path: "output:/app/lib")]),
             fileRecord(orphan, message: "second"),
-        ]))
+        ], products: ProductTally(products: 2, upToDate: 0)))
     }
 
     /// The idle-time report names them too, through the same walk.
@@ -417,17 +417,40 @@ final class RequestHandlerTests: RequestHandlerTestCase {
 
         engine.reportIdleTimeErrors()
 
-        guard case .daemon(.errors(let records))? = sink.events.first else {
+        guard case .daemon(.errors(let records, _))? = sink.events.first else {
             return XCTFail("expected an error event, got \(sink.events)")
         }
         XCTAssertEqual(records.map { $0.products.map(\.path) }, [["output:/app/bin", "output:/app/lib"], []])
+    }
+
+    /// The reply and the idle-time event carry the whole graph's tally of products — how
+    /// many there are and how many are built — whatever records they carry: a product
+    /// holding a value counts as built, and one an error stops does not.
+    func test_theReplyAndTheEventCountTheGraphsProducts() throws {
+        _ = try makeFailuresUnderTwoProducts()
+        _ = try GraphSpecNode(OutputFile.self, properties: [OutputFile.pathProperty: "output:/app/readme"],
+                              inputs: [OutputFile.inputPort: ["product": .staticFile(at: "input:/readme")]])
+            .findOrCreateMatchingNode()
+        let (readme, _) = try GraphSpecNode.staticFile(at: "input:/readme").findOrCreateMatchingNode()
+        try readme.writeToOutputPort("output", value: .value(try "read me".intern()))
+
+        guard case .errors(_, let products) = try daemon(.errors(product: nil)).0 else {
+            return XCTFail("expected errors")
+        }
+        XCTAssertEqual(products, ProductTally(products: 3, upToDate: 1))
+
+        engine.reportIdleTimeErrors()
+        guard case .daemon(.errors(_, let eventProducts))? = sink.events.first else {
+            return XCTFail("expected an error event, got \(sink.events)")
+        }
+        XCTAssertEqual(eventProducts, ProductTally(products: 3, upToDate: 1))
     }
 
     /// Filtered on the server: only the records stopping the product are sent.
     func test_errorsForOneProductAnswersOnlyTheRecordsStoppingIt() throws {
         let (feeding, _) = try makeFailuresUnderTwoProducts()
 
-        guard case .errors(let records) = try daemon(.errors(product: "app/bin")).0 else {
+        guard case .errors(let records, _) = try daemon(.errors(product: "app/bin")).0 else {
             return XCTFail("expected errors")
         }
         XCTAssertEqual(records.map(\.facts.nodeIDs), [[feeding]])
@@ -450,7 +473,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(sink.events, [
-            .daemon(.errors(records: [fileRecord(file, message: "boom")])),
+            .daemon(.errors(records: [fileRecord(file, message: "boom")], products: ProductTally(products: 0, upToDate: 0))),
         ])
     }
 
@@ -473,7 +496,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         try makeFailingFile(path: "input:/a.c", message: "boom")
         try makeFailingFile(path: "input:/b.c", message: "bang")
 
-        guard case .errors(let records) = try daemon(.errors(product: nil)).0 else {
+        guard case .errors(let records, _) = try daemon(.errors(product: nil)).0 else {
             return XCTFail("expected errors")
         }
         let verbCount = Set(records.flatMap { $0.document.causes.map(\.mergeKey) }).count

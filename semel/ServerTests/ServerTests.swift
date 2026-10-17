@@ -199,7 +199,7 @@ final class ServerTests: RequestHandlerTestCase {
         let (last, _) = try client.send(.daemon(.errors(product: nil)), body: nil) { _ in partCount += 1 }
         let (whole, _) = try daemon(client, .errors(product: nil))
 
-        guard case .errors(let records) = whole else {
+        guard case .errors(let records, _) = whole else {
             return XCTFail("expected the error records")
         }
         XCTAssertEqual(records.count, recordCount)
@@ -218,7 +218,7 @@ final class ServerTests: RequestHandlerTestCase {
         try source.writeToOutputPort("output", value: .noValue(reason: try .failure("boom")))
         let client = try connect()
 
-        guard case .errors(let records) = try daemon(client, .errors(product: "app/bin")).0 else {
+        guard case .errors(let records, _) = try daemon(client, .errors(product: "app/bin")).0 else {
             return XCTFail("expected the error records")
         }
         XCTAssertEqual(records.map(\.products), [[StoppedProduct(path: "output:/app/bin")]])

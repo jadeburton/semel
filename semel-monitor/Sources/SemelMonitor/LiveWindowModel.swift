@@ -87,7 +87,7 @@ public struct LiveWindowModel {
             phase    = .settling
             progress = record
             started  = Self.match(record.running, against: started, at: now)
-        case .errors(let records):
+        case .errors(let records, _):
             beginSettleIfNeeded()
             settleErrors += records
         case .settled(let scheduled, let computed, let fromCache, let errors):

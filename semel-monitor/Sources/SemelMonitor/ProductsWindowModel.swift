@@ -69,15 +69,14 @@ public struct ProductsSnapshot: Equatable, Sendable {
 public enum ProductMark: Equatable, Sendable {
     case appeared
     case changed
-    /// The listing says the product failed: it has no value, which is what the report
-    /// calls it.
+    /// The listing says the product failed: it is in error, as the report and `ls` say.
     case noValue
 
     public var word: String {
         switch self {
         case .appeared: return "appeared"
         case .changed:  return "changed"
-        case .noValue:  return "no value"
+        case .noValue:  return ValueState.inError.word
         }
     }
 }

@@ -71,7 +71,7 @@ final class ProductsWindowModelTests: XCTestCase {
         XCTAssertEqual(model.section, .errors)
         XCTAssertEqual(model.title(of: .errors), "Errors (1)")
         XCTAssertEqual(model.errorLines, ErrorReportRenderer.lines(for: [record], style: ErrorReportStyle()))
-        XCTAssertEqual(model.errorLines.last, "1 error · 1 product without a value")
+        XCTAssertEqual(model.errorLines.last, "1 error · 1 product in error")
         XCTAssertNil(model.exportRequest, "nothing to export from the errors")
         XCTAssertEqual(model.copiedPaths, ["output:/Packages/libConversations.a"])
     }
@@ -161,7 +161,7 @@ final class ProductsWindowModelTests: XCTestCase {
         XCTAssertEqual(ProductsWindowText.lines(for: model, openedFor: card), [
             "window: 1 product changed",
             "  output: · App · [Packages] · Errors (0)",
-            "  libConversations.a · no value · —",
+            "  libConversations.a · in error · —",
             "  libModels.a · changed · 1.2 MB",
             "  libNotifications.a · 212 KB",
         ])

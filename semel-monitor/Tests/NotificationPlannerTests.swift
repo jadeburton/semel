@@ -68,11 +68,11 @@ final class NotificationPlannerTests: XCTestCase {
         let planner = planner()
         let entries = [StoppedProduct(path: "output:/App/App.app/Contents/MacOS/App", treeFolder: "output:/App/App.app"),
                        StoppedProduct(path: "output:/App/App.app/Contents/Info.plist", treeFolder: "output:/App/App.app")]
-        let changes = planner.settle(.errors(records: [Events.compileError(products: entries)]),
+        let changes = planner.settle(.errors(records: [Events.compileError(products: entries)], products: nil),
                                      Events.settled(errors: 1))
 
         let card = try XCTUnwrap(changes.first?.shownCard)
-        XCTAssertEqual(CardText.headline(of: card), "1 product without a value")
+        XCTAssertEqual(CardText.headline(of: card), "1 product in error")
         XCTAssertEqual(CardText.namesLine(of: card), "App.app")
     }
 
@@ -90,7 +90,7 @@ final class NotificationPlannerTests: XCTestCase {
         let first  = Events.compileError("input:/c/src/a.c:1:1: error: first", products: Events.products("output:/c/hello"))
         let second = Events.compileError("input:/c/src/b.c:2:2: error: second", products: Events.products("output:/c/tool"))
         let changes = planner.settle(Events.progress(),
-                                     .errors(records: [second, first]),
+                                     .errors(records: [second, first], products: nil),
                                      Events.settled(computed: 2, errors: 2),
                                      Events.artifacts(changed: ["output:/c/config.txt"]))
 
@@ -98,16 +98,16 @@ final class NotificationPlannerTests: XCTestCase {
         let card = try XCTUnwrap(changes.first?.shownCard)
         XCTAssertEqual(card.kind, .errors)
         XCTAssertEqual(CardText.lines(for: card), [
-            "2 products without a value",
+            "2 products in error",
             "c/src/a.c:1:1: error: first",
             "hello, tool",
-            "2 errors · 2 products without a value",
+            "2 errors · 2 products in error",
         ])
     }
 
     func test_anErrorCardStaysPastEightSecondsUntilClicked() throws {
         let planner = planner()
-        let card = try XCTUnwrap(planner.settle(.errors(records: [Events.compileError(products: Events.products("output:/c/hello"))]),
+        let card = try XCTUnwrap(planner.settle(.errors(records: [Events.compileError(products: Events.products("output:/c/hello"))], products: nil),
                                                 Events.settled(errors: 1)).first?.shownCard)
         clock.advance(by: .seconds(60))
         XCTAssertEqual(planner.advance(), [])
@@ -119,7 +119,7 @@ final class NotificationPlannerTests: XCTestCase {
     func test_aLaterSettleGivingTheProductsAValueReplacesTheErrorCard() throws {
         let planner = planner()
         let errorCard = try XCTUnwrap(planner.settle(
-            .errors(records: [Events.compileError(products: Events.products("output:/c/hello", "output:/c/hello.dylib"))]),
+            .errors(records: [Events.compileError(products: Events.products("output:/c/hello", "output:/c/hello.dylib"))], products: nil),
             Events.settled(errors: 1)).first?.shownCard)
 
         // One of the two has a value; the graph still holds the error.
@@ -136,7 +136,7 @@ final class NotificationPlannerTests: XCTestCase {
     func test_aSettleThatLeavesNoErrorReplacesEveryErrorCard() throws {
         let planner = planner()
         let unneeded = Events.compileError(products: [])
-        let errorCard = try XCTUnwrap(planner.settle(.errors(records: [unneeded]), Events.settled(errors: 1)).first?.shownCard)
+        let errorCard = try XCTUnwrap(planner.settle(.errors(records: [unneeded], products: nil), Events.settled(errors: 1)).first?.shownCard)
         XCTAssertEqual(CardText.headline(of: errorCard), "1 error")
 
         XCTAssertEqual(planner.settle(Events.progress(), Events.settled(errors: 0)), [.dismissed(errorCard)])
@@ -144,7 +144,7 @@ final class NotificationPlannerTests: XCTestCase {
 
     func test_errorsWithoutASettledAreShownWhenTheNextSettleBegins() throws {
         let planner = planner()
-        XCTAssertEqual(planner.receive(.errors(records: [Events.compileError(products: Events.products("output:/c/hello"))])), [])
+        XCTAssertEqual(planner.receive(.errors(records: [Events.compileError(products: Events.products("output:/c/hello"))], products: nil)), [])
         let card = try XCTUnwrap(planner.receive(Events.progress()).first?.shownCard)
         XCTAssertEqual(card.kind, .errors)
     }
@@ -213,7 +213,7 @@ final class NotificationPlannerTests: XCTestCase {
     func test_anErrorFixedDuringAPauseIsNotShownOnResume() {
         let planner = planner()
         planner.pause()
-        planner.settle(.errors(records: [Events.compileError(products: Events.products("output:/c/hello"))]),
+        planner.settle(.errors(records: [Events.compileError(products: Events.products("output:/c/hello"))], products: nil),
                        Events.settled(errors: 1))
         planner.settle(Events.progress(), Events.settled(errors: 0))
         XCTAssertEqual(planner.resume(), [])
@@ -231,7 +231,7 @@ final class NotificationPlannerTests: XCTestCase {
 
         XCTAssertEqual(planner.settle(Events.progress(), Events.settled(), Events.artifacts(changed: ["output:/Lib/libA.a"])), [])
         let errors = planner.settle(Events.progress(),
-                                    .errors(records: [Events.compileError(products: Events.products("output:/Lib/libA.a"))]),
+                                    .errors(records: [Events.compileError(products: Events.products("output:/Lib/libA.a"))], products: nil),
                                     Events.settled(errors: 1))
         XCTAssertEqual(errors, [], "an error stopping only products outside the folders makes no card")
     }
@@ -295,7 +295,7 @@ final class NotificationPlannerTests: XCTestCase {
     func test_theRunningCardBecomesTheErrorCardInItsPlace() throws {
         let planner = planner()
         let running = try XCTUnwrap(planner.receive(Events.progress(running: ["a"])).first?.shownCard)
-        let changes = planner.settle(.errors(records: [Events.compileError(products: Events.products("output:/c/hello"))]),
+        let changes = planner.settle(.errors(records: [Events.compileError(products: Events.products("output:/c/hello"))], products: nil),
                                      Events.settled(errors: 1))
         guard case .resolved(let errors)? = changes.first, changes.count == 1 else {
             return XCTFail("expected the running card resolved, got \(changes)")
@@ -450,7 +450,7 @@ final class NotificationPlannerTests: XCTestCase {
     func test_aTreesEntriesGivenAValueReplaceTheErrorCardNamingItsFolder() throws {
         let planner = planner()
         let entry = StoppedProduct(path: "output:/App/App.app/Contents/Info.plist", treeFolder: "output:/App/App.app")
-        let errors = try XCTUnwrap(planner.settle(.errors(records: [Events.compileError(products: [entry])]),
+        let errors = try XCTUnwrap(planner.settle(.errors(records: [Events.compileError(products: [entry])], products: nil),
                                                   Events.settled(errors: 1)).first?.shownCard)
         let changes = planner.settle(Events.progress(), Events.settled(errors: 1),
                                      Events.artifacts(changed: [entry.path], treeFolders: [entry.path: "output:/App/App.app"]))
@@ -461,7 +461,7 @@ final class NotificationPlannerTests: XCTestCase {
 
     func test_aDroppedConnectionForgetsTheSettleItWasReading() {
         let planner = planner()
-        planner.receive(.errors(records: [Events.compileError(products: Events.products("output:/c/hello"))]))
+        planner.receive(.errors(records: [Events.compileError(products: Events.products("output:/c/hello"))], products: nil))
         planner.engineLost()
         XCTAssertEqual(planner.settle(Events.settled(), Events.artifacts(changed: ["output:/c/hello"])).compactMap(\.shownCard)
                            .map(\.kind), [.result])

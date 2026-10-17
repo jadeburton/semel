@@ -482,6 +482,35 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
                        "each is still the path build pushes once it is there")
     }
 
+    /// A machine file pushed and then removed is the machine's configuration gone, said as
+    /// its own condition with the command that writes it again — not a source to push back,
+    /// which is what `removed` would offer.
+    func test_aRemovedMachineFileNamesTheCommandThatWritesItAgain() throws {
+        registerWriters()
+        let machine = try makeSettings(machinePath: "input:/app/semel.machine.config", prefixes: ["sample.linker"])
+        _ = try staticFile(machine).replaceContent(try "sample.linker.toolDescriptor.name=swiftc".intern())
+        _ = try staticFile(machine).replaceContent(nil)
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured.first?.flatMap(\.items).map(\.document), [
+            .engine(.machineFileRemoved(path: "input:/app/semel.machine.config"), subject: nil,
+                    remedy: .writeMachineFile(commands: [MachineFileCommand(command: "semel-swift prepare", folder: "app")])),
+        ])
+    }
+
+    /// A removed file of any other name is a removed source, whatever reads it.
+    func test_aRemovedFileOfAnotherNameIsARemovedSource() throws {
+        registerWriters()
+        let other = try makeSettings(machinePath: "input:/clang.cfg", prefixes: ["sample.compiler"])
+        _ = try staticFile(other).replaceContent(try "sample.compiler.target=x".intern())
+        _ = try staticFile(other).replaceContent(nil)
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured.first?.flatMap(\.items).map(\.document), [removed("input:/clang.cfg")])
+    }
+
     /// A file that has been pushed is no one's problem, however many nodes read it.
     func test_aPushedFileIsSilent() throws {
         let file     = try makeUnpushedFile(path: "input:/main.c")

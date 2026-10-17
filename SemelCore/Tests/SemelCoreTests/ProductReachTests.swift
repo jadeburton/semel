@@ -232,4 +232,39 @@ final class ProductReachTests: SemelCoreTestCase {
         XCTAssertFalse(try ProductReach.isProduct("output:/app/nothing", database: database))
         XCTAssertFalse(try ProductReach.isProduct("output:", database: database))
     }
+
+    // MARK: - Counting products
+
+    /// An empty graph holds no products, and the tally says so rather than claim anything
+    /// about them.
+    func test_aGraphWithNoProductsTalliesNone() throws {
+        _ = try make(.staticFile(at: "input:/a.c"))
+
+        XCTAssertEqual(try ProductReach.tally(database: database), ProductReach.Tally(products: 0, upToDate: 0))
+    }
+
+    /// A product holding its value is up to date; one whose input has none is not. A tree
+    /// product counts once, by its folder, up to date only when every entry is; a tree a
+    /// formula publishes none of whose entries is in the graph counts as one not up to date.
+    func test_theTallyCountsProductsAsTheReportNamesThem() throws {
+        let readme = try make(.staticFile(at: "input:/readme"))
+        _ = try make(product(at: "output:/app/readme", reading: .staticFile(at: "input:/readme")))
+        _ = try make(product(at: "output:/app/bin", reading: .staticFile(at: "input:/a.c")))
+        try database.node.select(nodeID: readme).writeToOutputPort("output", value: .value(try "read me".intern()))
+
+        let tree   = step("actool", reading: ["catalog": .staticFile(at: "input:/Assets.xcassets")])
+        let treeID = try make(tree)
+        _ = try make(product(at: "output:/app/Res/Assets.car", reading: entry("Assets.car", of: tree)))
+        _ = try make(product(at: "output:/app/Res/Icon.png", reading: entry("Icon.png", of: tree)))
+
+        let unknown   = try make(step("other", reading: ["catalog": .staticFile(at: "input:/Other.xcassets")]))
+        let builderID = try make(builder(reading: "input:/app/app.fmla"))
+        try wire(unknown, port: "output", toBuilder: builderID, port: ProjectBuilder.treesInputPort,
+                 named: "output:/app/Other")
+        try wire(treeID, port: "output", toBuilder: builderID, port: ProjectBuilder.treesInputPort,
+                 named: "output:/app/Res")
+
+        XCTAssertEqual(try ProductReach.tally(database: database), ProductReach.Tally(products: 4, upToDate: 1),
+                       "readme up to date; bin, the Res tree and the Other tree not")
+    }
 }

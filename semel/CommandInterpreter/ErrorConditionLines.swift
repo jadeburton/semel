@@ -109,6 +109,10 @@ struct ConditionLines {
                 return Drawn(headline: "a source this node reads has been removed")
             }
             return Drawn(path: path(source), headline: " has been removed")
+        case .machineFileRemoved(let file):
+            // The whole graph's statement: the remedy under it names the command that
+            // writes the file again.
+            return Drawn(path: path(file), headline: ", the machine's configuration, has been removed")
         case .inputInError:
             return Drawn(headline: "an input is in error, and no node above it says why")
         case .documentUnreadable(let hash):
@@ -483,14 +487,17 @@ struct ConditionLines {
         }
     }
 
+    /// Inputs a node demanded that have no value yet: pending, in the words the prompt
+    /// says every such state in (`ValueState`).
     private func awaited(_ kind: AwaitedInput, _ paths: [String]) -> String {
+        let pending = ValueState.pending.word
         let noun: String
         switch kind {
         case .packageFolderAndManifest:
             guard let folder = paths.first else {
-                return "the package folder and its manifest have no value"
+                return "the package folder and its manifest are \(pending)"
             }
-            return "\(folder) and its Package.swift have no value"
+            return "\(folder) and its Package.swift are \(pending)"
         case .targetFolderCandidates: noun = "folders a target's sources may be in"
         case .targetFolders:          noun = "target folders"
         case .binaryArtifactFolders:  noun = "folders of binary targets' artifacts"
@@ -500,7 +507,7 @@ struct ConditionLines {
         case .includeFiles:           noun = "include files"
         case .versionSpecificManifests: noun = "version-specific package manifests"
         }
-        return paths.isEmpty ? "\(noun) have no value" : "\(noun) without a value: \(capped(paths))"
+        return paths.isEmpty ? "\(noun) are \(pending)" : "\(noun) \(pending): \(capped(paths))"
     }
 
     /// What the comparison of a lock left out, by reason, a few paths each.
