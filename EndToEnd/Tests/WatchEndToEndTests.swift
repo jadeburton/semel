@@ -28,11 +28,7 @@ final class WatchEndToEndTests: XCTestCase {
         _ = watcher?.waitForExit(timeout: 5)
         server?.killIfRunning()
         if let root {
-            if EndToEndEnvironment.keepsRoots {
-                print("SEMEL_E2E_KEEP=1: kept \(root.path)")
-            } else {
-                try? FileManager.default.removeItem(at: root)
-            }
+            EndToEndEnvironment.release(root, failed: hasRecordedFailure)
         }
         super.tearDown()
     }

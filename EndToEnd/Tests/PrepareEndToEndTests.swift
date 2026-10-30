@@ -25,11 +25,7 @@ final class PrepareEndToEndTests: XCTestCase {
 
     override func tearDown() {
         if let root {
-            if EndToEndEnvironment.keepsRoots {
-                print("SEMEL_E2E_KEEP=1: kept \(root.path)")
-            } else {
-                try? FileManager.default.removeItem(at: root)
-            }
+            EndToEndEnvironment.release(root, failed: hasRecordedFailure)
         }
         super.tearDown()
     }

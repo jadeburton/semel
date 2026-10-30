@@ -33,8 +33,8 @@ final class MonitorEndToEndTests: XCTestCase {
         monitor?.kill()
         try? server?.stop()
         server?.killIfRunning()
-        if let root, !EndToEndEnvironment.keepsRoots {
-            try? FileManager.default.removeItem(at: root)
+        if let root {
+            EndToEndEnvironment.release(root, failed: hasRecordedFailure)
         }
         super.tearDown()
     }

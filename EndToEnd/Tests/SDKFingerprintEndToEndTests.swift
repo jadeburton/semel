@@ -28,7 +28,7 @@ final class SDKFingerprintEndToEndTests: XCTestCase {
     override func tearDown() {
         server?.killIfRunning()
         if let root {
-            try? FileManager.default.removeItem(at: root)
+            EndToEndEnvironment.release(root, failed: hasRecordedFailure)
         }
         super.tearDown()
     }

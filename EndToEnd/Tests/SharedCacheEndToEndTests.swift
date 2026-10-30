@@ -25,6 +25,7 @@ final class SharedCacheEndToEndTests: XCTestCase {
 
     private var processes: [ManagedProcess] = []
     private var sessions: [ServerSession] = []
+    private var run: EndToEndRun?
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -36,6 +37,8 @@ final class SharedCacheEndToEndTests: XCTestCase {
         for session in sessions {
             session.killIfRunning()
         }
+        run?.cleanUp(failed: hasRecordedFailure)
+        run = nil
         for process in processes where process.isRunning {
             process.terminate()
             _ = process.waitForExit(timeout: 10)
@@ -164,7 +167,7 @@ final class SharedCacheEndToEndTests: XCTestCase {
 
     func test_aSecondHomeBuildsFromTheSharedCacheByteForByteAndAThirdFinishesWithoutIt() throws {
         let run = try EndToEndRun(project: Projects.cHello)
-        defer { run.cleanUp() }
+        self.run = run
         try run.materialise()
         try run.configure()
         let root = run.root

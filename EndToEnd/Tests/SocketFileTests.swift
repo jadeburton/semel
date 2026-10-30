@@ -24,7 +24,7 @@ final class SocketFileTests: XCTestCase {
         }
         server = nil
         if let root {
-            try? FileManager.default.removeItem(at: root)
+            EndToEndEnvironment.release(root, failed: hasRecordedFailure)
         }
         root = nil
         super.tearDown()

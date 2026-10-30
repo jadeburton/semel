@@ -31,15 +31,24 @@ jobs:
       - name: Build
         run: scripts/build.sh
 
+      # The removal at the end of this job does not run when the runner itself dies under
+      # it — the machine slept or restarted, the service was updated — and the folder it
+      # would have removed stays, tens of gigabytes, until someone finds it. The
+      # concurrency group keeps the nightly to one run at a time, so a folder of an
+      # earlier run is a dead one.
+      - name: Remove what earlier runs left
+        run: rm -rf /tmp/semel-e2e-[0-9]* /tmp/semel-e2e-roots.tgz
+
       # The run roots go under a folder of this run's own, not the harness's default
       # `/tmp/semel-tests`: the runner is also a workstation, and a developer's or an
       # agent's own end-to-end run under the default would share it with this one — the
       # cleanup below once removed such a folder under a live run and failed on the files
-      # it kept writing. Short, because sockets live under it.
+      # it kept writing. Short, because sockets live under it. The harness keeps a failed
+      # project's root and removes a passing one as it passes, so the folder holds about
+      # one project at a time, not the roster's tens of gigabytes.
       - name: Build the external projects twice each
         env:
           SEMEL_E2E_EXTERNAL: "1"
-          SEMEL_E2E_KEEP: "1"
           SEMEL_E2E_ROOT: /tmp/semel-e2e-${{ github.run_id }}
         run: scripts/build.sh test --filter SemelEndToEndTests
 
