@@ -67,9 +67,25 @@ enum EndToEndEnvironment {
         return root
     }
 
-    /// An interrupted run leaves its root behind, and `SEMEL_E2E_KEEP=1` keeps one on
-    /// purpose; a day is long enough to inspect either before it is swept. Keyed on
-    /// creation date, not modification date: on APFS a directory's modification date
+    /// Lets go of a root a test is done with: removed, unless the test failed or
+    /// `SEMEL_E2E_KEEP=1` keeps every root, and a kept root's path is printed. A failed
+    /// test's root is what its failure is read from; a passing test's is gigabytes of
+    /// nothing, and letting each go as it passes keeps a whole roster's run within one
+    /// project's size on the disk. Best effort: a removal that fails leaves the root to
+    /// the sweep.
+    static func release(_ root: URL, failed: Bool) {
+        if keepsRoots {
+            print("SEMEL_E2E_KEEP=1: kept \(root.path)")
+        } else if failed {
+            print("failed, kept: \(root.path)")
+        } else {
+            try? FileManager.default.removeItem(at: root)
+        }
+    }
+
+    /// An interrupted run leaves its root behind, and a failure or `SEMEL_E2E_KEEP=1`
+    /// keeps one on purpose; a day is long enough to inspect either before it is swept.
+    /// Keyed on creation date, not modification date: on APFS a directory's modification date
     /// moves only when a direct child is added or removed, so a live root that writes
     /// deeper than its top level would look stale by that measure while still in use.
     /// Best effort: a listing or removal that fails leaves the entry in place, and

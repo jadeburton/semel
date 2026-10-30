@@ -390,37 +390,39 @@ final class EndToEndRun {
     // MARK: - The whole run
 
     /// Steps 1 to 7, with the second mount and the perturbed build between the
-    /// determinism check and clean-up.
+    /// determinism check and clean-up. A step that fails keeps the root.
     func run() throws {
-        defer { cleanUp() }
-        try materialise()
-        try configure()
-        let out1 = try coldBuild(home: "home1", out: "out1")
-        try checkProducts(in: out1)
-        let out2 = try coldBuild(home: "home2", out: "out2")
-        try checkProducts(in: out2)
-        try checkDeterminism(out1, out2)
-        if project.twoMounts {
-            let second = try materialiseSecondMount()
-            let out3 = try coldBuild(base: second, home: "home3", out: "out3")
-            try checkProducts(in: out3)
-            try checkMountIndependence(out1, out3)
+        do {
+            try materialise()
+            try configure()
+            let out1 = try coldBuild(home: "home1", out: "out1")
+            try checkProducts(in: out1)
+            let out2 = try coldBuild(home: "home2", out: "out2")
+            try checkProducts(in: out2)
+            try checkDeterminism(out1, out2)
+            if project.twoMounts {
+                let second = try materialiseSecondMount()
+                let out3 = try coldBuild(base: second, home: "home3", out: "out3")
+                try checkProducts(in: out3)
+                try checkMountIndependence(out1, out3)
+            }
+            if project.perturbed {
+                let perturbation = try Perturbation.under(root: root)
+                let out4 = try coldBuild(home: "home4", out: "out4", perturbation: perturbation)
+                try checkProducts(in: out4)
+                try checkPerturbationIndependence(out1, out4, perturbation)
+            }
+        } catch {
+            cleanUp(failed: true)
+            throw error
         }
-        if project.perturbed {
-            let perturbation = try Perturbation.under(root: root)
-            let out4 = try coldBuild(home: "home4", out: "out4", perturbation: perturbation)
-            try checkProducts(in: out4)
-            try checkPerturbationIndependence(out1, out4, perturbation)
-        }
+        cleanUp()
     }
 
     // MARK: - 7. Clean up
 
-    func cleanUp() {
-        if EndToEndEnvironment.keepsRoots {
-            print("SEMEL_E2E_KEEP=1: kept \(root.path)")
-        } else {
-            try? FileManager.default.removeItem(at: root)
-        }
+    /// Removes the root, or keeps it after a failure (`EndToEndEnvironment.release`).
+    func cleanUp(failed: Bool = false) {
+        EndToEndEnvironment.release(root, failed: failed)
     }
 }

@@ -35,4 +35,21 @@ final class EnvironmentTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: fresh.path))
     }
+
+    /// A root is released when its test is done: removed after a pass, kept after a
+    /// failure so the failure can be read from it.
+    func test_releaseRemovesARootAfterAPassAndKeepsItAfterAFailure() throws {
+        try XCTSkipIf(EndToEndEnvironment.keepsRoots, "SEMEL_E2E_KEEP=1 keeps every root")
+        let passed = try EndToEndEnvironment.newRoot()
+        let failed = try EndToEndEnvironment.newRoot()
+        defer {
+            try? FileManager.default.removeItem(at: failed)
+        }
+
+        EndToEndEnvironment.release(passed, failed: false)
+        EndToEndEnvironment.release(failed, failed: true)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: passed.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: failed.path))
+    }
 }

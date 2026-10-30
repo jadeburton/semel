@@ -28,7 +28,7 @@ final class LockedFolderEndToEndTests: XCTestCase {
     }
 
     override func tearDown() {
-        run?.cleanUp()
+        run?.cleanUp(failed: hasRecordedFailure)
         run = nil
         super.tearDown()
     }

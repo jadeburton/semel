@@ -13,7 +13,7 @@ final class MaterialiseTests: XCTestCase {
     private var run: EndToEndRun?
 
     override func tearDown() {
-        run?.cleanUp()
+        run?.cleanUp(failed: hasRecordedFailure)
         run = nil
         super.tearDown()
     }
