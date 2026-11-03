@@ -68,6 +68,9 @@ jobs:
       - name: Test SemelApple
         run: scripts/build.sh test --package-path SemelApple
 
+      - name: Test SemelCMake
+        run: scripts/build.sh test --package-path SemelCMake
+
       - name: Test SemelExamples
         run: scripts/build.sh test --package-path SemelExamples
 

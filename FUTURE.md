@@ -49,7 +49,7 @@
 
 - Get it working with large c or c++ project
 
-- Maybe, if at all technically possible, a tool to convert a makefile or cmake file to a Formula file. Or even a Node that does it. Technically this is trying to convert imperative code to functional, but a "pure" makefile can in fact be functional. Cmake still has add_xxx methods and a mess of a syntax.
+- A tool to convert a makefile or cmake file to a Formula file, or even a Node that does it: B-166 below. Technically this is trying to convert imperative code to functional, but a "pure" makefile can in fact be functional, and the declarative core of a CMakeLists.txt is what `semel-cmake` reads.
 
 - Make github repo public
 
@@ -895,6 +895,74 @@ and `XCFrameworkSliceSelectorTests`. What remains:
    its pinned states, its links and modes and its contents. The subtree manifest reads the
    manifest instead of the rows; the content root could share the manifest's reads the same
    way.
+
+### CMake and makefile conversion
+
+**B-166** `doing` — **`semel-cmake`: a CMakeLists.txt tree as a formula, by translation.**
+Two ways to read a CMake project were weighed. Running `cmake` and reading its file API, or
+`make -n`, gives the effective compile and link steps and dodges both languages, but what
+it gives is a flattened command list with every machine-probed value baked in, and the
+formula a person then edits looks nothing like the file they wrote. Translating the rules
+themselves keeps the structure: `add_library` is a product, `target_include_directories`
+is `headerFolders`, a `file(GLOB)` is a for-each pattern, and `PUBLIC` is the propagation
+the emitter applies. Decided 2026-10-11: translate, and refuse the procedural rest by
+name and line rather than run it. An external tool and not a node, because the person
+will edit the formula after it is generated: `semel-cmake <folder>` writes `semel.fmla`
+and `semel.config` once and never overwrites them, then writes the clang machine file as
+`semel-clang` does.
+
+*As built, first slice.* Three stages in a new `SemelCMake` package, depending on
+`SemelNodeKit` alone and touching no disk, so that a converter node could wrap them
+later: `CMakeFile.parse` reads the language into commands with their arguments and lines,
+references kept unexpanded; `CMakeEvaluation.evaluate` reads the declarative subset into
+`CMakeProject` — directory-scoped variables, `set`, `option`, `list` and `string`'s pure
+subcommands, `project`, `add_executable` and `add_library`, every `target_*` command with
+its visibility kept, the directory defaults `include_directories` and its kin give later
+targets, `add_subdirectory` and `include` of the project's own files through a reader,
+`file(GLOB)` as the pattern it names, and `if` where a fixed table of facts (`APPLE`,
+`CMAKE_SYSTEM_NAME`, an option's default) decides the condition — and refuses the rest
+as `CMakeUntranslated` values, a block with an undecidable condition skipped whole; and
+`CMakeFormulaEmitter` writes the formula in the funcs the clang prelude gives, the
+prelude's own chain for a target that adds nothing, a target's defines, options and
+header folders as literals over each tool's slice otherwise, with what a target links
+publicly reaching its consumers and what a static library links reaching whoever links
+it. The config states the target and the standards the sources need, CMake's number with
+its extensions as clang's `gnu17`. `semel-cmake/Library` is the disk: read, evaluate,
+write once, machine file.
+
+`EndToEnd/Fixtures/cmake` is in the roster as `cmake-hello`, with no formula committed:
+a `Project.converter` names the tool the harness runs over the build folder after the
+machine file is written, as it runs `prepare`, and the four hermeticity builds build what
+the tool wrote.
+
+*Real projects, 2026-10-16.* Five CMake projects are in the roster as they are — no
+overlay, no formula of the roster's, `semel-cmake` over the checkout's own files and the
+four hermeticity builds over what it wrote: the SQLite amalgamation mirror (`sqlite-cmake`,
+three targets, sixteen defines, a shared library), cJSON 1.7.19 (a dozen options, a tests
+subdirectory linking the shared library), LibTomMath 1.3.0 (154 sources into one archive),
+TinyXML-2 11.0.0 and pugixml 1.16. Ten were tried; those five build with every refusal
+configure-time. Three of the tries found translator bugs, fixed the same day: a file with
+Windows line ends read as one unending line and translated nothing, silently (tinyxml2);
+a generator expression spread over three lines was a thrown error rather than a refusal
+(pugixml); and `CMAKE_VERSION` was undecidable, which skipped a `project()` call in both
+branches (miniz) — it is a fact now, and `VERSION_*` comparisons are decided except where
+a side names a compiler's or the system's version, which stays undecidable by name. The
+rest were blocked by design: a generated header (miniz's `generate_export_header`,
+cmark's `cmark_export.h`), `check_include_file` results the sources need (zlib's
+`HAVE_UNISTD_H`), a user-defined function adding the include folders (simdjson), and
+generator expressions on the include folders (libyaml's `$<BUILD_INTERFACE:…>`). The
+last is the most common blocker after user-defined functions, and the one subset addition
+the tries argue for: `BUILD_INTERFACE`, `INSTALL_INTERFACE`, `BOOL`, `NOT`, `AND`, `OR`,
+`CONFIG` and the compiler-identity tests are pure over the facts.
+
+Not yet: the makefile side, which shares the emitter and the flag-splitting rule and
+adds a rule resolver and a recipe classifier, and wants a decision first on whether it
+ends in `CMakeProject` or in a Semel-vocabulary description both feed; the pure
+generator expressions above; `configure_file`; Objective-C sources, which the clang
+nodes take but the emitter does not yet mark; `-install_name` and the rest a shared
+library's link line wants — cJSON's test executables link `libcjson.dylib` and find it
+by the name the linker gave the output, so they build but do not launch beside it; a
+define holding a comma or a quote, which no setting can carry.
 
 ### Cache
 

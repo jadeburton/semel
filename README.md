@@ -34,7 +34,7 @@ cd semel
 swift build -c release
 ```
 
-The build places seven executables under `.build/release`: `semelserv`, the engine; `semel`, the CLI; `semel-swift`, a tool to prepare a Swift project/package for Semel, including placing SPM dependendencies; `semel-clang`, which adds a Semel configuration file to the C/C++ source directory; `semel-watch`, which pushes a tree into the engine as you save; `semel-monitor`, which shows at the top right of the screen what each settle did; and `semel-cache`, a cache server several engines can share.
+The build places eight executables under `.build/release`: `semelserv`, the engine; `semel`, the CLI; `semel-swift`, a tool to prepare a Swift project/package for Semel, including placing SPM dependendencies; `semel-clang`, which adds a Semel configuration file to the C/C++ source directory; `semel-cmake`, which translates a `CMakeLists.txt` tree into a formula and a config, once, for the user to edit from there; `semel-watch`, which pushes a tree into the engine as you save; `semel-monitor`, which shows at the top right of the screen what each settle did; and `semel-cache`, a cache server several engines can share.
 
 ## Usage
 
@@ -345,6 +345,17 @@ include XcodeProjectConverter(path: <IceCubesApp.xcodeproj>, root: <.>, configur
 
 A target's sources are its synchronized folders or the files its sources phase lists; Swift is compiled as one module, and Objective-C, C and C++ through clang a file at a time, each finding headers the way Xcode's header map finds them — every header the project references, by name and as `<Product/Header.h>` — with `GCC_PREFIX_HEADER` forced in, the Swift's `SWIFT_OBJC_INTERFACE_HEADER_NAME` beside them, `HEADER_SEARCH_PATHS`, `USER_HEADER_SEARCH_PATHS` (a `/**` entry recursive) and `FRAMEWORK_SEARCH_PATHS` read as folders of the project, and a file's own `COMPILER_FLAGS` after the target's. The frameworks phase's SDK frameworks and libraries are linked by name, a framework or library in the project's tree as the files it is, and a framework target of a referenced project (`PBXReferenceProxy`) is built from that project — its `MODULEMAP_FILE`, `SWIFT_INCLUDE_PATHS`, install name and versions read — and embedded as a versioned framework where a copy-files phase puts it. A lexer description (`.l`) in a sources phase is run through `lex` and its scanner compiled with the target's sources, a Core Data model compiled by `momc` into the bundle's resources, and a command-line tool of the project that a Mac app's copy-files phase copies is built, signed by itself and copied there. The asset catalogs are compiled with `ASSETCATALOG_COMPILER_APPICON_NAME`, `…_GLOBAL_ACCENT_COLOR_NAME` and `…_WIDGET_BACKGROUND_COLOR_NAME`, which actool names in the plist, and a generated plist takes every `INFOPLIST_KEY_*` setting that is not empty, `…_iPad` and `…_iPhone` as their `~ipad` and `~iphone` keys. FUTURE.md's B-77 lists what each roster project asked for and what is still not read.
 
+### Building a CMake project
+
+A `CMakeLists.txt` tree is translated, not run: `semel-cmake <folder>` reads the root file and the files it reaches through `add_subdirectory` and `include`, and writes `semel.fmla` and `semel.config` beside it from the declarative part of what they say — `add_executable` and `add_library` as products, `target_include_directories` as header folders, `target_compile_definitions` and `target_compile_options` as the settings laid over each tool's slice, `target_link_libraries` as the wires and the `libraries` and `frameworks` the linker reads, `file(GLOB)` as the pattern it names, `PUBLIC` and `INTERFACE` reaching the targets that link, and `if` where a fixed table of facts (`APPLE`, `CMAKE_SYSTEM_NAME`, an option's default) decides it. The procedural rest — `find_package`, `foreach`, a function, `add_custom_command`, a condition the facts do not decide — is refused by file and line, listed at the head of the formula and in the tool's output, and the rest still translates. Then it writes the clang part of `semel.machine.config` beside them, as `semel-clang` would.
+
+```sh
+.build/release/semel-cmake path/to/project
+.build/release/semel 'base path/to' 'build project'
+```
+
+The formula is written once and is yours from then on: a second run keeps the two files, and edits them it will not. It is the formula a hand-written C project carries — `include 'clang'` and one chain per target — so the fixtures under `EndToEnd/Fixtures` read as what the tool writes. The translation lives in `SemelCMake`, which touches no disk, so a node could derive the formula live where a project wants that instead; `semel-cmake` is the disk around it.
+
 ### Dependencies
 
 Semel never fetches anything: every file a build needs has to be inside the input file system, found by one rule. For a tree of Swift packages, the Swift conversion tool puts them there and writes what the build needs:
@@ -424,6 +435,8 @@ semel-swift/     semel-swift — `prepare`: finds a tree's roots, vendors git de
                  writes semel.fmla and the two config files (SemelSwiftTool)
 semel-clang/     semel-clang — writes semel.machine.config for the clang tools
                  (SemelClangTool)
+semel-cmake/     semel-cmake — translates a CMakeLists.txt tree into semel.fmla and
+                 semel.config, once, then writes the clang machine file (SemelCMakeTool)
 semel-watch/     semel-watch — watches a tree with FSEvents and, after two quiet seconds,
                  runs the push and rm a person would type, through SemelCLI; one per tree
   Sources/SemelWatch/  SemelWatch: the filter, the coalescer, the batch planner, the loop
@@ -516,6 +529,11 @@ SemelApple/      Apple platform node types — what an app bundle needs beyond c
   InfoPlistBuilder       Merges base, partial plists and keys; resolves $(VAR)
   CoreDataModelCompiler  momc over an .xcdatamodel(d) → .mom or .momd (a tree)
   XcodeProjectConverter  Turns an .xcodeproj and its xcconfig into a formula for the app and its extensions
+SemelCMake/      CMake projects as formulas — no dependency on the engine, no file system
+  CMakeSyntax            The CMake language as commands and arguments, references unexpanded
+  CMakeEvaluation        The declarative subset into a CMakeProject; the rest refused by line
+  CMakeProject           The model: targets and what each declares, in CMake's vocabulary
+  CMakeFormulaEmitter    The model as the formula and config a hand-written C project carries
 SemelExamples/   Nodes that exist to be read
   LineCounter            One `name: count` line per input wire — the tutorial's reference copy
 SemelDatabaseModels/        GRDB schema models (NodeRecord, Wire, OutputPort, …)

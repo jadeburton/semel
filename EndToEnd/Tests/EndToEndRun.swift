@@ -35,7 +35,7 @@ final class EndToEndRun {
     }
 
     static var binariesAreBuilt: Bool {
-        ["semel", "semelserv", "semel-swift", "semel-clang", "semel-watch", "semel-monitor"].allSatisfy { FileManager.default.isExecutableFile(atPath: binary($0).path) }
+        ["semel", "semelserv", "semel-swift", "semel-clang", "semel-cmake", "semel-watch", "semel-monitor"].allSatisfy { FileManager.default.isExecutableFile(atPath: binary($0).path) }
     }
 
     /// Runs one of the executables to completion. A non-zero status or the
@@ -216,6 +216,10 @@ final class EndToEndRun {
                 arguments += ["--application", application]
             }
             try Self.run("semel-swift", arguments: arguments, timeout: project.buildTimeout, step: "prepare")
+        }
+        if let converter = project.converter {
+            try Self.run(converter, arguments: [base.appendingPathComponent(project.buildFolder).path],
+                         timeout: 60, step: converter)
         }
     }
 

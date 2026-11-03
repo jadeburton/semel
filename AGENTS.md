@@ -13,6 +13,7 @@ scripts/build.sh test --package-path SemelCache     # the cache's entry, key, ac
 scripts/build.sh test --package-path SemelSwift     # the Swift toolchain nodes (~163)
 scripts/build.sh test --package-path SemelClang     # the C/C++ toolchain nodes (~61)
 scripts/build.sh test --package-path SemelApple     # the Apple platform nodes: asset and string catalogs, Info.plist (~64)
+scripts/build.sh test --package-path SemelCMake     # the CMake translator: its parser, evaluator and emitter (~40)
 scripts/build.sh test --package-path SemelExamples  # the tutorial's reference node (~4)
 scripts/build.sh test --package-path SemelCore      # the engine tests (~497)
 scripts/build.sh test                               # the CLI, transport, servers, shared cache and end-to-end fixture tests (~900)
@@ -37,7 +38,7 @@ A root test run covers **only** the root package's test targets: `SemelCLITests`
 `SemelTransportTests`, `SemelServerTests`, `SemelWatchTests`, `SemelMonitorTests`,
 `SemelCacheServerTests` and `SemelEndToEndTests`. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
-all nine.
+all ten.
 
 `SemelDatabaseModels` has no line here and none in CI: it has no `Tests` directory, so
 there is nothing to run.
@@ -106,8 +107,8 @@ root: it registers the toolchains, starts the engine and listens on
 with `SEMEL_HOME` and `SEMEL_SOCKET`.
 
 `EndToEnd/Tests` is the one place the executables are run together, as a user runs
-them: `EndToEndRun` starts `semelserv` over a fresh home, drives `semel`, `semel-swift`
-and `semel-clang` against it, and builds each project up to four times to compare the bytes:
+them: `EndToEndRun` starts `semelserv` over a fresh home, drives `semel`, `semel-swift`,
+`semel-clang` and `semel-cmake` against it, and builds each project up to four times to compare the bytes:
 twice over one copy, once from a copy at a second mount, once under a perturbed
 environment. `WatchEndToEndTests` runs `semel-watch` there too, over a real FSEvents
 stream: the one place its adapter is exercised. `MonitorEndToEndTests` runs `semel-monitor

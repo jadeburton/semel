@@ -91,12 +91,20 @@ final class RosterTests: XCTestCase {
         }
     }
 
+    /// A fixture with a converter commits no formula and no project config: the tool
+    /// writes both in the harness's copy, and a committed one would be the one it keeps.
     func test_everyFixtureFolderAndItsFormulaAreInTheRepository() {
         for project in Projects.fixtures {
             let folder = EndToEndEnvironment.fixtures.appendingPathComponent(project.buildFolder, isDirectory: true)
             XCTAssertTrue(FileManager.default.fileExists(atPath: folder.path), "\(project.name): no \(folder.path)")
-            let formulas = (try? FileManager.default.contentsOfDirectory(atPath: folder.path))?.filter { $0.hasSuffix(".fmla") } ?? []
-            XCTAssertEqual(formulas.count, 1, "\(project.name): expected one formula in \(folder.path), found \(formulas)")
+            let entries  = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+            let formulas = entries.filter { $0.hasSuffix(".fmla") }
+            if project.converter == nil {
+                XCTAssertEqual(formulas.count, 1, "\(project.name): expected one formula in \(folder.path), found \(formulas)")
+            } else {
+                XCTAssertEqual(formulas, [], "\(project.name): the converter writes the formula, not the repository")
+                XCTAssertFalse(entries.contains("semel.config"), "\(project.name): the converter writes the project config, not the repository")
+            }
         }
     }
 
